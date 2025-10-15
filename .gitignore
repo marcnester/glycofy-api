@@ -1,0 +1,18 @@
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Environment variables and secrets
+.env
+
+# macOS junk
+.DS_Store
+
+# Alembic migration cache
+alembic/__pycache__/
+
+# Logs
+*.log
