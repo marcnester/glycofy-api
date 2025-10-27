@@ -16,3 +16,8 @@ alembic/__pycache__/
 
 # Logs
 *.log
+
+node_modules/
+.env
+.DS_Store
+*.log

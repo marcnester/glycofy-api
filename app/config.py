@@ -1,16 +1,34 @@
-from pydantic_settings import BaseSettings
+# app/config.py
+from typing import Optional
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    ENV: str = "dev"
-    PORT: int = 8080
-    DATABASE_URL: str = "postgresql+psycopg://postgres:@localhost:5432/glycofy"
-    REDIS_URL: str = "redis://localhost:6379/0"
-    JWT_SECRET: str = "123yutpwojdmcprld1231"
-    STRAVA_CLIENT_ID: str = ""
-    STRAVA_CLIENT_SECRET: str = ""
-    OAUTH_REDIRECT_URI: str = "http://localhost:8080/oauth/strava/callback"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
-    class Config:
-        env_file = ".env"  # tells FastAPI to load secrets from .env file
+    # API / Server
+    API_HOST: str = "127.0.0.1"
+    API_PORT: int = 8090
+
+    # Database
+    DATABASE_URL: str = "sqlite:///./glycofy.db"
+
+    # Auth / JWT
+    JWT_SECRET: str = "dev_fallback_secret_change_me"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+
+    # Strava OAuth
+    STRAVA_CLIENT_ID: Optional[str] = None
+    STRAVA_CLIENT_SECRET: Optional[str] = None
+    STRAVA_REDIRECT_URI: Optional[str] = None
+
+    # Google OAuth
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_REDIRECT_URL: Optional[str] = None  # note: we use *_URL consistently
 
 settings = Settings()
