@@ -1,23 +1,48 @@
-# Python virtual environment
-.venv/
-
-# Python cache
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.bak-*
+*.csv
 
-# Environment variables and secrets
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Environment variables
 .env
-
-# macOS junk
-.DS_Store
-
-# Alembic migration cache
-alembic/__pycache__/
 
 # Logs
 *.log
 
+# Alembic cache
+alembic/__pycache__/
+
+# Node.js
 node_modules/
-.env
+dist/
+build/
+*.cache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# macOS
 .DS_Store
-*.log
+.AppleDouble
+.LSOverride
+
+# UI / Web build artifacts
+ui/node_modules/
+web/node_modules/
+ui/dist/
+web/dist/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
