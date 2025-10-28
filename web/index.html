@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Glycofy — Plan</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/ui/styles.css"/>
+  <link rel="stylesheet" href="/ui/styles.plan.css"/>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Glycofy</div>
+    <nav class="nav">
+      <a class="nav-link active" href="/ui/">Plan</a>
+      <a class="nav-link" href="/ui/summary.html">Summary</a>
+      <a class="nav-link" href="/ui/activities.html">Activities</a>
+      <a class="nav-link" href="/ui/profile.html">Profile</a>
+      <button id="logoutBtn" class="btn ghost">Log out</button>
+    </nav>
+  </header>
+
+  <main class="container">
+    <div id="plan-root" class="plan-root">
+      <!-- Plan content is rendered by app.js -->
+    </div>
+  </main>
+
+  <script type="module">
+    import { ensureAuth, logout } from '/ui/app.js';
+    // NOTE: app.js already renders the Plan view for /ui/
+    ensureAuth('/ui/?return=' + encodeURIComponent(location.pathname + location.search));
+    document.getElementById('logoutBtn').addEventListener('click', logout);
+  </script>
+</body>
+</html>

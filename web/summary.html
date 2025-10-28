@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Glycofy — Summary</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/ui/styles.css"/>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Glycofy</div>
+    <nav class="nav">
+      <a class="nav-link" href="/ui/">Plan</a>
+      <a class="nav-link active" href="/ui/summary.html">Summary</a>
+      <a class="nav-link" href="/ui/activities.html">Activities</a>
+      <a class="nav-link" href="/ui/profile.html">Profile</a>
+      <button id="logoutBtn" class="btn ghost">Log out</button>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section id="summary-root" class="summary-root">
+      <!-- Summary content injected by summary.js -->
+    </section>
+  </main>
+
+  <script type="module">
+    import { ensureAuth, logout } from '/ui/app.js';
+    import '/ui/summary.js';
+    ensureAuth('/ui/?return=' + encodeURIComponent('/ui/summary.html'));
+    document.getElementById('logoutBtn').addEventListener('click', logout);
+  </script>
+</body>
+</html>

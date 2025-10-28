@@ -1,0 +1,26 @@
+[
+  {"title":"Greek Yogurt Bowl","diet_tags":["omnivore","pescatarian"],"meal_type":"breakfast","kcal":420,"protein_g":35,"carbs_g":45,"fat_g":12,"ingredients":["1 cup Greek yogurt","1 tbsp chia","1/2 cup berries","1/4 cup granola"],"instructions":"Combine all; serve."},
+  {"title":"Tofu Scramble & Potatoes","diet_tags":["vegan"],"meal_type":"breakfast","kcal":500,"protein_g":32,"carbs_g":55,"fat_g":16,"ingredients":["200 g firm tofu","1 cup diced potatoes","spinach","spices"],"instructions":"Scramble tofu with spices; sauté potatoes; add spinach."},
+  {"title":"Oatmeal PB Banana","diet_tags":["vegan","pescatarian","omnivore"],"meal_type":"breakfast","kcal":520,"protein_g":18,"carbs_g":78,"fat_g":16,"ingredients":["1 cup oats","1 tbsp peanut butter","1 banana","almond/soy milk"],"instructions":"Cook oats; top with PB and banana."},
+  {"title":"Smoked Salmon Toast","diet_tags":["pescatarian","omnivore"],"meal_type":"breakfast","kcal":480,"protein_g":32,"carbs_g":40,"fat_g":20,"ingredients":["2 slices sourdough","3 oz smoked salmon","1/2 avocado","tomato","capers"],"instructions":"Toast; top with avocado, salmon, tomato, capers."},
+
+  {"title":"Tuna & Bean Wrap","diet_tags":["pescatarian","omnivore"],"meal_type":"lunch","kcal":620,"protein_g":45,"carbs_g":60,"fat_g":18,"ingredients":["1 whole-wheat wrap","1 can tuna","1/2 cup white beans","greens","yogurt/lemon"],"instructions":"Mix tuna/beans/yogurt/lemon; wrap with greens."},
+  {"title":"Lentil-Quinoa Bowl","diet_tags":["vegan"],"meal_type":"lunch","kcal":640,"protein_g":30,"carbs_g":88,"fat_g":18,"ingredients":["1/2 cup dry lentils","1/2 cup dry quinoa","roasted veg","tahini"],"instructions":"Cook lentils/quinoa; add veg; drizzle tahini."},
+  {"title":"Salmon Rice Bowl","diet_tags":["pescatarian","omnivore"],"meal_type":"lunch","kcal":680,"protein_g":42,"carbs_g":70,"fat_g":22,"ingredients":["6 oz salmon","1 cup cooked rice","edamame","seaweed salad","soy/teriyaki"],"instructions":"Bake salmon; assemble bowl."},
+  {"title":"Chickpea Pasta Marinara","diet_tags":["vegan"],"meal_type":"lunch","kcal":590,"protein_g":28,"carbs_g":78,"fat_g":14,"ingredients":["3 oz chickpea pasta","marinara","mushrooms","spinach"],"instructions":"Boil pasta; simmer sauce; combine."},
+
+  {"title":"Teriyaki Salmon + Rice + Bok Choy","diet_tags":["pescatarian","omnivore"],"meal_type":"dinner","kcal":700,"protein_g":45,"carbs_g":80,"fat_g":18,"ingredients":["6 oz salmon","1 cup cooked jasmine rice","1 cup bok choy","teriyaki sauce"],"instructions":"Bake salmon; steam bok choy; serve."},
+  {"title":"Shrimp Tacos + Slaw","diet_tags":["pescatarian","omnivore"],"meal_type":"dinner","kcal":680,"protein_g":40,"carbs_g":75,"fat_g":20,"ingredients":["8 oz shrimp","4 corn tortillas","slaw","mango","lime crema"],"instructions":"Sauté shrimp; warm tortillas; assemble."},
+  {"title":"Tempeh Stir-Fry + Rice","diet_tags":["vegan"],"meal_type":"dinner","kcal":720,"protein_g":36,"carbs_g":95,"fat_g":22,"ingredients":["8 oz tempeh","mixed veg","1 cup cooked rice","soy/ginger/garlic"],"instructions":"Stir-fry tempeh/veg; serve over rice."},
+  {"title":"Black Bean Sweet-Potato Chili","diet_tags":["vegan"],"meal_type":"dinner","kcal":680,"protein_g":28,"carbs_g":102,"fat_g":16,"ingredients":["2 cups black beans","1 sweet potato","tomatoes","onion","spices"],"instructions":"Simmer until tender."},
+
+  {"title":"Protein Shake + Banana","diet_tags":["vegan","pescatarian","omnivore"],"meal_type":"snack","kcal":300,"protein_g":30,"carbs_g":35,"fat_g":4,"ingredients":["1 scoop protein","water/milk","1 banana"],"instructions":"Blend."},
+  {"title":"Cottage Cheese + Pineapple","diet_tags":["pescatarian","omnivore"],"meal_type":"snack","kcal":250,"protein_g":24,"carbs_g":24,"fat_g":6,"ingredients":["1 cup low-fat cottage cheese","1/2 cup pineapple"],"instructions":"Combine."},
+  {"title":"Hummus + Pita + Veg","diet_tags":["vegan"],"meal_type":"snack","kcal":320,"protein_g":12,"carbs_g":46,"fat_g":10,"ingredients":["1 pita","1/4 cup hummus","carrot/cucumber"],"instructions":"Dip and eat."},
+  {"title":"Roasted Edamame","diet_tags":["vegan","pescatarian","omnivore"],"meal_type":"snack","kcal":260,"protein_g":24,"carbs_g":18,"fat_g":10,"ingredients":["1 cup shelled edamame","salt","oil spray"],"instructions":"Roast 12–15 min at 400°F."},
+
+  {"title":"Egg White Veg Omelet + Toast","diet_tags":["omnivore","pescatarian"],"meal_type":"breakfast","kcal":430,"protein_g":36,"carbs_g":40,"fat_g":12,"ingredients":["1 cup egg whites","veg","1 slice whole-grain toast"],"instructions":"Cook omelet; serve with toast."},
+  {"title":"Soba Noodle Bowl (Tofu)","diet_tags":["vegan"],"meal_type":"lunch","kcal":650,"protein_g":32,"carbs_g":90,"fat_g":18,"ingredients":["3 oz soba noodles","200 g tofu","veg","soy/sesame"],"instructions":"Boil noodles; stir-fry tofu/veg; combine."},
+  {"title":"Baked Cod + Potatoes + Greens","diet_tags":["pescatarian"],"meal_type":"dinner","kcal":690,"protein_g":46,"carbs_g":80,"fat_g":16,"ingredients":["6 oz cod","10 oz potatoes","greens","olive oil","lemon"],"instructions":"Bake cod and potatoes; dress greens."},
+  {"title":"Chia Pudding (Soy Milk)","diet_tags":["vegan"],"meal_type":"snack","kcal":300,"protein_g":15,"carbs_g":30,"fat_g":12,"ingredients":["3 tbsp chia","1 cup soy milk","berries"],"instructions":"Soak overnight; top with berries."}
+]

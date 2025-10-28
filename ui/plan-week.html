@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Glycofy • Week Plan</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="icon" href="/ui/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+  <link rel="stylesheet" href="/ui/styles.week.css" />
+  <script src="/ui/app.js" defer></script>
+  <script src="/ui/plan-week.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="/ui/favicon.svg" alt="G" width="18" height="18" />
+      <strong>Glycofy</strong>
+    </div>
+    <nav class="nav-links">
+      <a href="/ui/activities.html">Activities</a>
+      <a href="/ui/plan.html">Plan</a>
+      <a href="/ui/summary.html">Summary</a>
+      <a href="/ui/plan-week.html" class="active">Week</a>
+      <a href="/ui/profile.html">Profile</a>
+    </nav>
+    <button id="logout_btn" class="logout-btn">Logout</button>
+  </header>
+
+  <main class="container">
+    <h1>Weekly Plan</h1>
+    <div class="muted">Auto-generates each day’s plan as needed and aggregates a weekly grocery list.</div>
+
+    <section class="controls">
+      <div class="row">
+        <div class="field">
+          <label>Week starting (UTC)</label>
+          <input id="week_start" type="date" />
+        </div>
+        <div class="field">
+          <label>Diet preference</label>
+          <select id="diet_pref">
+            <option value="omnivore">Omnivore</option>
+            <option value="pescatarian">Pescatarian</option>
+            <option value="vegetarian">Vegetarian</option>
+            <option value="vegan">Vegan</option>
+          </select>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="load_btn" class="btn">Load week</button>
+        <button id="regen_btn" class="btn ghost" title="Regenerate all days in week">Regenerate week</button>
+        <button id="export_txt" class="btn ghost" title="Download combined grocery list (.txt)">Export grocery (.txt)</button>
+        <button id="export_csv" class="btn ghost" title="Download combined grocery list (.csv)">Export grocery (.csv)</button>
+      </div>
+
+      <div id="alert_ok" class="alert ok" style="display:none"></div>
+      <div id="alert_err" class="alert err" style="display:none"></div>
+    </section>
+
+    <section id="week_grid" class="week-grid">
+      <!-- JS will render 7 day-cards here -->
+    </section>
+  </main>
+</body>
+</html>

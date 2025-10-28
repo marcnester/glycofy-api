@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#10b981"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="#0f1216"/>
+  <!-- stylized “G” for Glycofy -->
+  <path d="M44 26h-8a6 6 0 10-6 6h14v6c0 6.627-5.373 12-12 12S20 44.627 20 38V26c0-6.627 5.373-12 12-12s12 5.373 12 12z"
+        fill="url(#g)"/>
+</svg>

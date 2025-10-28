@@ -1,0 +1,95 @@
+:root{
+  --bg:#0a0e14;
+  --card:#0f1216;
+  --border:#1e2836;
+  --text:#e7eefc;
+  --muted:#9ab0c7;
+}
+
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; background:var(--bg); color:var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; }
+
+/* Layout */
+header, footer{
+  padding:12px 16px;
+  border-bottom:1px solid var(--border);
+  background:#0c1017;
+  display:flex; align-items:center; gap:10px;
+}
+footer{ border-top:1px solid var(--border); border-bottom:none; margin-top:12px; }
+
+.brand{ font-weight:800; letter-spacing:.3px; }
+.spacer{ flex:1; }
+
+main{ padding:16px; display:grid; gap:12px; }
+.card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:14px;
+}
+.row{ display:flex; gap:8px; }
+.between{ justify-content:space-between; }
+.center{ align-items:center; }
+.wrap{ flex-wrap:wrap; }
+.gap{ gap:10px; }
+.grow{ flex:1 1 0; }
+
+h1,h2,h3{ margin:0 0 6px 0; }
+
+/* Buttons & links */
+button, .ghost, .nav-link{
+  border-radius:10px;
+  border:1px solid var(--border);
+  background:#13202e;
+  color:var(--text);
+  padding:8px 12px;
+  font-size:14px;
+  cursor:pointer;
+  text-decoration:none;
+}
+button:hover, .ghost:hover, .nav-link:hover{ filter:brightness(1.08); }
+button.ghost, .ghost{ background:#0f1216; }
+.nav-link{ background:#0f1216; }
+.nav-link.active{
+  border-color:#4d6aff;
+  box-shadow:0 0 0 3px rgba(77,106,255,.15) inset;
+  color:#dbe4ff;
+}
+
+/* Inputs */
+input, select{
+  background:#0f1216;
+  border:1px solid var(--border);
+  color:var(--text);
+  border-radius:10px;
+  padding:8px 10px;
+  font-size:14px;
+  outline:none;
+}
+input:focus, select:focus{
+  border-color:#4d6aff;
+  box-shadow:0 0 0 3px rgba(77,106,255,.18);
+}
+
+.hint{ color:var(--muted); font-size:13px; }
+.error{
+  color:#ffd2d2; background:#37161b; border:1px solid #5a1a21;
+  padding:8px 12px; border-radius:10px;
+}
+.soft-badge{
+  display:inline-block; padding:3px 8px; font-size:12px; color:#a9b5c6;
+  border:1px solid var(--border); border-radius:999px; background:#0f1216;
+}
+
+/* Utilities */
+.grid.two{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+@media (max-width: 900px){ .grid.two{ grid-template-columns:1fr; } }
+
+/* ---- Summary KPI polish ---- */
+.kpi .big, .kpi-value { font-variant-numeric: tabular-nums; }
+
+/* Sticky table headers used on the summary table */
+table.simple thead.sticky-head th {
+  position: sticky; top: 0; background: #0a0d10; z-index: 1;
+}

@@ -1,0 +1,54 @@
+/* Profile / onboarding page – polished form */
+
+.container { padding: 0 16px; display: grid; gap: 12px; }
+.nav-link.active { border-color:#4d6aff; color:#dbe4ff; }
+
+.grid.two { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+@media (max-width: 900px){ .grid.two{ grid-template-columns:1fr; } }
+.stack { display:flex; flex-direction:column; gap:12px; }
+
+.field { display:flex; flex-direction:column; gap:6px; }
+.label { color:#b1c2d9; font-size:13px; }
+.req { color:#ffb3b3; }
+
+input, select {
+  background:#0f1216;
+  border:1px solid var(--border);
+  color:#e7eefc;
+  border-radius:10px;
+  padding:10px 12px;
+  font-size:15px;
+  outline: none;
+}
+input:focus, select:focus {
+  border-color:#4d6aff;
+  box-shadow: 0 0 0 3px rgba(77,106,255,.18);
+}
+
+button[disabled] { opacity:.6; cursor:not-allowed; }
+
+/* Inline states */
+.hint { color:var(--muted); }
+.error {
+  color:#ffd2d2; background:#37161b; border:1px solid #5a1a21;
+  padding:8px 12px; border-radius:10px;
+}
+
+/* Toast */
+.toast{
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  background: #0f1216;
+  border: 1px solid #224;
+  color: #dff7ff;
+  padding: 10px 14px;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  z-index: 1000;
+  animation: toast-in .2s ease-out;
+}
+@keyframes toast-in {
+  from { transform: translateY(10px); opacity:0; }
+  to   { transform: translateY(0); opacity:1; }
+}

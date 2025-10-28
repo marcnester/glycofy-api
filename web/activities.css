@@ -1,0 +1,42 @@
+/* Activities page styles – cohesive with the rest of UI */
+
+.wrap { padding: 0 16px; display: grid; gap: 12px; }
+.nav-link { text-decoration:none; padding:8px 12px; border-radius:10px; border:1px solid var(--border); }
+
+#tableWrap { overflow:auto; }
+
+/* Table */
+table.activities {
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  font-size:15px;
+  line-height:1.45;
+  border:1px solid var(--border);
+  border-radius:10px;
+  overflow:hidden;
+  background:#0b0f15;
+}
+table.activities thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: linear-gradient(180deg,#0f1216 0%, #0f1216 70%, transparent 100%);
+  color: #cde0ff;
+  border-bottom: 2px solid #223045;
+  text-align:left;
+  font-weight:700;
+  box-shadow: 0 3px 8px rgba(0,0,0,.25);
+}
+table.activities th, table.activities td {
+  padding:10px 12px;
+  border-bottom:1px solid var(--border);
+  vertical-align:top;
+}
+table.activities tbody tr:nth-child(even){ background:#0e1116; }
+table.activities tbody tr:hover{ background:#121826; }
+.num { text-align:right; }
+.badge {
+  display:inline-block; background:#1a2130; color:#c1d5ff;
+  padding:2px 8px; border-radius:999px; font-size:12px;
+}

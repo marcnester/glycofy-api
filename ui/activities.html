@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Glycofy — Activities</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'">
+  <link rel="icon" href="/ui/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+  <!-- unified scripts only -->
+  <script src="/ui/app.js?v=16" defer></script>
+  <script src="/ui/activities.js?v=16" defer></script>
+  <style>
+    .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
+    .toolbar input,.toolbar select{background:#0f141b;border:1px solid #263346;color:#e6edf3;border-radius:8px;padding:8px}
+    .toolbar button{background:#1a2638;border:1px solid #32445a;color:#d7e6ff;border-radius:8px;padding:8px 12px;cursor:pointer}
+    .toolbar button:hover{background:#213148}
+    .kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:10px}
+    @media (max-width: 720px){ .kpis{ grid-template-columns:1fr; } }
+    .kpi{padding:12px;border:1px solid #223247;border-radius:12px;background:#0d1219}
+    .kpi h3{margin:0 0 4px 0;font-weight:600}
+    .kpi .big{font-size:22px}
+    .grid{display:grid;grid-template-columns: 1.4fr .6fr; gap:16px}
+    @media (max-width: 980px){ .grid{ grid-template-columns:1fr; } }
+    .card{border:1px solid #1f2a38;background:#0e141b;border-radius:14px;padding:16px}
+    .table-wrap{max-height:520px;overflow:auto;border:1px solid #223044;border-radius:12px}
+    table{width:100%;border-collapse:collapse}
+    thead th{position:sticky;top:0;background:#0f151c;border-bottom:1px solid #223044}
+    th,td{padding:10px;border-bottom:1px solid #182232;text-align:left}
+    tr:last-child td{border-bottom:none}
+    .donut-wrap{display:flex;flex-direction:column;gap:10px;align-items:center}
+    .legend{display:flex;flex-direction:column;gap:6px;width:100%}
+    .legend-row{display:flex;justify-content:space-between;gap:8px;font-size:14px}
+    .legend-key{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px}
+    .pill{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid #2a3a4d;background:#0f1822;color:#cfe3ff}
+    .pill.ok{border-color:#1e6b3a;background:#0f1b14;color:#baf7d0}
+    .pill.warn{border-color:#6b5b1e;background:#1b170f;color:#f7e9ba}
+    .pill.err{border-color:#6b1b1b;background:#2a1212;color:#ffdede}
+    .pill.spin::after{content:"…"; animation: dot 1.2s steps(4, end) infinite;}
+    @keyframes dot { 0%{content:""} 25%{content:"."} 50%{content:".."} 75%{content:"..."} 100%{content:""} }
+    .error{display:none;margin:10px 0;padding:10px;border:1px solid #6b1b1b;background:#2a1212;color:#ffdede;border-radius:10px}
+    .empty{padding:16px;border:1px dashed #2a3950;border-radius:12px;background:#0b1118;color:#a8b7c8;text-align:center}
+  </style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img src="/ui/favicon.svg" alt="G" width="18" height="18" />
+    <strong>Glycofy</strong>
+  </div>
+  <nav class="nav-links">
+    <a href="/ui/plan.html">Plan</a>
+    <a href="/ui/activities.html" class="active">Activities</a>
+    <a href="/ui/profile.html">Profile</a>
+  </nav>
+  <button id="logout_btn" class="logout-btn">Logout</button>
+</header>
+
+<main class="container">
+  <h1>Activities</h1>
+  <div id="act-error" class="error"></div>
+
+  <!-- Top toolbar: date range + Strava controls + live status -->
+  <div class="toolbar">
+    <label>From <input id="from" type="date" /></label>
+    <label>To <input id="to" type="date" /></label>
+    <button id="refresh">Refresh</button>
+
+    <span id="strava_badge" class="pill">Strava: —</span>
+    <button id="sync_btn" class="btn secondary">Sync</button>
+    <button id="full_sync_btn" class="btn secondary">Full re-sync</button>
+
+    <span id="sync_status" class="pill" style="display:none"></span>
+  </div>
+
+  <!-- KPIs -->
+  <section class="kpis">
+    <div class="kpi">
+      <h3>Total training</h3>
+      <div class="big" id="kcal_training">–</div>
+      <div class="muted">kcal</div>
+    </div>
+    <div class="kpi">
+      <h3>Total planned</h3>
+      <div class="big" id="kcal_planned">–</div>
+      <div class="muted">kcal</div>
+    </div>
+    <div class="kpi">
+      <h3>Activities</h3>
+      <div class="big" id="act_count">–</div>
+      <div class="muted">count</div>
+    </div>
+  </section>
+
+  <div class="grid" style="margin-top:16px">
+    <!-- Daily breakdown (left) -->
+    <div class="card">
+      <h3 style="margin:0 0 10px 0">Daily details</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="min-width:120px">Date</th>
+              <th>Training kcal</th>
+              <th>Planned kcal</th>
+              <th>By sport</th>
+            </tr>
+          </thead>
+          <tbody id="sum_rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Donut (right) -->
+    <div class="card">
+      <h3 style="margin:0 0 10px 0">Training kcal by sport</h3>
+      <div id="donut" class="donut-wrap"></div>
+    </div>
+  </div>
+
+  <!-- Paged raw list (classic table) -->
+  <section class="card" style="margin-top:18px">
+    <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px">
+      <div class="kv">
+        <span class="k">Page:</span>
+        <button id="prev" class="btn secondary">Prev</button>
+        <span id="page" class="pill">1</span>
+        <button id="next" class="btn secondary">Next</button>
+      </div>
+      <div class="kv">
+        <span class="k">Page size</span>
+        <select id="ps" class="input" style="width:auto">
+          <option>25</option><option>50</option><option>100</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="table" id="tbl">
+        <thead>
+        <tr><th>Date</th><th>Sport</th><th>Duration</th><th>kcal</th><th>Distance</th></tr>
+        </thead>
+        <tbody id="rows">
+        <tr><td colspan="5" class="muted">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div id="empty_state" class="empty" style="display:none">
+    No data for this range. Try widening the dates or syncing Strava again.
+  </div>
+</main>
+</body>
+</html>

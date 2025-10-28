@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Glycofy • Summary</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'">
+  <link rel="icon" href="/ui/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+  <style>
+    .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
+    .toolbar input{background:#0f141b;border:1px solid #263346;color:#e6edf3;border-radius:8px;padding:8px}
+    .toolbar select{background:#0f141b;border:1px solid #263346;color:#e6edf3;border-radius:8px;padding:8px}
+    .toolbar button{background:#1a2638;border:1px solid #32445a;color:#d7e6ff;border-radius:8px;padding:8px 12px;cursor:pointer}
+    .toolbar button:hover{background:#213148}
+    .pill{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid #2a3a4d;background:#0f1822;color:#cfe3ff}
+    .grid{display:grid;grid-template-columns: 1.4fr .6fr; gap:16px}
+    @media (max-width: 980px){ .grid{ grid-template-columns:1fr; } }
+    .card{border:1px solid #1f2a38;background:#0e141b;border-radius:14px;padding:16px}
+    .muted{color:#93a5b1}
+    .kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:10px}
+    @media (max-width: 720px){ .kpis{ grid-template-columns:1fr; } }
+    .kpi{padding:12px;border:1px solid #223247;border-radius:12px;background:#0d1219}
+    .kpi h3{margin:0 0 4px 0;font-weight:600}
+    .kpi .big{font-size:22px}
+    .table-wrap{max-height:520px;overflow:auto;border:1px solid #223044;border-radius:12px}
+    table{width:100%;border-collapse:collapse}
+    thead th{position:sticky;top:0;background:#0f151c;border-bottom:1px solid #223044}
+    th,td{padding:10px;border-bottom:1px solid #182232;text-align:left}
+    tr:last-child td{border-bottom:none}
+    .bar{height:8px;border-radius:999px;background:#142032;position:relative;overflow:hidden}
+    .bar > span{position:absolute;left:0;top:0;bottom:0;background:#3b82f6}
+    .donut-wrap{display:flex;flex-direction:column;gap:10px;align-items:center}
+    .legend{display:flex;flex-direction:column;gap:6px;width:100%}
+    .legend-row{display:flex;justify-content:space-between;gap:8px;font-size:14px}
+    .legend-key{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px}
+    .empty{padding:16px;border:1px dashed #2a3950;border-radius:12px;background:#0b1118;color:#a8b7c8;text-align:center}
+  </style>
+  <script src="/ui/app.js" defer></script>
+  <script src="/ui/summary.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img src="/ui/favicon.svg" alt="G" width="18" height="18" />
+    <strong>Glycofy</strong>
+  </div>
+  <nav class="nav-links">
+    <a href="/ui/activities.html">Activities</a>
+    <a href="/ui/plan.html">Plan</a>
+    <a href="/ui/plan-week.html">Week</a>
+    <a href="/ui/summary.html">Summary</a>
+    <a href="/ui/profile.html">Profile</a>
+  </nav>
+  <button id="logout_btn" class="logout-btn">Logout</button>
+</header>
+
+<main class="container">
+  <h1>Summary</h1>
+  <div class="muted">Review training and planned energy for a time range.</div>
+
+  <!-- New: Strava status + sync controls -->
+  <div class="toolbar">
+    <span id="strava_badge" class="pill">Strava: —</span>
+    <button id="connect_btn" class="btn" style="display:none">Connect Strava</button>
+    <button id="sync_btn" class="btn">Sync</button>
+    <button id="resync_btn" class="btn secondary" title="Delete stored activities, then pull fresh from Strava">Full re-sync</button>
+    <span id="sync_status" class="muted"></span>
+  </div>
+
+  <div class="toolbar">
+    <label>From <input id="from" type="date" /></label>
+    <label>To <input id="to" type="date" /></label>
+    <select id="diet_pref" aria-label="Diet (optional)">
+      <option value="">(any diet)</option>
+      <option value="omnivore">Omnivore</option>
+      <option value="pescatarian">Pescatarian</option>
+      <option value="vegetarian">Vegetarian</option>
+      <option value="vegan">Vegan</option>
+      <option value="keto">Keto</option>
+    </select>
+    <button id="refresh">Refresh</button>
+  </div>
+
+  <section class="kpis">
+    <div class="kpi">
+      <h3>Total training</h3>
+      <div class="big" id="kcal_training">–</div>
+      <div class="muted">kcal</div>
+    </div>
+    <div class="kpi">
+      <h3>Total planned</h3>
+      <div class="big" id="kcal_planned">–</div>
+      <div class="muted">kcal</div>
+    </div>
+    <div class="kpi">
+      <h3>Activities</h3>
+      <div class="big" id="act_count">–</div>
+      <div class="muted">count</div>
+    </div>
+  </section>
+
+  <div class="grid" style="margin-top:16px">
+    <div class="card">
+      <h3 style="margin:0 0 10px 0">Daily details</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="min-width:120px">Date</th>
+              <th>Training kcal</th>
+              <th>Planned kcal</th>
+              <th>By sport</th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+            <!-- filled by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 10px 0">Training kcal by sport</h3>
+      <div id="donut" class="donut-wrap">
+        <!-- donut svg + legend -->
+      </div>
+    </div>
+  </div>
+
+  <div id="empty_state" class="empty" style="display:none">
+    No data for this range. Try widening the dates or syncing Strava again.
+  </div>
+</main>
+</body>
+</html>

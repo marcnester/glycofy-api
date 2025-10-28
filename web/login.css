@@ -1,0 +1,9 @@
+.login-wrap { padding: 24px 16px; display: grid; place-items: center; }
+.login-card { width: 100%; max-width: 420px; }
+.field { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+.label { color:#b1c2d9; font-size:13px; }
+input {
+  background:#0f1216; border:1px solid var(--border); color:#e7eefc;
+  border-radius:10px; padding:10px 12px; font-size:15px; outline:none;
+}
+input:focus{ border-color:#4d6aff; box-shadow:0 0 0 3px rgba(77,106,255,.18); }

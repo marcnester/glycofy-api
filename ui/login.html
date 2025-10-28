@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Sign in · Glycofy</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 img-src 'self' data:;
+                 style-src 'self' 'unsafe-inline';
+                 script-src 'self';
+                 connect-src 'self'">
+  <link rel="icon" href="/ui/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+  <script src="/ui/app.js" defer></script>
+  <script src="/ui/login.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="/ui/favicon.svg" alt="G" width="18" height="18" />
+      <strong>Glycofy</strong>
+    </div>
+    <div id="endpointNote" class="muted" style="margin-left:auto;padding-right:12px;"></div>
+  </header>
+
+  <main class="container" style="max-width:420px;">
+    <h1>Sign in</h1>
+
+    <div id="msg" class="notice" style="display:none"></div>
+
+    <div class="card">
+      <form id="login-form" autocomplete="on" novalidate>
+        <div class="kv">
+          <label class="k" for="email">Email</label>
+          <input id="email" name="email" type="email" class="input" required />
+        </div>
+
+        <div class="kv">
+          <label class="k" for="password">Password</label>
+          <input id="password" name="password" type="password" class="input" required />
+        </div>
+
+        <div class="kv">
+          <button id="demo" type="button" class="btn secondary">Use demo creds</button>
+        </div>
+
+        <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
+          <button id="submitBtn" type="submit" class="btn">Sign in</button>
+          <a id="google_btn" href="#" class="btn secondary" style="display:none">Sign in with Google</a>
+        </div>
+
+        <div id="google_wrap" class="muted" style="display:none;margin-top:8px;"></div>
+      </form>
+    </div>
+  </main>
+</body>
+</html>

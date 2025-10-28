@@ -1,0 +1,49 @@
+/* Plan page – polished meal cards, controls, and targets */
+
+.plan-header {
+  display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between;
+  margin-bottom:12px;
+}
+.inline { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+
+select, input[type="date"] {
+  background:#0f1216; border:1px solid var(--border); color:var(--text);
+  border-radius:10px; padding:8px 10px; font-size:14px;
+}
+
+.btn-row { display:flex; gap:8px; flex-wrap:wrap; }
+
+.targets {
+  display:flex; gap:10px; flex-wrap:wrap; margin:8px 0 12px;
+}
+.pill {
+  background:#0f1216; border:1px solid var(--border); color:#cfe7ff;
+  border-radius:999px; padding:8px 12px; font-size:13px;
+}
+
+.meals { display:grid; grid-template-columns: repeat(2, 1fr); gap:12px; }
+@media (max-width: 900px){ .meals { grid-template-columns: 1fr; } }
+
+.meal {
+  border:1px solid var(--border); border-radius:12px; background:#0f1216; padding:12px;
+}
+.meal h3 { margin:0 0 6px 0; font-size:16px; }
+.meta { color:var(--muted); font-size:12px; margin-bottom:6px; }
+.macros { font-size:13px; color:#c1d5ff; margin-bottom:8px; }
+.ing { margin:0; padding-left:18px; }
+.ing li { margin:2px 0; }
+.actions { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+
+.grocery {
+  margin-top:12px; border-top:1px dashed var(--border); padding-top:10px;
+}
+.grocery .list {
+  display:flex; flex-wrap:wrap; gap:6px;
+}
+.badge {
+  background:#1a2130; color:#c1d5ff; padding:4px 8px; border-radius:999px; font-size:12px;
+}
+
+.state-ok { color:#b4ffd8; }
+.state-bad { color:#ffd1d1; }
+.small { font-size:12px; color:var(--muted); }

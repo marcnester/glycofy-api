@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Glycofy – Activities</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/ui/styles.css"/>
+  <link rel="stylesheet" href="/ui/activities.css"/>
+  <script defer src="/ui/activities.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand">Glycofy</div>
+    <div class="spacer"></div>
+    <a href="/ui/" class="ghost nav-link">Plan</a>
+    <a href="/ui/summary.html" class="ghost nav-link">Summary</a>
+    <a href="/ui/activities.html" class="ghost nav-link active">Activities</a>
+    <a href="/ui/profile.html" class="ghost nav-link">Profile</a>
+    <button id="logoutBtn" class="ghost">Log out</button>
+  </header>
+
+  <main class="wrap">
+    <section class="card">
+      <div class="row between wrap center gap">
+        <h2>Activities</h2>
+        <div class="row gap wrap">
+          <input type="date" id="fromDate" />
+          <input type="date" id="toDate" />
+          <select id="sport">
+            <option value="">All sports</option>
+            <option>cycling</option>
+            <option>running</option>
+            <option>swimming</option>
+            <option>strength</option>
+            <option>other</option>
+          </select>
+          <button id="filterBtn" class="ghost">Filter</button>
+          <button id="clearBtn" class="ghost">Clear</button>
+          <button id="syncBtn">Sync Strava</button>
+        </div>
+      </div>
+      <div id="syncNote" class="hint" style="margin-top:6px;">Sync pulls recent activities from Strava you’ve connected.</div>
+    </section>
+
+    <section class="card">
+      <div id="error" class="error" hidden></div>
+      <div id="tableWrap"></div>
+
+      <div class="row between center" style="margin-top:10px;">
+        <div class="hint" id="meta">—</div>
+        <div class="row gap">
+          <button id="prevBtn" class="ghost">Prev</button>
+          <div id="pageBadge" class="soft-badge">Page 1</div>
+          <button id="nextBtn" class="ghost">Next</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <small>© Glycofy MVP</small>
+  </footer>
+</body>
+</html>

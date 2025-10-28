@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Glycofy — Login</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/ui/styles.css"/>
+  <style>
+    .auth-card{max-width:420px;margin:60px auto;padding:20px;border:1px solid var(--border);
+      border-radius:14px;background:#0f1216}
+    .auth-card h1{margin:0 0 14px;}
+    .row{display:flex;gap:8px;align-items:center}
+    .hint{color:var(--muted);font-size:13px;margin-top:8px}
+    .error{color:#ffd2d2;background:#3a1212;border:1px solid #4a1a1a;padding:8px 12px;border-radius:8px;margin-top:8px}
+    .ok{color:#b7f4e2;background:#0e2a22;border:1px solid #1d4f3f;padding:8px 12px;border-radius:8px;margin-top:8px}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Glycofy</div>
+  </header>
+
+  <main class="container">
+    <div class="auth-card">
+      <h1>Log in</h1>
+      <label>Email</label>
+      <input id="email" class="input" type="email" placeholder="you@example.com" autocomplete="username" />
+      <label style="margin-top:10px;">Password</label>
+      <input id="password" class="input" type="password" placeholder="••••••••" autocomplete="current-password" />
+      <div class="row" style="margin-top:14px;">
+        <button id="loginBtn" class="btn">Log in</button>
+        <a id="backLink" class="btn ghost" href="/ui/">Cancel</a>
+      </div>
+      <div id="msg" class="hint">You’ll be redirected back after login.</div>
+      <div class="hint" style="margin-top:8px;">
+        Demo: <code>demo@glycofy.app</code> / <code>Demo1234!</code>
+      </div>
+    </div>
+  </main>
+
+<script type="module">
+  import { getToken, setToken } from '/ui/app.js';
+
+  // Helpers
+  const params = new URLSearchParams(window.location.search);
+  const ret = params.get('return') || '/ui/';
+  const msg = document.getElementById('msg');
+  const emailEl = document.getElementById('email');
+  const pwEl = document.getElementById('password');
+
+  // If already authenticated, skip the form
+  const existing = getToken();
+  if (existing) {
+    window.location.replace(ret);
+  }
+
+  // Pre-fill last email (if any)
+  const lastEmail = localStorage.getItem('last_email') || '';
+  if (lastEmail) emailEl.value = lastEmail;
+
+  document.getElementById('backLink').href = ret;
+
+  function showError(text) {
+    msg.className = 'error';
+    msg.textContent = text;
+  }
+  function showHint(text) {
+    msg.className = 'hint';
+    msg.textContent = text;
+  }
+  function serverMessage(data) {
+    // Try to unwrap FastAPI validation errors
+    if (typeof data === 'string') return data;
+    if (data && data.detail) {
+      if (Array.isArray(data.detail) && data.detail.length) {
+        return data.detail.map(d => d.msg || d.detail || 'Invalid field').join('; ');
+      }
+      if (typeof data.detail === 'string') return data.detail;
+    }
+    return 'Login failed';
+  }
+
+  async function postJson(url, body) {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const ct = r.headers.get('content-type') || '';
+    const data = ct.includes('application/json') ? await r.json() : await r.text();
+    if (!r.ok) {
+      throw new Error(serverMessage(data));
+    }
+    return data;
+  }
+
+  async function doLogin() {
+    const email = emailEl.value.trim();
+    const password = pwEl.value;
+
+    // Client-side validation to avoid 422s
+    if (!email) return showError('Please enter your email.');
+    if (!email.includes('@') || !email.includes('.')) return showError('Please enter a valid email address.');
+    if (!password) return showError('Please enter your password.');
+
+    showHint('Logging in…');
+
+    try {
+      const res = await postJson('/auth/login', { email, password });
+      const token = res && res.access_token;
+      if (!token) throw new Error('No access_token in response');
+
+      // Persist for the app (mirrors how other pages read the token)
+      setToken(token);
+      localStorage.setItem('last_email', email);
+
+      msg.className = 'ok';
+      msg.textContent = 'Success. Redirecting…';
+      window.location.replace(ret);
+    } catch (e) {
+      showError(e.message || String(e));
+    }
+  }
+
+  document.getElementById('loginBtn').addEventListener('click', doLogin);
+  // Submit on Enter
+  pwEl.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') doLogin(); });
+  emailEl.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') doLogin(); });
+</script>
+</body>
+</html>

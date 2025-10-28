@@ -1,0 +1,122 @@
+/* Summary page layout with full page scroll (no inner scroll in table) */
+
+html, body { height: 100%; }
+body.compact {
+  display:flex;
+  flex-direction:column;
+  overflow:auto; /* page scroll */
+}
+header, footer { flex:0 0 auto; }
+
+/* Main area uses natural height; page scrolls if needed */
+.summary-page {
+  flex:1 1 auto;
+  display:grid;
+  gap:10px;
+  padding:0 16px;
+  overflow:visible;
+  grid-template-rows: auto 200px auto;
+}
+
+/* --- KPI Cards --- */
+.kpis {
+  display:grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap:10px;
+  margin-top:10px;
+}
+.kpi {
+  background:#0f1216;
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:8px 10px;
+}
+.kpi-label { color:var(--muted); font-size:11px; letter-spacing:.2px; }
+.kpi-value { font-size:22px; font-weight:800; margin-top:2px; line-height:1.1; }
+.kpi-value.pos { color:#8bffd1; }
+.kpi-value.neg { color:#ffd1d1; }
+.kpi-sub { color:var(--muted); font-size:11px; }
+
+/* --- Charts row --- */
+.charts-row { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+.charts-row .card { display:flex; flex-direction:column; overflow:visible; }
+.chart-title { margin-top:0; margin-bottom:6px; color:#dbeafe; font-weight:700; }
+
+/* Chart container: same height for both, center contents */
+.chart-box {
+  flex:1 1 auto;
+  width:100%;
+  height: 170px; /* ensures pie + legend fit */
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:6px 0;
+}
+.chart-box canvas{
+  width:100% !important;
+  height:100% !important;
+  max-height:100% !important;
+  display:block;
+}
+
+/* --- Daily Details (natural height; sticky headers) --- */
+.table-card { overflow:visible; display:block; margin-top:10px; }
+.table-wrap{ overflow:visible; }
+
+/* Table base */
+table.simple {
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  font-size:15px;
+  line-height:1.45;
+  border:1px solid var(--border);
+  border-radius:10px;
+  overflow:hidden;
+  background:#0b0f15;
+}
+
+/* Sticky header with soft shadow & backdrop */
+table.simple thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: linear-gradient(180deg,#0f1216 0%, #0f1216 70%, transparent 100%);
+  color: #cde0ff;
+  border-bottom: 2px solid #223045;
+  text-align:left;
+  font-weight:700;
+  backdrop-filter: saturate(110%) blur(2px);
+  box-shadow: 0 3px 8px rgba(0,0,0,.25);
+}
+
+/* Cells */
+table.simple th, table.simple td {
+  padding:10px 12px;
+  border-bottom:1px solid var(--border);
+  vertical-align:top;
+}
+table.simple tbody tr:nth-child(even){ background:#0e1116; }
+table.simple tbody tr:hover { background:#121826; }
+table.simple .num{ text-align:right; }
+
+/* Activity badges */
+.act { margin: 3px 0; line-height: 1.3em; }
+.act .badge { background:#1a2130; color:#c1d5ff; border-radius:999px; padding:2px 6px; font-size:12px; margin-right:6px; }
+
+/* Buttons / badges */
+.nav-link { text-decoration:none; padding:6px 10px; border-radius:10px; border:1px solid var(--border); }
+.soft-badge{ display:inline-block; padding:3px 8px; font-size:12px; color:#a9b5c6; border:1px solid var(--border); border-radius:999px; background:#0f1216; }
+
+/* Responsive tweaks */
+@media (max-width: 900px){
+  .kpis{ grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 800px){
+  .summary-page { grid-template-rows: auto 220px auto; }
+  .chart-box { height: 180px; }
+  .charts-row { grid-template-columns: 1fr; } /* stack charts */
+}
+@media (max-width: 600px){
+  .kpis{ grid-template-columns: 1fr; }
+}
