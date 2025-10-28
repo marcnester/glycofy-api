@@ -1,16 +1,18 @@
 # app/schemas.py
 from datetime import date
-from typing import Optional, Literal
+from typing import Literal
+
 from pydantic import BaseModel
 
+
 class UserUpdate(BaseModel):
-    sex: Optional[Literal["male", "female", "unspecified"]] = None
-    height_cm: Optional[float] = None
-    weight_kg: Optional[float] = None
-    diet_pref: Optional[str] = None
-    goal: Optional[str] = None
-    timezone: Optional[str] = None
-    dob: Optional[date] = None  # <-- actual date type
+    sex: Literal["male", "female", "unspecified"] | None = None
+    height_cm: float | None = None
+    weight_kg: float | None = None
+    diet_pref: str | None = None
+    goal: str | None = None
+    timezone: str | None = None
+    dob: date | None = None  # <-- actual date type
 
     class Config:
         orm_mode = True

@@ -1,6 +1,7 @@
 # app/config.py
-from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -22,13 +23,14 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
     # Strava OAuth
-    STRAVA_CLIENT_ID: Optional[str] = None
-    STRAVA_CLIENT_SECRET: Optional[str] = None
-    STRAVA_REDIRECT_URI: Optional[str] = None
+    STRAVA_CLIENT_ID: str | None = None
+    STRAVA_CLIENT_SECRET: str | None = None
+    STRAVA_REDIRECT_URI: str | None = None
 
     # Google OAuth
-    GOOGLE_CLIENT_ID: Optional[str] = None
-    GOOGLE_CLIENT_SECRET: Optional[str] = None
-    GOOGLE_REDIRECT_URL: Optional[str] = None  # note: we use *_URL consistently
+    GOOGLE_CLIENT_ID: str | None = None
+    GOOGLE_CLIENT_SECRET: str | None = None
+    GOOGLE_REDIRECT_URL: str | None = None  # note: we use *_URL consistently
+
 
 settings = Settings()

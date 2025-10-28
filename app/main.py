@@ -1,15 +1,23 @@
 # app/main.py
 import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 # Routers
 from app.routers import (
-    auth, users, activities, plans, recipes, imports,
-    oauth_strava, oauth_google,  # <-- ensure oauth_google is imported
-    summary
+    activities,
+    auth,
+    imports,
+    oauth_google,  # <-- ensure oauth_google is imported
+    oauth_strava,
+    plans,
+    recipes,
+    summary,
+    users,
 )
+
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Glycofy API")
@@ -48,20 +56,22 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def _dump_routes():
-        print("="*47, "Registered Routes", "="*47)
+        print("=" * 47, "Registered Routes", "=" * 47)
         for r in app.routes:
             methods = ",".join(sorted(getattr(r, "methods", []) or []))
             path = getattr(r, "path", "")
             name = getattr(r, "name", "")
             print(f"{methods:9s} {path:40s} {name}")
-        print("="*110)
+        print("=" * 110)
 
     return app
+
 
 app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
+
     host = os.getenv("API_HOST", "127.0.0.1")
     port = int(os.getenv("API_PORT", "8090"))
     print(f"🚀 Starting Glycofy API on http://{host}:{port}")

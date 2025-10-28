@@ -18,15 +18,14 @@ import asyncio
 import datetime as dt
 import os
 import random
-from typing import Optional, List
 
 from app.db import SessionLocal
 from app.models import OAuthAccount, User
 from app.services.imports_strava import sync_strava
 
 _RUNNING = False
-_STOP_EVENT: Optional[asyncio.Event] = None
-_TASK: Optional[asyncio.Task] = None
+_STOP_EVENT: asyncio.Event | None = None
+_TASK: asyncio.Task | None = None
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -43,7 +42,7 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-def _month_start_utc_iso(today_utc: Optional[dt.date] = None) -> str:
+def _month_start_utc_iso(today_utc: dt.date | None = None) -> str:
     if today_utc is None:
         today_utc = dt.datetime.utcnow().date()
     first = today_utc.replace(day=1)
@@ -65,17 +64,15 @@ async def _sync_once() -> None:
         since_iso = _month_start_utc_iso()
         db = SessionLocal()
         try:
-            linked: List[OAuthAccount] = (
-                db.query(OAuthAccount)
-                .filter(OAuthAccount.provider == "strava", OAuthAccount.linked == True)  # noqa: E712
-                .all()
+            linked: list[OAuthAccount] = (
+                db.query(OAuthAccount).filter(OAuthAccount.provider == "strava", OAuthAccount.linked == True).all()
             )
 
             print(f"🌀 [auto-sync] linked={len(linked)} since={since_iso}")
 
             for oa in linked:
                 try:
-                    user: Optional[User] = db.query(User).filter(User.id == oa.user_id).first()
+                    user: User | None = db.query(User).filter(User.id == oa.user_id).first()
                     if not user:
                         print(f"⚠️  [auto-sync] skip oa_id={oa.id}: user not found")
                         continue
@@ -102,8 +99,7 @@ async def _sync_once() -> None:
 
 async def _loop(stop_event: asyncio.Event) -> None:
     interval_hrs = _int_env("AUTO_SYNC_INTERVAL_HOURS", 24)
-    if interval_hrs < 1:
-        interval_hrs = 1
+    interval_hrs = max(interval_hrs, 1)
     interval = interval_hrs * 3600
 
     print(f"⏱️  [auto-sync] loop started (interval={interval_hrs}h, enabled={_bool_env('AUTO_SYNC_ENABLED', True)})")

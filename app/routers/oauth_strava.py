@@ -2,14 +2,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from app.db import get_db
 from app.auth_utils import get_current_user
+from app.db import get_db
 from app.models import OAuthAccount, User
 from app.services.strava_client import (
-    strava_configured,
-    get_authorize_url,
     exchange_code_for_tokens,
-    refresh_access_token,
+    get_authorize_url,
+    strava_configured,
 )
 
 router = APIRouter()  # NOTE: no prefix here; main.py mounts it at /oauth
@@ -57,11 +56,7 @@ def linked_providers(
     user: User = Depends(get_current_user),
 ):
     _ensure_configured()
-    rows = (
-        db.query(OAuthAccount)
-        .filter(OAuthAccount.user_id == user.id)
-        .all()
-    )
+    rows = db.query(OAuthAccount).filter(OAuthAccount.user_id == user.id).all()
     out = []
     for r in rows:
         out.append(
@@ -94,11 +89,9 @@ def start_strava_oauth(
     _ensure_configured()
     url = get_authorize_url(state=str(user.id))
     # Return a simple HTML page with a client-side redirect (no templates needed)
-    return (
-        f"""<html><head>
+    return f"""<html><head>
            <meta http-equiv="refresh" content="0; url={url}">
            </head><body>Redirecting to Strava… <a href="{url}">{url}</a></body></html>"""
-    )
 
 
 @router.get("/callback", summary="Strava OAuth callback")
@@ -144,7 +137,7 @@ def strava_callback(
             external_athlete_id=str(tokens.get("athlete", {}).get("id", "")),
             access_token=tokens.get("access_token"),
             refresh_token=tokens.get("refresh_token"),
-            scope=",".join(tokens.get("scope", "").split(",")) if tokens.get("scope") else None,
+            scope=(",".join(tokens.get("scope", "").split(",")) if tokens.get("scope") else None),
             expires_at=int(tokens.get("expires_at", 0)) or None,
         )
         db.add(acct)
@@ -161,8 +154,8 @@ def strava_callback(
     return (
         '<html><body style="font-family:system-ui;padding:24px;'
         'background:#0b0f14;color:#e6edf3">'
-        '<h2>Strava connected ✅</h2>'
-        '<p>You can close this tab.</p>'
+        "<h2>Strava connected ✅</h2>"
+        "<p>You can close this tab.</p>"
         '<script>setTimeout(()=>window.location="/ui/profile.html",800);</script>'
         "</body></html>"
     )

@@ -22,8 +22,6 @@ The function signature matches what the plans router expects.
 
 from __future__ import annotations
 
-from typing import Dict
-
 
 def _bmr_msj(sex: str, age_years: int, height_cm: float, weight_kg: float) -> float:
     sex = (sex or "male").lower()
@@ -58,7 +56,7 @@ def compute_targets(
     goal: str = "maintain",
     training_kcal: int = 0,
     activity_factor: float = 2.0,  # matches prior outputs (~very active)
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """
     Return daily targets as integers:
         tdee_kcal (base, after goal adjust), protein_g, carbs_g, fat_g, training_kcal
@@ -68,12 +66,11 @@ def compute_targets(
     base_tdee = bmr * float(activity_factor)
     base_tdee += _goal_adjust_kcal(goal)
     # Ensure not negative
-    if base_tdee < 1200:
-        base_tdee = 1200
+    base_tdee = max(base_tdee, 1200)
 
     # 2) Macros (on base TDEE only)
-    protein_g = round(1.8 * weight_kg)   # ~ endurance + lifting blend
-    carbs_g = round(6.0 * weight_kg)     # endurance-focused
+    protein_g = round(1.8 * weight_kg)  # ~ endurance + lifting blend
+    carbs_g = round(6.0 * weight_kg)  # endurance-focused
     protein_kcal = protein_g * 4
     carbs_kcal = carbs_g * 4
 
@@ -81,7 +78,7 @@ def compute_targets(
     fat_g = max(0, round(fat_kcal / 9))
 
     return {
-        "tdee_kcal": int(round(base_tdee)),     # base (excludes training_kcal)
+        "tdee_kcal": int(round(base_tdee)),  # base (excludes training_kcal)
         "protein_g": int(protein_g),
         "carbs_g": int(carbs_g),
         "fat_g": int(fat_g),

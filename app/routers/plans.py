@@ -1,33 +1,43 @@
 # app/routers/plans.py
 from __future__ import annotations
-from typing import Optional, Dict, List
-from fastapi import APIRouter, Depends, HTTPException, Query
+
 from datetime import date, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
 from app.db import SessionLocal
 from app.models import User
 from app.routers.auth import get_current_user
 from app.services.planner import (
-    Targets, DayPlan, compute_targets, generate_plan_meals, grocery_list_for,
-    pick_swap, to_dict, MEAL_ORDER
+    DayPlan,
+    Targets,
+    compute_targets,
+    generate_plan_meals,
+    grocery_list_for,
+    pick_swap,
+    to_dict,
 )
 
 router = APIRouter()
 
 # Very lightweight in-memory store for MVP
-_PLAN_STORE: Dict[tuple[int, str], DayPlan] = {}
+_PLAN_STORE: dict[tuple[int, str], DayPlan] = {}
 
-def _age_years_from(dob: Optional[date]) -> int:
+
+def _age_years_from(dob: date | None) -> int:
     if not dob:
         return 35
     today = date.today()
     yrs = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
     return max(14, min(90, yrs))
 
+
 def _training_kcal_today(db) -> int:
     # MVP: If you already have activities stored in DB, you can sum today’s kcal.
     # To keep this router decoupled from Activities, we’ll return 0 and rely on
     # /imports/strava/sync updating totals in future iterations.
     return 0
+
 
 def _mk_targets(diso: str, user: User, db) -> Targets:
     age = _age_years_from(user.dob)
@@ -40,6 +50,7 @@ def _mk_targets(diso: str, user: User, db) -> Targets:
         goal=user.goal or "maintain",
         training_kcal=training,
     )
+
 
 def _ensure_plan_exists(user_id: int, d_iso: str, diet_pref: str, user: User, db) -> DayPlan:
     key = (user_id, d_iso)
@@ -54,19 +65,18 @@ def _ensure_plan_exists(user_id: int, d_iso: str, diet_pref: str, user: User, db
     _PLAN_STORE[key] = plan
     return plan
 
+
 @router.get("/today")
-def plan_today(diet_pref: Optional[str] = None,
-               current: User = Depends(get_current_user)):
+def plan_today(diet_pref: str | None = None, current: User = Depends(get_current_user)):
     d_iso = date.today().isoformat()
     with SessionLocal() as db:
         desired = (diet_pref or current.diet_pref or "omnivore").lower()
         plan = _ensure_plan_exists(current.id, d_iso, desired, current, db)
         return to_dict(plan)
 
+
 @router.get("/{d}")
-def plan_get(d: str,
-             diet_pref: Optional[str] = None,
-             current: User = Depends(get_current_user)):
+def plan_get(d: str, diet_pref: str | None = None, current: User = Depends(get_current_user)):
     # validate/normalize date
     try:
         datetime.strptime(d, "%Y-%m-%d")
@@ -77,10 +87,9 @@ def plan_get(d: str,
         plan = _ensure_plan_exists(current.id, d, desired, current, db)
         return to_dict(plan)
 
+
 @router.post("/{d}/lock")
-def plan_lock(d: str,
-              lock: bool = Query(True),
-              current: User = Depends(get_current_user)):
+def plan_lock(d: str, lock: bool = Query(True), current: User = Depends(get_current_user)):
     try:
         datetime.strptime(d, "%Y-%m-%d")
     except ValueError:
@@ -91,11 +100,14 @@ def plan_lock(d: str,
     _PLAN_STORE[key].locked = bool(lock)
     return {"date": d, "locked": _PLAN_STORE[key].locked}
 
+
 @router.post("/{d}/swap")
-def plan_swap(d: str,
-              meal_type: str = Query(..., pattern="^(breakfast|lunch|dinner|snack)$"),
-              exclude: Optional[str] = None,
-              current: User = Depends(get_current_user)):
+def plan_swap(
+    d: str,
+    meal_type: str = Query(..., pattern="^(breakfast|lunch|dinner|snack)$"),
+    exclude: str | None = None,
+    current: User = Depends(get_current_user),
+):
     try:
         datetime.strptime(d, "%Y-%m-%d")
     except ValueError:
@@ -120,7 +132,7 @@ def plan_swap(d: str,
         exclude_titles.append(current_meal.title)
 
     # Diet pref – use user preference for replacement
-    diet_pref = (current.diet_pref or "omnivore")
+    diet_pref = current.diet_pref or "omnivore"
     new_m = pick_swap(diet_pref, meal_type, exclude_titles, kcal_hint)
     if not new_m:
         raise HTTPException(status_code=404, detail="no_alternative_found")
@@ -130,9 +142,9 @@ def plan_swap(d: str,
     plan.grocery_list = grocery_list_for(plan.meals)
     return to_dict(plan)
 
+
 @router.get("/{d}/grocery.txt")
-def plan_grocery_txt(d: str,
-                     current: User = Depends(get_current_user)):
+def plan_grocery_txt(d: str, current: User = Depends(get_current_user)):
     try:
         datetime.strptime(d, "%Y-%m-%d")
     except ValueError:
@@ -143,9 +155,9 @@ def plan_grocery_txt(d: str,
     plan = _PLAN_STORE[key]
     return "\n".join(plan.grocery_list)
 
+
 @router.get("/{d}/grocery.csv")
-def plan_grocery_csv(d: str,
-                     current: User = Depends(get_current_user)):
+def plan_grocery_csv(d: str, current: User = Depends(get_current_user)):
     try:
         datetime.strptime(d, "%Y-%m-%d")
     except ValueError:
@@ -157,6 +169,7 @@ def plan_grocery_csv(d: str,
     # Build a minimal CSV safely (no backslashes in f-strings)
     import csv
     import io
+
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["item"])

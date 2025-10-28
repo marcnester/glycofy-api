@@ -1,8 +1,7 @@
 # app/services/strava_client.py
 from __future__ import annotations
 
-import time
-from typing import Optional, Dict, Any
+from typing import Any
 from urllib.parse import urlencode
 
 import requests
@@ -15,14 +14,10 @@ STRAVA_API_BASE = "https://www.strava.com/api/v3"
 
 def strava_configured() -> bool:
     """Return True if all required Strava settings are present."""
-    return bool(
-        settings.STRAVA_CLIENT_ID
-        and settings.STRAVA_CLIENT_SECRET
-        and settings.STRAVA_REDIRECT_URI
-    )
+    return bool(settings.STRAVA_CLIENT_ID and settings.STRAVA_CLIENT_SECRET and settings.STRAVA_REDIRECT_URI)
 
 
-def get_authorize_url(state: Optional[str] = None, scope: Optional[str] = None) -> str:
+def get_authorize_url(state: str | None = None, scope: str | None = None) -> str:
     """
     Build the Strava OAuth authorize URL.
     We support 'state' (so we can round-trip the user id) and a customizable scope.
@@ -48,11 +43,11 @@ def get_authorize_url(state: Optional[str] = None, scope: Optional[str] = None) 
 
 
 # Backward-compatible alias for any existing imports
-def build_authorize_url(state: Optional[str] = None, scope: Optional[str] = None) -> str:
+def build_authorize_url(state: str | None = None, scope: str | None = None) -> str:
     return get_authorize_url(state=state, scope=scope)
 
 
-def exchange_code_for_tokens(code: str) -> Dict[str, Any]:
+def exchange_code_for_tokens(code: str) -> dict[str, Any]:
     """
     Exchange an authorization code for an access+refresh token set.
     https://developers.strava.com/docs/authentication/
@@ -72,7 +67,7 @@ def exchange_code_for_tokens(code: str) -> Dict[str, Any]:
     return resp.json()
 
 
-def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
+def refresh_access_token(refresh_token: str) -> dict[str, Any]:
     """
     Refresh an access token using a refresh token.
     """
@@ -91,7 +86,7 @@ def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
     return resp.json()
 
 
-def get_with_bearer(path: str, access_token: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def get_with_bearer(path: str, access_token: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Convenience helper to call Strava API (GET) with bearer token.
     """

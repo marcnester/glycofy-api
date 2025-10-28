@@ -1,11 +1,13 @@
 # scripts/reset_demo_password.py
 from sqlalchemy.orm import Session
-from app.db import SessionLocal, engine
+
+from app.db import SessionLocal
 from app.models import User
 from app.security import hash_password
 
 DEMO_EMAIL = "demo@glycofy.app"
 NEW_PWD = "Demo1234!"
+
 
 def main():
     db: Session = SessionLocal()
@@ -21,6 +23,7 @@ def main():
         return 0
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

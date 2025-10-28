@@ -1,6 +1,8 @@
 # scripts/migrate_add_plans.py
 from __future__ import annotations
+
 import sqlite3
+
 from app.config import settings
 
 DDL = [
@@ -46,6 +48,7 @@ DDL = [
     "CREATE INDEX IF NOT EXISTS ix_plan_meal_plan ON plan_meals(plan_id);",
 ]
 
+
 def main():
     dsn = settings.database_url
     if not dsn.startswith("sqlite:///"):
@@ -61,6 +64,7 @@ def main():
     finally:
         conn.close()
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

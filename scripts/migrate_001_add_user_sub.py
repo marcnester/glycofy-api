@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-import os, sqlite3, sys
+import os
+import sqlite3
+import sys
 
 DB_PATH = os.getenv("DATABASE_URL", "sqlite:///./glycofy.db")
 if DB_PATH.startswith("sqlite:///"):
@@ -10,24 +12,39 @@ conn = sqlite3.connect(DB_PATH)
 conn.row_factory = sqlite3.Row
 cur = conn.cursor()
 
+
 def get_columns(table):
     cur.execute(f"PRAGMA table_info({table});")
     return {row["name"]: row for row in cur.fetchall()}
+
 
 def table_exists(table):
     cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?;", (table,))
     return cur.fetchone() is not None
 
+
 def index_exists(name):
     cur.execute("SELECT name FROM sqlite_master WHERE type='index' AND name=?;", (name,))
     return cur.fetchone() is not None
+
 
 def current_shape_ok():
     if not table_exists("activities"):
         return False
     cols = get_columns("activities")
-    needed = ["id","user_sub","strava_id","name","type","start_time","duration_sec","distance_m","kcal"]
+    needed = [
+        "id",
+        "user_sub",
+        "strava_id",
+        "name",
+        "type",
+        "start_time",
+        "duration_sec",
+        "distance_m",
+        "kcal",
+    ]
     return all(c in cols for c in needed)
+
 
 try:
     print("[migrate] BEGIN")
@@ -36,7 +53,8 @@ try:
 
     if not table_exists("activities"):
         print("[migrate] activities does not exist — creating fresh table")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE activities (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               user_sub TEXT NOT NULL,
@@ -48,14 +66,16 @@ try:
               distance_m INTEGER NOT NULL,
               kcal INTEGER NOT NULL DEFAULT 0
             );
-        """)
+        """
+        )
     elif not current_shape_ok():
         print("[migrate] rebuilding activities table to new schema")
         # Detect if old table has strava_id
         old_cols = get_columns("activities")
         has_strava_id = "strava_id" in old_cols
         # Build a new table
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE activities_new (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               user_sub TEXT NOT NULL,
@@ -67,7 +87,8 @@ try:
               distance_m INTEGER NOT NULL,
               kcal INTEGER NOT NULL DEFAULT 0
             );
-        """)
+        """
+        )
         # Compose copy statement
         # Map strava_id: prefer old.strava_id; else old.id
         # Map kcal: prefer old.kcal; else 0

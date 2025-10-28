@@ -7,9 +7,8 @@ Run with:  python -m scripts.create_tables
 
 from __future__ import annotations
 
-from app.db import Base, engine
 # Import models to ensure tables are registered with Base
-import app.models  # noqa: F401
+from app.db import Base, engine
 
 
 def main() -> int:

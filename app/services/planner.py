@@ -1,12 +1,13 @@
 # app/services/planner.py
 from __future__ import annotations
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Optional, Tuple
+
+from dataclasses import asdict, dataclass
 from datetime import date
 
 # ---- Data models ----
 
 MEAL_ORDER = ("breakfast", "lunch", "dinner", "snack")
+
 
 @dataclass
 class Targets:
@@ -17,6 +18,7 @@ class Targets:
     carbs_g: int
     fat_g: int
 
+
 @dataclass
 class Meal:
     title: str
@@ -25,23 +27,27 @@ class Meal:
     protein_g: int
     carbs_g: int
     fat_g: int
-    ingredients: List[str]
+    ingredients: list[str]
     instructions: str
-    diet_tags: List[str]
+    diet_tags: list[str]
+
 
 @dataclass
 class DayPlan:
     date: str
     locked: bool
     targets: Targets
-    meals: List[Meal]
-    grocery_list: List[str]
+    meals: list[Meal]
+    grocery_list: list[str]
+
 
 # ---- Helpers ----
+
 
 def _clamp_int(v: float, lo: int, hi: int) -> int:
     iv = int(round(v))
     return max(lo, min(hi, iv))
+
 
 def _mifflin_st_jeor(sex: str, weight_kg: float, height_cm: float, age_years: int) -> float:
     # BMR (Mifflin-St Jeor)
@@ -50,6 +56,7 @@ def _mifflin_st_jeor(sex: str, weight_kg: float, height_cm: float, age_years: in
     # default male if unknown
     return 10 * weight_kg + 6.25 * height_cm - 5 * age_years + 5
 
+
 def compute_targets(
     *,
     sex: str,
@@ -57,7 +64,7 @@ def compute_targets(
     weight_kg: float,
     age_years: int,
     goal: str,
-    training_kcal: int
+    training_kcal: int,
 ) -> Targets:
     """
     Compute maintenance + training, then macro split:
@@ -92,112 +99,226 @@ def compute_targets(
         fat_g=int(round(fat_g)),
     )
 
+
 # Very small “template” cookbook for MVP
 # Each entry returns a Meal for a given kcal target fraction.
-def _templates_for_diet(diet_pref: str) -> Dict[str, List[Tuple[str, List[str], str, List[str]]]]:
+def _templates_for_diet(
+    diet_pref: str,
+) -> dict[str, list[tuple[str, list[str], str, list[str]]]]:
     """
     Returns per-meal templates: title, ingredients, instructions, tags
     """
-    omni = {
+    omni: dict[str, list[tuple[str, list[str], str, list[str]]]] = {
         "breakfast": [
-            ("Greek Yogurt + Berries + Granola",
-             ["1 cup Greek yogurt", "1/2 cup berries", "1/4 cup granola", "honey (optional)"],
-             "Combine in bowl.", ["omnivore", "vegetarian"]),
-            ("Eggs + Toast",
-             ["2 eggs", "2 slices whole-grain toast", "butter or olive oil"],
-             "Scramble eggs; toast bread; serve.", ["omnivore"]),
+            (
+                "Greek Yogurt + Berries + Granola",
+                [
+                    "1 cup Greek yogurt",
+                    "1/2 cup berries",
+                    "1/4 cup granola",
+                    "honey (optional)",
+                ],
+                "Combine in bowl.",
+                ["omnivore", "vegetarian"],
+            ),
+            (
+                "Eggs + Toast",
+                ["2 eggs", "2 slices whole-grain toast", "butter or olive oil"],
+                "Scramble eggs; toast bread; serve.",
+                ["omnivore"],
+            ),
         ],
         "lunch": [
-            ("Chicken Rice Bowl",
-             ["6 oz chicken breast", "1 cup cooked rice", "mixed greens", "vinaigrette"],
-             "Grill chicken; assemble bowl.", ["omnivore"]),
-            ("Turkey Sandwich + Fruit",
-             ["2 slices whole-grain bread", "4 oz turkey", "lettuce", "tomato", "mustard", "1 fruit"],
-             "Build sandwich; serve with fruit.", ["omnivore"]),
+            (
+                "Chicken Rice Bowl",
+                [
+                    "6 oz chicken breast",
+                    "1 cup cooked rice",
+                    "mixed greens",
+                    "vinaigrette",
+                ],
+                "Grill chicken; assemble bowl.",
+                ["omnivore"],
+            ),
+            (
+                "Turkey Sandwich + Fruit",
+                [
+                    "2 slices whole-grain bread",
+                    "4 oz turkey",
+                    "lettuce",
+                    "tomato",
+                    "mustard",
+                    "1 fruit",
+                ],
+                "Build sandwich; serve with fruit.",
+                ["omnivore"],
+            ),
         ],
         "dinner": [
-            ("Salmon + Rice + Veg",
-             ["6 oz salmon", "1 cup cooked rice", "1–2 cups veggies", "soy or teriyaki"],
-             "Bake salmon; steam/sauté veggies; serve.", ["pescatarian", "omnivore"]),
-            ("Beef Stir-Fry + Rice",
-             ["6 oz lean beef", "1 cup cooked rice", "stir-fry veggies", "teriyaki"],
-             "Stir-fry beef+veg; serve with rice.", ["omnivore"]),
+            (
+                "Salmon + Rice + Veg",
+                [
+                    "6 oz salmon",
+                    "1 cup cooked rice",
+                    "1-2 cups veggies",
+                    "soy or teriyaki",
+                ],
+                "Bake salmon; steam/sauté veggies; serve.",
+                ["pescatarian", "omnivore"],
+            ),
+            (
+                "Beef Stir-Fry + Rice",
+                ["6 oz lean beef", "1 cup cooked rice", "stir-fry veggies", "teriyaki"],
+                "Stir-fry beef+veg; serve with rice.",
+                ["omnivore"],
+            ),
         ],
         "snack": [
-            ("Banana + PB",
-             ["1 banana", "2 tbsp peanut butter"],
-             "Slice banana; add PB.", ["omnivore", "vegetarian", "vegan"]),
-            ("Protein Shake",
-             ["1 scoop whey protein", "water or milk"],
-             "Shake well.", ["omnivore"]),
+            (
+                "Banana + PB",
+                ["1 banana", "2 tbsp peanut butter"],
+                "Slice banana; add PB.",
+                ["omnivore", "vegetarian", "vegan"],
+            ),
+            (
+                "Protein Shake",
+                ["1 scoop whey protein", "water or milk"],
+                "Shake well.",
+                ["omnivore"],
+            ),
         ],
     }
-    pesc = {
+    pesc: dict[str, list[tuple[str, list[str], str, list[str]]]] = {
         "breakfast": [
-            ("Smoked Salmon Toast",
-             ["2 slices sourdough", "3 oz smoked salmon", "1/2 avocado", "capers", "tomato"],
-             "Toast; top with avocado, salmon, tomato, capers.", ["pescatarian", "omnivore"]),
-            ("Greek Yogurt + Berries + Granola",
-             ["1 cup Greek yogurt", "1/2 cup berries", "1/4 cup granola", "honey (optional)"],
-             "Combine in bowl.", ["pescatarian", "vegetarian"]),
+            (
+                "Smoked Salmon Toast",
+                [
+                    "2 slices sourdough",
+                    "3 oz smoked salmon",
+                    "1/2 avocado",
+                    "capers",
+                    "tomato",
+                ],
+                "Toast; top with avocado, salmon, tomato, capers.",
+                ["pescatarian", "omnivore"],
+            ),
+            (
+                "Greek Yogurt + Berries + Granola",
+                [
+                    "1 cup Greek yogurt",
+                    "1/2 cup berries",
+                    "1/4 cup granola",
+                    "honey (optional)",
+                ],
+                "Combine in bowl.",
+                ["pescatarian", "vegetarian"],
+            ),
         ],
         "lunch": [
-            ("Salmon Rice Bowl",
-             ["6 oz salmon", "1 cup cooked rice", "edamame", "seaweed salad", "soy/teriyaki"],
-             "Bake salmon; assemble bowl.", ["pescatarian", "omnivore"]),
-            ("Tuna Wrap",
-             ["1 whole-grain wrap", "1 can tuna", "lettuce", "tomato", "mustard"],
-             "Mix tuna; wrap with veg.", ["pescatarian"]),
+            (
+                "Salmon Rice Bowl",
+                [
+                    "6 oz salmon",
+                    "1 cup cooked rice",
+                    "edamame",
+                    "seaweed salad",
+                    "soy/teriyaki",
+                ],
+                "Bake salmon; assemble bowl.",
+                ["pescatarian", "omnivore"],
+            ),
+            (
+                "Tuna Wrap",
+                ["1 whole-grain wrap", "1 can tuna", "lettuce", "tomato", "mustard"],
+                "Mix tuna; wrap with veg.",
+                ["pescatarian"],
+            ),
         ],
         "dinner": [
-            ("Teriyaki Salmon + Rice + Bok Choy",
-             ["6 oz salmon", "1 cup cooked jasmine rice", "1 cup bok choy", "teriyaki sauce"],
-             "Bake salmon; steam bok choy; serve.", ["pescatarian", "omnivore"]),
-            ("Shrimp Pasta",
-             ["6 oz shrimp", "2 cups cooked pasta", "garlic", "olive oil", "lemon"],
-             "Sauté shrimp; toss pasta with oil & lemon.", ["pescatarian"]),
+            (
+                "Teriyaki Salmon + Rice + Bok Choy",
+                [
+                    "6 oz salmon",
+                    "1 cup cooked jasmine rice",
+                    "1 cup bok choy",
+                    "teriyaki sauce",
+                ],
+                "Bake salmon; steam bok choy; serve.",
+                ["pescatarian", "omnivore"],
+            ),
+            (
+                "Shrimp Pasta",
+                ["6 oz shrimp", "2 cups cooked pasta", "garlic", "olive oil", "lemon"],
+                "Sauté shrimp; toss pasta with oil & lemon.",
+                ["pescatarian"],
+            ),
         ],
         "snack": [
-            ("Roasted Edamame",
-             ["1 cup shelled edamame", "salt", "oil spray"],
-             "Roast 12–15 min at 400°F.", ["vegan", "pescatarian", "omnivore"]),
-            ("Protein Shake",
-             ["1 scoop whey protein", "water or milk"],
-             "Shake well.", ["pescatarian", "omnivore"]),
+            (
+                "Roasted Edamame",
+                ["1 cup shelled edamame", "salt", "oil spray"],
+                "Roast 12-15 min at 400°F.",
+                ["vegan", "pescatarian", "omnivore"],
+            ),
+            (
+                "Protein Shake",
+                ["1 scoop whey protein", "water or milk"],
+                "Shake well.",
+                ["pescatarian", "omnivore"],
+            ),
         ],
     }
-    vegan = {
+    vegan: dict[str, list[tuple[str, list[str], str, list[str]]]] = {
         "breakfast": [
-            ("Tofu Scramble + Toast",
-             ["6 oz firm tofu", "spices", "2 slices toast", "olive oil"],
-             "Crumble tofu & cook; toast bread.", ["vegan"]),
-            ("Overnight Oats",
-             ["1/2 cup oats", "plant milk", "1 tbsp chia", "berries"],
-             "Mix & refrigerate overnight.", ["vegan"]),
+            (
+                "Tofu Scramble + Toast",
+                ["6 oz firm tofu", "spices", "2 slices toast", "olive oil"],
+                "Crumble tofu & cook; toast bread.",
+                ["vegan"],
+            ),
+            (
+                "Overnight Oats",
+                ["1/2 cup oats", "plant milk", "1 tbsp chia", "berries"],
+                "Mix & refrigerate overnight.",
+                ["vegan"],
+            ),
         ],
         "lunch": [
-            ("Chickpea Bowl",
-             ["1 cup chickpeas", "1 cup rice or quinoa", "greens", "tahini"],
-             "Assemble bowl; drizzle tahini.", ["vegan"]),
-            ("Veggie Wrap",
-             ["whole-grain wrap", "hummus", "mixed veggies"],
-             "Spread hummus; wrap veggies.", ["vegan"]),
+            (
+                "Chickpea Bowl",
+                ["1 cup chickpeas", "1 cup rice or quinoa", "greens", "tahini"],
+                "Assemble bowl; drizzle tahini.",
+                ["vegan"],
+            ),
+            (
+                "Veggie Wrap",
+                ["whole-grain wrap", "hummus", "mixed veggies"],
+                "Spread hummus; wrap veggies.",
+                ["vegan"],
+            ),
         ],
         "dinner": [
-            ("Tofu Stir-Fry + Rice",
-             ["6 oz tofu", "stir-fry veggies", "1 cup cooked rice", "soy sauce"],
-             "Stir-fry; serve with rice.", ["vegan"]),
-            ("Lentil Pasta",
-             ["2 cups cooked pasta", "1 cup cooked lentils", "tomato sauce"],
-             "Heat sauce with lentils; toss pasta.", ["vegan"]),
+            (
+                "Tofu Stir-Fry + Rice",
+                ["6 oz tofu", "stir-fry veggies", "1 cup cooked rice", "soy sauce"],
+                "Stir-fry; serve with rice.",
+                ["vegan"],
+            ),
+            (
+                "Lentil Pasta",
+                ["2 cups cooked pasta", "1 cup cooked lentils", "tomato sauce"],
+                "Heat sauce with lentils; toss pasta.",
+                ["vegan"],
+            ),
         ],
         "snack": [
-            ("Apple + Almonds",
-             ["1 apple", "1 oz almonds"],
-             "Snack time.", ["vegan"]),
-            ("Roasted Edamame",
-             ["1 cup shelled edamame", "salt", "oil spray"],
-             "Roast 12–15 min at 400°F.", ["vegan"]),
+            ("Apple + Almonds", ["1 apple", "1 oz almonds"], "Snack time.", ["vegan"]),
+            (
+                "Roasted Edamame",
+                ["1 cup shelled edamame", "salt", "oil spray"],
+                "Roast 12-15 min at 400°F.",
+                ["vegan"],
+            ),
         ],
     }
 
@@ -208,7 +329,8 @@ def _templates_for_diet(diet_pref: str) -> Dict[str, List[Tuple[str, List[str], 
         return vegan
     return omni
 
-def _allocate_kcal(targets: Targets) -> Dict[str, int]:
+
+def _allocate_kcal(targets: Targets) -> dict[str, int]:
     # Simple split, rounded to whole numbers
     # breakfast 22%, lunch 28%, dinner 32%, snack 18%
     total = targets.tdee_kcal
@@ -219,17 +341,19 @@ def _allocate_kcal(targets: Targets) -> Dict[str, int]:
         "snack": int(round(total * 0.18)),
     }
 
-def _macro_split(kcal: int) -> Tuple[int, int, int]:
+
+def _macro_split(kcal: int) -> tuple[int, int, int]:
     # 25P / 50C / 25F split for a single meal
     p = int(round(kcal * 0.25 / 4.0))
     c = int(round(kcal * 0.50 / 4.0))
     f = int(round(kcal * 0.25 / 9.0))
     return p, c, f
 
-def generate_plan_meals(diet_pref: str, targets: Targets) -> List[Meal]:
+
+def generate_plan_meals(diet_pref: str, targets: Targets) -> list[Meal]:
     templates = _templates_for_diet(diet_pref)
     alloc = _allocate_kcal(targets)
-    meals: List[Meal] = []
+    meals: list[Meal] = []
 
     for mt in MEAL_ORDER:
         templ_list = templates.get(mt) or []
@@ -253,10 +377,11 @@ def generate_plan_meals(diet_pref: str, targets: Targets) -> List[Meal]:
         )
     return meals
 
-def pick_swap(diet_pref: str, meal_type: str, exclude_titles: List[str], kcal_hint: int) -> Optional[Meal]:
+
+def pick_swap(diet_pref: str, meal_type: str, exclude_titles: list[str], kcal_hint: int) -> Meal | None:
     templates = _templates_for_diet(diet_pref)
     candidates = templates.get(meal_type, [])
-    for (title, ingredients, instructions, tags) in candidates:
+    for title, ingredients, instructions, tags in candidates:
         if title in (exclude_titles or []):
             continue
         kp = max(300, kcal_hint)
@@ -274,9 +399,10 @@ def pick_swap(diet_pref: str, meal_type: str, exclude_titles: List[str], kcal_hi
         )
     return None
 
-def grocery_list_for(meals: List[Meal]) -> List[str]:
-    seen = set()
-    out: List[str] = []
+
+def grocery_list_for(meals: list[Meal]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
     for m in meals:
         for ing in m.ingredients:
             key = ing.strip().lower()
@@ -289,7 +415,8 @@ def grocery_list_for(meals: List[Meal]) -> List[str]:
     out.sort(key=lambda s: s.lower())
     return out
 
-def to_dict(plan: DayPlan) -> Dict:
+
+def to_dict(plan: DayPlan) -> dict:
     return {
         "date": plan.date,
         "locked": plan.locked,

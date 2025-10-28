@@ -8,13 +8,13 @@ from datetime import timedelta
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
+from app.auth_utils import create_access_token
 from app.config import settings
 from app.db import get_db
 from app.models import User
-from app.auth_utils import create_access_token
 
 router = APIRouter()
 
@@ -126,13 +126,23 @@ def google_callback(
     # Upsert user
     user = db.query(User).filter(User.email == email).first()
     if not user:
-        user = User(email=email, sex=None, height_cm=None, weight_kg=None, diet_pref="omnivore", goal="maintain")
+        user = User(
+            email=email,
+            sex=None,
+            height_cm=None,
+            weight_kg=None,
+            diet_pref="omnivore",
+            goal="maintain",
+        )
         db.add(user)
         db.commit()
         db.refresh(user)
 
     # Mint our app token (cookie only; frontend never sees it)
-    from app.auth_utils import ACCESS_TOKEN_EXPIRE_MINUTES  # import here to avoid cycles
+    from app.auth_utils import (
+        ACCESS_TOKEN_EXPIRE_MINUTES,
+    )  # import here to avoid cycles
+
     app_token = create_access_token(user.id, minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
     resp = RedirectResponse(url="/ui/")

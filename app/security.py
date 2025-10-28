@@ -8,11 +8,13 @@ pwd_context = CryptContext(
     deprecated="auto",
 )
 
+
 def hash_password(password: str) -> str:
     """
     Hash a plaintext password using the default scheme.
     """
     return pwd_context.hash(password)
+
 
 def verify_password(plain_password: str, password_hash: str) -> bool:
     """

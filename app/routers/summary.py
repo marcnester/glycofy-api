@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -36,7 +35,7 @@ def _coerce_date(v) -> date:
     return None
 
 
-def _activity_date(act: Activity) -> Optional[date]:
+def _activity_date(act: Activity) -> date | None:
     """
     Extract a date for grouping from the Activity instance.
     We try the common fields in order to be resilient to schema differences.
@@ -47,15 +46,15 @@ def _activity_date(act: Activity) -> Optional[date]:
     return None
 
 
-def _daterange_inclusive(d0: date, d1: date) -> List[date]:
+def _daterange_inclusive(d0: date, d1: date) -> list[date]:
     step = 1 + (d1 - d0).days
     return [d0 + timedelta(days=i) for i in range(max(step, 0))]
 
 
 @router.get("/summary", summary="Weekly summary over a date range")
 def get_summary(
-    from_: Optional[str] = Query(None, alias="from", description="YYYY-MM-DD (inclusive)"),
-    to: Optional[str] = Query(None, description="YYYY-MM-DD (inclusive)"),
+    from_: str | None = Query(None, alias="from", description="YYYY-MM-DD (inclusive)"),
+    to: str | None = Query(None, description="YYYY-MM-DD (inclusive)"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -112,10 +111,10 @@ def get_summary(
     # We don't know your exact Activity schema; this is robust to different
     # "date-ish" columns because we post-filter by computed _activity_date().
     q = db.query(Activity).filter(Activity.user_id == user.id)
-    activities: List[Activity] = q.all()
+    activities: list[Activity] = q.all()
 
     # Filter to range using extracted date
-    acts_in_range: List[Activity] = []
+    acts_in_range: list[Activity] = []
     for a in activities:
         ad = _activity_date(a)
         if ad is None:
@@ -124,18 +123,18 @@ def get_summary(
             acts_in_range.append(a)
 
     # ----- Prepare day buckets -----
-    days_map: Dict[str, Dict] = {}
+    days_map: dict[str, dict] = {}
     for d in _daterange_inclusive(from_d, to_d):
         key = d.isoformat()
         days_map[key] = {
             "date": key,
             "training_kcal": 0,
-            "planned_kcal": 0,   # we’ll set = training_kcal later
-            "activities": [],    # filled below from _sports
-            "meals": [],         # placeholder for future plan integration
+            "planned_kcal": 0,  # we’ll set = training_kcal later
+            "activities": [],  # filled below from _sports
+            "meals": [],  # placeholder for future plan integration
             "diet_pref": user.diet_pref or "omnivore",
-            "_sports": {},       # temp map: sport -> kcal
-            "_count": 0,         # number of activities (all, including zero-kcal)
+            "_sports": {},  # temp map: sport -> kcal
+            "_count": 0,  # number of activities (all, including zero-kcal)
         }
 
     # ----- Aggregate activities -----

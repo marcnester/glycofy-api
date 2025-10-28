@@ -1,12 +1,11 @@
 # app/routers/users.py
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
-from typing import Optional, Any, Dict
+from datetime import UTC, date, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, field_validator
-
 from sqlalchemy import text
 
 from app.db import get_db
@@ -17,29 +16,30 @@ router = APIRouter()
 
 # ---------- Schemas ----------
 
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     email: str
-    sex: Optional[str] = None
-    dob: Optional[date] = None
-    height_cm: Optional[float] = None
-    weight_kg: Optional[float] = None
-    diet_pref: Optional[str] = None
-    goal: Optional[str] = None
-    timezone: Optional[str] = None
+    sex: str | None = None
+    dob: date | None = None
+    height_cm: float | None = None
+    weight_kg: float | None = None
+    diet_pref: str | None = None
+    goal: str | None = None
+    timezone: str | None = None
 
 
 class UserUpdate(BaseModel):
     # all optional; only provided fields are updated
-    sex: Optional[str] = None
-    dob: Optional[date] = None
-    height_cm: Optional[float] = None
-    weight_kg: Optional[float] = None
-    diet_pref: Optional[str] = None
-    goal: Optional[str] = None
-    timezone: Optional[str] = None
+    sex: str | None = None
+    dob: date | None = None
+    height_cm: float | None = None
+    weight_kg: float | None = None
+    diet_pref: str | None = None
+    goal: str | None = None
+    timezone: str | None = None
 
     # Accept ISO date strings too (e.g., "1975-01-01")
     @field_validator("dob", mode="before")
@@ -61,14 +61,17 @@ class UserUpdate(BaseModel):
 
 IMPACT_FIELDS = {"sex", "dob", "height_cm", "weight_kg", "diet_pref", "goal"}
 
-def _today_iso() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
 
-def _impact_changed(user: User, payload: Dict[str, Any]) -> bool:
+def _today_iso() -> str:
+    return datetime.now(UTC).date().isoformat()
+
+
+def _impact_changed(user: User, payload: dict[str, Any]) -> bool:
     for k in IMPACT_FIELDS:
         if k in payload and getattr(user, k) != payload[k]:
             return True
     return False
+
 
 def _invalidate_plans_from_today(db, user_id: int) -> int:
     """
@@ -80,11 +83,7 @@ def _invalidate_plans_from_today(db, user_id: int) -> int:
     deleted = 0
     try:
         # First, check if the table day_plans exists (portable-ish)
-        res = db.execute(
-            text(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='day_plans'"
-            )
-        ).fetchone()
+        res = db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='day_plans'")).fetchone()
         if not res:
             # Table might have a different name; try a generic delete that will fail quietly
             return 0
@@ -103,6 +102,7 @@ def _invalidate_plans_from_today(db, user_id: int) -> int:
 
 
 # ---------- Routes ----------
+
 
 @router.get("/me", response_model=UserOut, summary="Get current user")
 def get_me(current: User = Depends(get_current_user)) -> UserOut:
@@ -138,9 +138,6 @@ def update_me(
     if will_invalidate:
         deleted = _invalidate_plans_from_today(db, current.id)
         db.commit()
-        print(
-            f"[users.update_me] invalidated {deleted} day_plans rows "
-            f"for user={current.id} from { _today_iso() }"
-        )
+        print(f"[users.update_me] invalidated {deleted} day_plans rows " f"for user={current.id} from { _today_iso() }")
 
     return current

@@ -1,220 +1,140 @@
-# app/routers/oauth_google.py
 from __future__ import annotations
 
 import os
-import secrets
 import time
-from typing import Optional, Tuple
+from typing import Any
+from urllib.parse import quote
 
 import requests
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.db import get_db
-from app.models import User, OAuthAccount
-from app.auth_utils import create_access_token
+from app.models import OAuthAccount, User  # adjust imports if needed
 
-router = APIRouter()
+router = APIRouter(prefix="/oauth", tags=["oauth-google"])
 
-# ---- Config helpers ---------------------------------------------------------
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8090/oauth/google/callback")
 
-def _google_cfg() -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    client_id = getattr(settings, "GOOGLE_CLIENT_ID", None) or os.getenv("GOOGLE_CLIENT_ID")
-    client_secret = getattr(settings, "GOOGLE_CLIENT_SECRET", None) or os.getenv("GOOGLE_CLIENT_SECRET")
-    redirect_uri = getattr(settings, "GOOGLE_REDIRECT_URL", None) or os.getenv("GOOGLE_REDIRECT_URL")
-    return client_id, client_secret, redirect_uri
-
-
-def _is_configured() -> bool:
-    cid, sec, redir = _google_cfg()
-    return bool(cid and sec and redir)
+AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+SCOPE = "openid email profile"
 
 
-# ---- Introspection endpoint for the UI -------------------------------------
-
-@router.get("/google/status")
-def google_status():
-    """Used by /ui/login.js to decide whether to show the Google button."""
-    return {"configured": _is_configured()}
+def _ensure_configured() -> None:
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=500, detail="Google OAuth not configured")
 
 
-# ---- Start OAuth ------------------------------------------------------------
-
-@router.get("/google/start")
-def google_start(request: Request, response: Response):
-    """
-    Redirect the browser to Google's consent screen.
-    Stores a short-lived `oauth_google_state` cookie for CSRF protection.
-    """
-    client_id, client_secret, redirect_uri = _google_cfg()
-    if not _is_configured():
-        raise HTTPException(status_code=503, detail="Google OAuth not configured")
-
-    # CSRF state
-    state = secrets.token_urlsafe(24)
-    # 10 minutes should be plenty
-    response = RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
-    response.set_cookie(
-        key="oauth_google_state",
-        value=state,
-        httponly=True,
-        samesite="lax",
-        max_age=600,
-        path="/",
+@router.get("/google/start-url", summary="Return Google authorization URL")
+def start_google_oauth_url() -> dict[str, str]:
+    _ensure_configured()
+    q = (
+        f"client_id={quote(GOOGLE_CLIENT_ID)}"
+        f"&redirect_uri={quote(GOOGLE_REDIRECT_URI)}"
+        f"&response_type=code"
+        f"&scope={quote(SCOPE)}"
+        f"&access_type=offline"
+        f"&prompt=consent"
     )
-
-    scope = "openid email profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile"
-    auth_url = (
-        "https://accounts.google.com/o/oauth2/v2/auth"
-        f"?client_id={client_id}"
-        f"&redirect_uri={redirect_uri}"
-        "&response_type=code"
-        f"&scope={requests.utils.quote(scope)}"
-        f"&state={state}"
-        "&access_type=online"
-        "&include_granted_scopes=true"
-        # Optional: "&prompt=consent"
-    )
-    response.headers["Location"] = auth_url
-    return response
+    return {"url": f"{AUTH_URL}?{q}"}
 
 
-# ---- Callback ---------------------------------------------------------------
+@router.get("/google/status", summary="Check if Google OAuth is linked for current user")
+def google_status(
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    # If you also want to require auth to check status, accept current_user via Depends
+    return {"configured": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)}
+
 
 @router.get("/google/callback")
 def google_callback(
     request: Request,
-    code: Optional[str] = None,
-    state: Optional[str] = None,
+    code: str | None = None,
+    state: str | None = None,
     db: Session = Depends(get_db),
 ):
-    """
-    Google redirects here with ?code=...&state=...
-    We verify state, exchange code for tokens, fetch profile, create/upsert user,
-    set our HttpOnly JWT cookie, and redirect to the UI.
-    """
-    client_id, client_secret, redirect_uri = _google_cfg()
-    if not _is_configured():
-        raise HTTPException(status_code=503, detail="Google OAuth not configured")
-
-    # CSRF state check
-    expected_state = request.cookies.get("oauth_google_state")
-    if not expected_state or not state or state != expected_state:
-        raise HTTPException(status_code=400, detail="Invalid or missing OAuth state")
+    _ensure_configured()
 
     if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code")
+        raise HTTPException(status_code=400, detail="Missing code")
 
-    # 1) Exchange authorization code for tokens
-    token_url = "https://oauth2.googleapis.com/token"
     data = {
         "code": code,
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "redirect_uri": redirect_uri,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
         "grant_type": "authorization_code",
     }
+
     try:
-        tr = requests.post(token_url, data=data, timeout=15)
+        tr = requests.post(TOKEN_URL, data=data, timeout=15)
     except requests.RequestException as ex:
-        raise HTTPException(status_code=502, detail=f"Token exchange failed: {ex}")
+        raise HTTPException(status_code=502, detail=f"Token exchange failed: {ex}") from ex
 
     if tr.status_code != 200:
-        detail = tr.text
-        raise HTTPException(status_code=400, detail=f"Token exchange error: {detail}")
+        raise HTTPException(status_code=400, detail=f"Token exchange error: {tr.text}")
 
     tok = tr.json()
-    access_token = tok.get("access_token")
-    refresh_token = tok.get("refresh_token")
-    expires_in = tok.get("expires_in")  # seconds
-    id_token = tok.get("id_token")  # not strictly needed here
+    access_token: str | None = tok.get("access_token")
+    refresh_token: str | None = tok.get("refresh_token")
+    expires_in: int | None = tok.get("expires_in")
 
     if not access_token:
-        raise HTTPException(status_code=400, detail="Missing access_token in Google response")
+        raise HTTPException(status_code=400, detail="No access_token")
 
-    # 2) Fetch userinfo
     try:
-        ur = requests.get(
-            "https://openidconnect.googleapis.com/v1/userinfo",
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
-            timeout=15,
-        )
+        ur = requests.get(USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"}, timeout=15)
     except requests.RequestException as ex:
-        raise HTTPException(status_code=502, detail=f"Userinfo request failed: {ex}")
+        raise HTTPException(status_code=502, detail=f"Userinfo request failed: {ex}") from ex
 
     if ur.status_code != 200:
         raise HTTPException(status_code=400, detail=f"Userinfo error: {ur.text}")
 
     info = ur.json()
-    # Typical fields
-    # {
-    #   "sub": "...", "email": "name@example.com", "email_verified": true,
-    #   "name": "...", "given_name": "...", "family_name": "...", "picture": "...", "locale": "en"
-    # }
-    google_sub = info.get("sub")
-    email = (info.get("email") or "").strip().lower()
-    if not email:
-        raise HTTPException(status_code=400, detail="Google did not provide an email")
+    # Normalize and upsert user
+    email = (info.get("email") or "").lower()
+    name = info.get("name") or email.split("@")[0]
 
-    # 3) Upsert user
     user = db.query(User).filter(User.email == email).first()
     if not user:
-        # IMPORTANT: your schema has NOT NULL on password_hash.
-        # For OAuth-only users, store an empty string to satisfy NOT NULL.
-        user = User(
+        user = User(  # type: ignore[call-arg]
             email=email,
-            password_hash="",            # <--- fixes NOT NULL constraint without changing schema
-            diet_pref="omnivore",
-            goal="maintain",
+            password_hash="",  # OAuth users have no local password
+            diet_pref=None,
+            goal=None,
         )
         db.add(user)
-        # flush to get user.id
         db.flush()
 
-    # 4) Upsert OAuthAccount for provider='google'
-    # We reuse the existing columns; store Google "sub" in external_athlete_id.
-    acct = (
-        db.query(OAuthAccount)
-        .filter(OAuthAccount.user_id == user.id, OAuthAccount.provider == "google")
-        .first()
-    )
-    expires_at = int(time.time()) + int(expires_in or 3600)
-    scope = "email profile openid"
+    # Link OAuth account record (provider 'google')
+    now = int(time.time())
+    expires_at = now + int(expires_in or 3600)
 
-    if acct is None:
-        acct = OAuthAccount(
+    oa = db.query(OAuthAccount).filter(OAuthAccount.user_id == user.id, OAuthAccount.provider == "google").first()
+    if not oa:
+        oa = OAuthAccount(  # type: ignore[call-arg]
             user_id=user.id,
             provider="google",
-            external_athlete_id=google_sub,  # reuse the column
+            external_athlete_id=None,
             access_token=access_token,
             refresh_token=refresh_token,
+            scope=SCOPE,
             expires_at=expires_at,
-            scope=scope,
+            linked=True,
         )
-        db.add(acct)
+        db.add(oa)
     else:
-        acct.external_athlete_id = google_sub
-        acct.access_token = access_token
-        acct.refresh_token = refresh_token or acct.refresh_token
-        acct.expires_at = expires_at
-        acct.scope = scope
+        oa.access_token = access_token
+        oa.refresh_token = refresh_token or oa.refresh_token
+        oa.expires_at = expires_at
+        oa.scope = SCOPE
+        oa.linked = True
 
     db.commit()
 
-    # 5) Issue our app JWT and set HttpOnly cookie
-    jwt_token = create_access_token(user.id, minutes=None)  # uses default lifetime
-    resp = RedirectResponse(url="/ui/activities.html", status_code=status.HTTP_302_FOUND)
-    resp.set_cookie(
-        key="access_token",
-        value=jwt_token,
-        httponly=True,
-        samesite="lax",
-        max_age=60 * 60,  # match your default 60 minutes
-        path="/",
-        secure=False,     # set True in production with HTTPS
-    )
-    # Clear the state cookie
-    resp.delete_cookie(key="oauth_google_state", path="/")
-    return resp
+    return {"ok": True, "email": email, "name": name}

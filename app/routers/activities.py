@@ -1,13 +1,13 @@
 # app/routers/activities.py
 from __future__ import annotations
 
-from datetime import datetime, date, timedelta
-from typing import Optional, Dict, Any, List
+from datetime import datetime, timedelta
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.deps import get_db, get_current_user
+from app.deps import get_current_user, get_db
 from app.models import Activity, User
 
 router = APIRouter()
@@ -15,7 +15,8 @@ router = APIRouter()
 
 # ---------- helpers -----------------------------------------------------------
 
-def _to_dict(a: Activity) -> Dict[str, Any]:
+
+def _to_dict(a: Activity) -> dict[str, Any]:
     return {
         "id": a.id,
         "user_id": a.user_id,
@@ -30,7 +31,7 @@ def _to_dict(a: Activity) -> Dict[str, Any]:
     }
 
 
-def _parse_date_opt(s: Optional[str]) -> Optional[datetime]:
+def _parse_date_opt(s: str | None) -> datetime | None:
     if not s:
         return None
     # Accept YYYY-MM-DD or full ISO8601
@@ -46,16 +47,17 @@ def _parse_date_opt(s: Optional[str]) -> Optional[datetime]:
 
 # ---------- routes (mounted under /activities) --------------------------------
 
+
 @router.get("", summary="List activities (paginated)")
 def list_activities(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=500),
-    from_: Optional[str] = Query(None, alias="from", description="Start date (YYYY-MM-DD)"),
-    to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
-    sport: Optional[str] = Query(None, description="Filter by sport"),
+    from_: str | None = Query(None, alias="from", description="Start date (YYYY-MM-DD)"),
+    to: str | None = Query(None, description="End date (YYYY-MM-DD)"),
+    sport: str | None = Query(None, description="Filter by sport"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     q = db.query(Activity).filter(Activity.user_id == current_user.id)
 
     start_dt = _parse_date_opt(from_)
@@ -72,12 +74,7 @@ def list_activities(
         q = q.filter(Activity.sport == sport)
 
     total = q.count()
-    items = (
-        q.order_by(Activity.start_time.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
+    items = q.order_by(Activity.start_time.desc()).offset((page - 1) * page_size).limit(page_size).all()
 
     return {
         "page": page,
@@ -89,16 +86,19 @@ def list_activities(
 
 @router.post("", summary="Create an activity (manual entry)")
 def create_activity(
-    payload: Dict[str, Any] = Body(..., example={
-        "sport": "cycling",
-        "start_time": "2025-10-16T07:08:51Z",
-        "duration_s": 3600,
-        "kcal": 600,
-        "distance_m": 30000
-    }),
+    payload: dict[str, Any] = Body(
+        ...,
+        example={
+            "sport": "cycling",
+            "start_time": "2025-10-16T07:08:51Z",
+            "duration_s": 3600,
+            "kcal": 600,
+            "distance_m": 30000,
+        },
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     # Basic validation
     sport = (payload.get("sport") or "").lower()
     if not sport:
@@ -136,7 +136,7 @@ def create_activity(
 def today_activities(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     # Use server local date for MVP; could be improved with user.timezone
     now = datetime.now()
     day_start = datetime(now.year, now.month, now.day)

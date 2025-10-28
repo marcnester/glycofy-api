@@ -1,59 +1,38 @@
+from __future__ import annotations
+
 import os
-from typing import Generator
+from collections.abc import Iterator
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
-try:
-    # Your Settings object (pydantic) lives here
-    from app.config import settings  # type: ignore
-except Exception:
-    settings = None  # fallback to env/DOTENV only
-
-
-def _database_url() -> str:
-    """
-    Resolve the database URL with safe fallbacks.
-    Priority:
-      1) settings.DATABASE_URL (if present)
-      2) env var DATABASE_URL
-      3) local SQLite file: sqlite:///./glycofy.db
-    """
-    # Settings may expose DATABASE_URL or database_url; try both.
-    url = None
-    if settings is not None:
-        url = getattr(settings, "DATABASE_URL", None) or getattr(settings, "database_url", None)
-        # Some earlier versions used a method:
-        if not url and hasattr(settings, "get_database_url"):
-            try:
-                url = settings.get_database_url()  # type: ignore[attr-defined]
-            except Exception:
-                url = None
-
-    url = url or os.getenv("DATABASE_URL") or "sqlite:///./glycofy.db"
-    return url
-
-
-DB_URL = _database_url()
-
-# SQLite needs this extra arg; others don’t
-connect_args = {"check_same_thread": False} if DB_URL.startswith("sqlite") else {}
-
-engine = create_engine(DB_URL, future=True, pool_pre_ping=True, connect_args=connect_args)
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, future=True)
-
-# Base is imported by your models module: from app.db import Base
+# Export Base so models and Alembic can use:
 Base = declarative_base()
 
+# DATABASE_URL e.g.:
+# - sqlite:///./app.db
+# - postgresql+psycopg://user:pass@localhost:5432/dbname
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./app.db")
 
-def get_db() -> Generator:
-    """
-    FastAPI dependency to provide a scoped SQLAlchemy Session.
-    Usage:
-        def endpoint(db: Session = Depends(get_db)): ...
-    """
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+
+engine = create_engine(
+    DATABASE_URL,
+    future=True,
+    pool_pre_ping=True,
+    connect_args=connect_args,  # type: ignore[arg-type]
+)
+
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+
+
+def get_db() -> Iterator[Session]:
     db = SessionLocal()
     try:
         yield db
     finally:
-        db.close()
+        # Be tolerant during shutdown
+        try:
+            db.close()
+        except Exception:
+            pass

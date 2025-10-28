@@ -4,14 +4,14 @@ Run with:  python -m scripts.dev_seed
 """
 
 from __future__ import annotations
+
 import sys
 
 from passlib.hash import bcrypt_sha256
 from sqlalchemy.exc import IntegrityError
 
-from app.db import Base, engine, SessionLocal
+from app.db import Base, SessionLocal, engine
 from app.models import User  # assumes you already have a User model with these fields
-
 
 DEMO_EMAIL = "demo@glycofy.app"
 DEMO_PASSWORD = "Demo1234!"  # keep <=72 bytes; bcrypt has a 72-byte limit

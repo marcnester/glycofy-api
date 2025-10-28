@@ -11,8 +11,8 @@ Pulls activities from Strava into our activities table.
 from __future__ import annotations
 
 import time
-from datetime import datetime, date
-from typing import Dict, Any, List, Tuple, Optional
+from datetime import date, datetime
+from typing import Any
 
 import requests
 from sqlalchemy.orm import Session
@@ -31,7 +31,7 @@ def _needs_refresh(acct: OAuthAccount) -> bool:
     return exp <= (_now_epoch() + 60)
 
 
-def _ensure_token(db: Session, acct: OAuthAccount) -> Optional[str]:
+def _ensure_token(db: Session, acct: OAuthAccount) -> str | None:
     """
     Make sure we have a valid access token; refresh if needed.
     Returns access_token or None if refresh failed.
@@ -76,9 +76,9 @@ def _parse_start_time(s: str) -> datetime:
     return datetime.fromisoformat(s)
 
 
-def _pull_page(token: str, page: int, per_page: int, after_epoch: Optional[int]) -> List[Dict[str, Any]]:
+def _pull_page(token: str, page: int, per_page: int, after_epoch: int | None) -> list[dict[str, Any]]:
     headers = {"Authorization": f"Bearer {token}"}
-    params: Dict[str, Any] = {"page": page, "per_page": per_page}
+    params: dict[str, Any] = {"page": page, "per_page": per_page}
     if after_epoch:
         params["after"] = after_epoch
     url = f"{STRAVA_API_BASE}/athlete/activities"
@@ -93,8 +93,8 @@ def _upsert_activity(
     user_id: int,
     provider: str,
     source_id: str,
-    payload: Dict[str, Any],
-) -> Tuple[bool, bool, Activity]:
+    payload: dict[str, Any],
+) -> tuple[bool, bool, Activity]:
     """
     Upsert by unique key (user_id, provider, source_id).
     Returns (created, updated, activity)
@@ -144,22 +144,25 @@ def _upsert_activity(
 def sync_strava(
     db: Session,
     user: User,
-    since: Optional[date] = None,
+    since: date | None = None,
     max_pages: int = 10,
     per_page: int = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Pulls recent activities from Strava for the given user.
 
     since: optional date (inclusive). If provided, only activities after this date are pulled.
     """
-    acct = (
-        db.query(OAuthAccount)
-        .filter(OAuthAccount.user_id == user.id, OAuthAccount.provider == "strava")
-        .first()
-    )
+    acct = db.query(OAuthAccount).filter(OAuthAccount.user_id == user.id, OAuthAccount.provider == "strava").first()
     if not acct or not acct.access_token:
-        return {"linked": False, "provider": "strava", "created": 0, "updated": 0, "skipped": 0, "pages": 0}
+        return {
+            "linked": False,
+            "provider": "strava",
+            "created": 0,
+            "updated": 0,
+            "skipped": 0,
+            "pages": 0,
+        }
 
     token = _ensure_token(db, acct)
     if not token:

@@ -1,20 +1,18 @@
 # app/routers/auth.py
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 import jwt
-from fastapi import APIRouter, Response, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
-from fastapi.responses import JSONResponse
 
-
+from app.config import settings
 from app.db import get_db
 from app.models import User
-from app.config import settings
 
 # -----------------------------------------------------------------------------
 # Password hashing
@@ -23,9 +21,7 @@ from app.config import settings
 try:
     from passlib.context import CryptContext
 except Exception as e:
-    raise RuntimeError(
-        "passlib is required. Install with: pip install 'passlib[bcrypt]'"
-    ) from e
+    raise RuntimeError("passlib is required. Install with: pip install 'passlib[bcrypt]'") from e
 
 # Order matters: first scheme is the default for new hashes.
 pwd_context = CryptContext(
@@ -33,9 +29,11 @@ pwd_context = CryptContext(
     deprecated="auto",
 )
 
+
 def hash_password(plain: str) -> str:
     # Always create new hashes with bcrypt (first in schemes)
     return pwd_context.hash(plain)
+
 
 def verify_and_maybe_upgrade(user: User, plain: str, db: Session) -> bool:
     """
@@ -64,10 +62,12 @@ def verify_and_maybe_upgrade(user: User, plain: str, db: Session) -> bool:
 JWT_SECRET = getattr(settings, "JWT_SECRET", None) or "dev-insecure-secret-change-me"
 JWT_ALG = "HS256"
 
+
 def _create_access_token(sub: str, minutes: int = 60) -> str:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     payload = {"sub": sub, "exp": now + timedelta(minutes=minutes), "iat": now}
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
 
 def _decode_token(token: str) -> dict:
     try:
@@ -85,9 +85,11 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str
 
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -98,23 +100,31 @@ class TokenResponse(BaseModel):
 # Router / dependencies
 # -----------------------------------------------------------------------------
 router = APIRouter()
+
+
 @router.post("/logout")
 def logout():
     resp = JSONResponse({"ok": True})
     # Delete session cookie
     resp.delete_cookie("access_token", path="/")
     return resp
+
+
 bearer_scheme = HTTPBearer(auto_error=False)
 
-def _extract_bearer_token(credentials: Optional[HTTPAuthorizationCredentials]) -> Optional[str]:
+
+def _extract_bearer_token(
+    credentials: HTTPAuthorizationCredentials | None,
+) -> str | None:
     if not credentials:
         return None
     if credentials.scheme.lower() != "bearer":
         return None
     return credentials.credentials or None
 
+
 def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
     token = _extract_bearer_token(credentials)
@@ -148,6 +158,7 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
 
     token = _create_access_token(str(user.id), minutes=60)
     return TokenResponse(access_token=token)
+
 
 @router.post("/login", response_model=TokenResponse, summary="Log in and return JWT")
 def login(body: LoginRequest, db: Session = Depends(get_db)):

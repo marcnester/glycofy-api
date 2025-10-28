@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app"
 
+
 def fix_imports(lines):
     """
     If a file has:   from pydantic import BaseModel
@@ -17,7 +18,7 @@ def fix_imports(lines):
                 # keep trailing comments
                 parts = line.split("#", 1)
                 left = parts[0].rstrip()
-                comment = (" #"+parts[1]) if len(parts) > 1 else ""
+                comment = (" #" + parts[1]) if len(parts) > 1 else ""
                 left = left.rstrip()
                 # add ConfigDict before any trailing spaces/newline
                 left = left[:-1] if left.endswith("\n") else left
@@ -31,6 +32,7 @@ def fix_imports(lines):
                 continue
         out.append(line)
     return out
+
 
 def remove_simple_config_block(lines):
     """
@@ -76,10 +78,10 @@ def remove_simple_config_block(lines):
 
             # Is it a simple "orm_mode = True" block?
             only_orm = (
-                len(meaningful) == 1 and
-                "orm_mode" in meaningful[0] and
-                "=" in meaningful[0] and
-                "True" in meaningful[0]
+                len(meaningful) == 1
+                and "orm_mode" in meaningful[0]
+                and "=" in meaningful[0]
+                and "True" in meaningful[0]
             )
 
             if only_orm:
@@ -88,12 +90,16 @@ def remove_simple_config_block(lines):
             else:
                 # leave it as-is if it has more than orm_mode
                 out.extend(block)
-                print(f"[note] Skipped complex Config block at indent {len(indent)}", file=sys.stderr)
+                print(
+                    f"[note] Skipped complex Config block at indent {len(indent)}",
+                    file=sys.stderr,
+                )
             continue
         else:
             out.append(line)
             i += 1
     return out, changed
+
 
 def process_file(path: Path) -> bool:
     src = path.read_text(encoding="utf-8").splitlines(keepends=True)
@@ -104,6 +110,7 @@ def process_file(path: Path) -> bool:
         path.write_text("".join(src), encoding="utf-8")
         return True
     return False
+
 
 def main():
     if not APP.exists():
@@ -117,6 +124,7 @@ def main():
         if process_file(f):
             changed += 1
     print(f"Updated {changed} file(s).")
+
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,63 @@
+[tool.black]
+line-length = 120
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W", "PL", "SIM"]
+# Loosen rules so current code passes without noisy refactors right now.
+ignore = [
+  "E501",     # long lines
+  "E712",     # True/False comparisons
+  "PLR2004",  # magic values in comparisons
+  "PLR0912",  # too many branches
+  "PLR0913",  # too many args
+  "PLR0915",  # too many statements
+  "PLW0603",  # global statement
+  "SIM102",   # nested ifs
+  "SIM103",   # negated condition
+  "SIM105",   # try/except/pass -> contextlib.suppress
+  "SIM110",   # for->any()
+  "UP031",    # % formatting
+  "UP038",    # isinstance(X, (A, B)) -> A|B
+  "B008",     # FastAPI: Depends/Body called in defaults (allowed for now)
+  "B904",     # raise from inside except (allowed for now)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E402", "PLR0915", "B008", "E501", "SIM105"]
+"alembic/*" = ["F401", "F403", "F405"]
+
+[tool.ruff.format]
+# Valid values: "single" | "double" | "preserve"
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+ignore_missing_imports = true
+follow_imports = "silent"
+strict_optional = false
+disallow_untyped_defs = false
+warn_return_any = false
+warn_unused_ignores = false
+no_implicit_optional = false
+namespace_packages = true
+explicit_package_bases = true
+check_untyped_defs = false
+
+# --- Overrides (new schema) ---
+[[tool.mypy.overrides]]
+module = ["sqlalchemy.*", "alembic.*", "requests.*", "httpx.*", "jwt.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["alembic.*"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["api.*", "app.routers.*", "app.services.*", "scripts.*"]
+ignore_errors = true
