@@ -16,10 +16,14 @@ ignore = [
   "PLR0912",  # too many branches
   "PLR0913",  # too many args
   "PLR0915",  # too many statements
+  "PLR0911",  # too many return statements
   "PLW0603",  # global statement
+  "B007",     # unused loop variables in legacy code
+  "E741",     # ambiguous short variable names in legacy code
   "SIM102",   # nested ifs
   "SIM103",   # negated condition
   "SIM105",   # try/except/pass -> contextlib.suppress
+  "SIM108",   # if/else -> ternary
   "SIM110",   # for->any()
   "UP031",    # % formatting
   "UP038",    # isinstance(X, (A, B)) -> A|B
@@ -30,6 +34,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "scripts/*" = ["E402", "PLR0915", "B008", "E501", "SIM105"]
 "alembic/*" = ["F401", "F403", "F405"]
+"alembic/versions/*" = ["E402"]
+"app/main.py" = ["E402"]
 
 [tool.ruff.format]
 # Valid values: "single" | "double" | "preserve"
@@ -59,5 +65,5 @@ module = ["alembic.*"]
 ignore_errors = true
 
 [[tool.mypy.overrides]]
-module = ["api.*", "app.routers.*", "app.services.*", "scripts.*"]
+module = ["api.*", "app.db_init", "app.models_plan", "app.routers.*", "app.services.*", "scripts.*"]
 ignore_errors = true

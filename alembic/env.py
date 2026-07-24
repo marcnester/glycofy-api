@@ -2,9 +2,11 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
+# IMPORTANT: import models so they register with Base.metadata for autogenerate
+import app.models  # noqa: F401
 from alembic import context
 
-# Import your SQLAlchemy Base and engine from your project
+# Import Base + engine from your project (single source of truth)
 from app.db import Base, engine
 
 # ------------------------------------------------------------------------------
@@ -13,11 +15,10 @@ from app.db import Base, engine
 config = context.config
 
 # Interpret the config file for Python logging.
-# This line sets up loggers basically.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Add your model's MetaData object for 'autogenerate' support
+# Use your model's MetaData object for 'autogenerate' support
 target_metadata = Base.metadata
 
 
@@ -26,12 +27,14 @@ target_metadata = Base.metadata
 # ------------------------------------------------------------------------------
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
-    url = engine.url
+    url = str(engine.url)
     context.configure(
-        url=str(url),
+        url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         compare_type=True,
+        compare_server_default=True,
+        render_as_batch=True,  # good practice for SQLite
         dialect_opts={"paramstyle": "named"},
     )
 
@@ -57,6 +60,8 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            compare_server_default=True,
+            render_as_batch=True,  # good practice for SQLite
         )
 
         with context.begin_transaction():

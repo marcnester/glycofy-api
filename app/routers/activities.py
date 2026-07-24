@@ -1,80 +1,103 @@
 # app/routers/activities.py
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
-from app.deps import get_current_user, get_db
+from app.auth_utils import get_current_user
+from app.db import get_db
 from app.models import Activity, User
 
 router = APIRouter()
 
+# ---------------------------
+# Helpers
+# ---------------------------
 
-# ---------- helpers -----------------------------------------------------------
+
+def _safe_iso(val: Any) -> str | None:
+    """Return an ISO-8601 string if val is a datetime or a recognizable string; else None."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val.isoformat()
+    if isinstance(val, str):
+        s = val.strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+            try:
+                return datetime.strptime(s, fmt).isoformat()
+            except ValueError:
+                pass
+        # Already ISO-ish or unknown → return as-is
+        return s
+    if isinstance(val, (int, float)):
+        try:
+            return datetime.fromtimestamp(val).isoformat()
+        except Exception:
+            return None
+    return None
 
 
 def _to_dict(a: Activity) -> dict[str, Any]:
     return {
         "id": a.id,
         "user_id": a.user_id,
-        "sport": a.sport,
-        "start_time": (a.start_time.isoformat() if a.start_time else None),
-        "duration_s": int(a.duration_s or 0),
-        "kcal": int(a.kcal or 0),
-        "distance_m": float(a.distance_m or 0.0),
-        "source_provider": a.source_provider,
+        "provider": a.provider,
         "source_id": a.source_id,
-        "created_at": (a.created_at.isoformat() if a.created_at else None),
+        "source_provider": a.source_provider,
+        "sport": a.sport,
+        "start_time": _safe_iso(a.start_time),
+        "duration_s": a.duration_s,
+        "distance_m": a.distance_m,
+        "avg_hr": getattr(a, "avg_hr", None),
+        "kcal": a.kcal,
+        "created_at": _safe_iso(a.created_at),
     }
 
 
-def _parse_date_opt(s: str | None) -> datetime | None:
+def _parse_date(s: str | None) -> date | None:
     if not s:
         return None
-    # Accept YYYY-MM-DD or full ISO8601
     try:
-        if len(s) == 10:
-            d = datetime.strptime(s, "%Y-%m-%d")
-            return d
-        # fallback parse
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return date.fromisoformat(s)
     except Exception:
-        raise HTTPException(status_code=400, detail=f"Invalid date: {s}")
+        raise HTTPException(status_code=400, detail=f"Bad date '{s}', expected YYYY-MM-DD")
 
 
-# ---------- routes (mounted under /activities) --------------------------------
+# ---------------------------
+# Routes
+# ---------------------------
 
 
-@router.get("", summary="List activities (paginated)")
+# NOTE: app.main mounts this router with prefix="/activities"
+# so this endpoint becomes GET /activities
+@router.get("")
 def list_activities(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(25, ge=1, le=500),
-    from_: str | None = Query(None, alias="from", description="Start date (YYYY-MM-DD)"),
-    to: str | None = Query(None, description="End date (YYYY-MM-DD)"),
-    sport: str | None = Query(None, description="Filter by sport"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=250),
+    from_: str | None = Query(default=None, alias="from", description="YYYY-MM-DD (inclusive)"),
+    to_: str | None = Query(default=None, alias="to", description="YYYY-MM-DD (inclusive)"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> dict[str, Any]:
-    q = db.query(Activity).filter(Activity.user_id == current_user.id)
+    user: User = Depends(get_current_user),
+):
+    """Paginated list of the authenticated user's activities with optional date range filters."""
+    day_from = _parse_date(from_)
+    day_to = _parse_date(to_)
 
-    start_dt = _parse_date_opt(from_)
-    end_dt = _parse_date_opt(to)
-    if start_dt:
-        q = q.filter(Activity.start_time >= start_dt)
-    if end_dt:
-        # make 'to' inclusive by adding 1 day if only date given
-        if len(to or "") == 10:
-            end_dt = end_dt + timedelta(days=1)
-        q = q.filter(Activity.start_time < end_dt)
+    q = db.query(Activity).filter(Activity.user_id == user.id)
 
-    if sport:
-        q = q.filter(Activity.sport == sport)
+    if day_from:
+        q = q.filter(Activity.start_time >= datetime.combine(day_from, datetime.min.time()))
+    if day_to:
+        q = q.filter(Activity.start_time <= datetime.combine(day_to, datetime.max.time()))
 
     total = q.count()
-    items = q.order_by(Activity.start_time.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    q = q.order_by(Activity.start_time.desc())
+
+    items: list[Activity] = q.offset((page - 1) * page_size).limit(page_size).all()
 
     return {
         "page": page,
@@ -84,70 +107,66 @@ def list_activities(
     }
 
 
-@router.post("", summary="Create an activity (manual entry)")
-def create_activity(
-    payload: dict[str, Any] = Body(
-        ...,
-        example={
-            "sport": "cycling",
-            "start_time": "2025-10-16T07:08:51Z",
-            "duration_s": 3600,
-            "kcal": 600,
-            "distance_m": 30000,
-        },
-    ),
+# Final URL: GET /activities/csv
+@router.get("/csv")
+def list_activities_csv(
+    from_: str | None = Query(default=None, alias="from", description="YYYY-MM-DD (inclusive)"),
+    to_: str | None = Query(default=None, alias="to", description="YYYY-MM-DD (inclusive)"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> dict[str, Any]:
-    # Basic validation
-    sport = (payload.get("sport") or "").lower()
-    if not sport:
-        raise HTTPException(status_code=400, detail="sport is required")
+    user: User = Depends(get_current_user),
+):
+    """CSV export (non-paginated) for the user's activities in an optional date range."""
+    day_from = _parse_date(from_)
+    day_to = _parse_date(to_)
 
-    st_raw = payload.get("start_time")
-    if not st_raw:
-        raise HTTPException(status_code=400, detail="start_time is required")
-    try:
-        start_time = datetime.fromisoformat(str(st_raw).replace("Z", "+00:00"))
-    except Exception:
-        raise HTTPException(status_code=400, detail="start_time must be ISO8601")
+    q = db.query(Activity).filter(Activity.user_id == user.id)
+    if day_from:
+        q = q.filter(Activity.start_time >= datetime.combine(day_from, datetime.min.time()))
+    if day_to:
+        q = q.filter(Activity.start_time <= datetime.combine(day_to, datetime.max.time()))
+    q = q.order_by(Activity.start_time.desc())
 
-    duration_s = int(payload.get("duration_s") or 0)
-    kcal = int(payload.get("kcal") or 0)
-    distance_m = float(payload.get("distance_m") or 0.0)
+    rows = q.all()
 
-    a = Activity(
-        user_id=current_user.id,
-        sport=sport,
-        start_time=start_time,
-        duration_s=duration_s,
-        kcal=kcal,
-        distance_m=distance_m,
-        source_provider=payload.get("source_provider"),
-        source_id=payload.get("source_id"),
+    import csv
+    from io import StringIO
+
+    buf = StringIO()
+    w = csv.writer(buf)
+    w.writerow(
+        [
+            "id",
+            "start_time",
+            "provider",
+            "source_provider",
+            "source_id",
+            "sport",
+            "duration_s",
+            "distance_m",
+            "avg_hr",
+            "kcal",
+            "created_at",
+        ]
     )
-    db.add(a)
-    db.commit()
-    db.refresh(a)
-    return _to_dict(a)
+    for a in rows:
+        w.writerow(
+            [
+                a.id,
+                _safe_iso(a.start_time) or "",
+                a.provider or "",
+                a.source_provider or "",
+                a.source_id or "",
+                a.sport or "",
+                a.duration_s if a.duration_s is not None else "",
+                a.distance_m if a.distance_m is not None else "",
+                getattr(a, "avg_hr", "") if getattr(a, "avg_hr", None) is not None else "",
+                a.kcal if a.kcal is not None else "",
+                _safe_iso(a.created_at) or "",
+            ]
+        )
 
-
-@router.get("/today", summary="Today’s activities (local day approximation)")
-def today_activities(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> list[dict[str, Any]]:
-    # Use server local date for MVP; could be improved with user.timezone
-    now = datetime.now()
-    day_start = datetime(now.year, now.month, now.day)
-    day_end = day_start + timedelta(days=1)
-
-    items = (
-        db.query(Activity)
-        .filter(Activity.user_id == current_user.id)
-        .filter(Activity.start_time >= day_start)
-        .filter(Activity.start_time < day_end)
-        .order_by(Activity.start_time.asc())
-        .all()
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=activities.csv"},
     )
-    return [_to_dict(a) for a in items]

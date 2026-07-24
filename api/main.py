@@ -14,6 +14,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from app.routers import dashboard  # ← add
+
 # ───────────────────────────────────────────────
 # Env / Config
 # ───────────────────────────────────────────────
@@ -120,6 +122,7 @@ log = logging.getLogger("glycofy")
 # App
 # ───────────────────────────────────────────────
 app = FastAPI(title="Glycofy API", version="1.0.0")
+app.include_router(dashboard.router)
 
 # CORS (keeps your current origins)
 app.add_middleware(

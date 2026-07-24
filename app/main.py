@@ -1,78 +1,159 @@
 # app/main.py
-import os
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+logging.basicConfig(level=logging.INFO)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+
+from app.routers import user_profile, weekly_plans
+
+# --- load .env early ---
+try:
+    from dotenv import find_dotenv, load_dotenv
+
+    load_dotenv(find_dotenv(".env")) or load_dotenv(find_dotenv(".eng"))
+except Exception:
+    pass
 
 # Routers
 from app.routers import (
-    activities,
-    auth,
-    imports,
-    oauth_google,  # <-- ensure oauth_google is imported
-    oauth_strava,
-    plans,
-    recipes,
-    summary,
-    users,
+    activities as activities_router,
+)
+from app.routers import (
+    auth as auth_router,
+)
+from app.routers import (
+    energy as energy_router,
+)
+from app.routers import (
+    health as health_router,
+)
+from app.routers import (
+    imports as imports_router,
+)
+from app.routers import (
+    llm_recommend as llm_recommend_router,
+)
+from app.routers import (
+    oauth_google as oauth_google_router,
+)
+from app.routers import (
+    oauth_strava as oauth_strava_router,
+)
+from app.routers import (
+    plans as plans_router,
+)
+from app.routers import (
+    preferences as preferences_router,  # ← NEW
+)
+from app.routers import (
+    recipes as recipes_router,
 )
 
+# --- DEV-only recipes import router (mounted below) ---
+from app.routers import recipes_admin as recipes_admin_router  # ← existing dev import
+from app.routers import (
+    summary as summary_router,
+)
+from app.routers import (
+    users as users_router,
+)
 
-def create_app() -> FastAPI:
-    app = FastAPI(title="Glycofy API")
+# Optional dashboard
+HAS_DASHBOARD = False
+DASHBOARD_IMPORT_ERROR = None
+try:
+    from app.routers import dashboard as dashboard_router
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    HAS_DASHBOARD = True
+except Exception as _e:
+    DASHBOARD_IMPORT_ERROR = str(_e)
 
-    @app.get("/", summary="Root")
-    def root():
-        return {"message": "Glycofy API is running"}
+APP_DIR = Path(__file__).resolve().parent
+UI_DIR = APP_DIR.parent / "ui"
 
-    @app.get("/health", tags=["health"], summary="Health")
-    def health():
-        return {"status": "ok"}
+app = FastAPI(title="Glycofy API", version="0.1")
 
-    # API routers
-    app.include_router(auth.router, prefix="/auth", tags=["auth"])
-    app.include_router(users.router, prefix="/users", tags=["users"])
-    app.include_router(activities.router, prefix="/activities", tags=["activities"])
-    app.include_router(plans.router, prefix="/v1/plan", tags=["plan"])
-    app.include_router(recipes.router, prefix="/recipes", tags=["recipes"])
-    app.include_router(imports.router, prefix="/imports", tags=["imports"])
-    app.include_router(oauth_strava.router, prefix="/oauth", tags=["oauth"])
-    app.include_router(oauth_google.router, prefix="/oauth", tags=["oauth"])  # <-- mount Google
-    app.include_router(summary.router, prefix="/v1", tags=["summary"])
+# -----------------------------
+# CORS
+# -----------------------------
+ALLOWED_ORIGINS = [
+    "http://127.0.0.1:8090",
+    "http://localhost:8090",
+    "http://127.0.0.1:8080",
+    "http://localhost:8080",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    # UI static
-    ui_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui")
-    os.makedirs(ui_dir, exist_ok=True)
-    app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
+# -----------------------------
+# API Routers
+# -----------------------------
+app.include_router(health_router.router, prefix="", tags=["health"])
+app.include_router(auth_router.router, prefix="/auth", tags=["auth"])
+app.include_router(users_router.router, tags=["users"])
+app.include_router(activities_router.router, prefix="/activities", tags=["activities"])
+app.include_router(plans_router.router, prefix="/v1/plan", tags=["plan"])
+app.include_router(recipes_router.router, prefix="/recipes", tags=["recipes"])
+app.include_router(summary_router.router, prefix="/v1", tags=["summary"])
+app.include_router(imports_router.router, prefix="/imports", tags=["imports"])
+app.include_router(energy_router.router, prefix="/v1/energy", tags=["energy"])
+app.include_router(llm_recommend_router.router, prefix="/v1/llm", tags=["llm"])
+app.include_router(preferences_router.router, prefix="/v1/preferences", tags=["preferences"])  # ← NEW
+app.include_router(user_profile.router)
+app.include_router(weekly_plans.router)
 
-    @app.on_event("startup")
-    async def _dump_routes():
-        print("=" * 47, "Registered Routes", "=" * 47)
-        for r in app.routes:
-            methods = ",".join(sorted(getattr(r, "methods", []) or []))
-            path = getattr(r, "path", "")
-            name = getattr(r, "name", "")
-            print(f"{methods:9s} {path:40s} {name}")
-        print("=" * 110)
+# OAuth routers
+app.include_router(oauth_google_router.router, prefix="/oauth/google", tags=["oauth/google"])
+app.include_router(oauth_strava_router.router, prefix="/oauth/strava", tags=["oauth/strava"])
+app.include_router(oauth_strava_router.sync_router, prefix="/sync/strava", tags=["sync/strava"])
 
-    return app
+# Dashboard (optional)
+if HAS_DASHBOARD:
+    app.include_router(dashboard_router.router, prefix="/dashboard", tags=["dashboard"])
+else:
+
+    @app.get("/dashboard/today", include_in_schema=False)
+    def _dashboard_not_available():
+        return {"error": "dashboard router not loaded", "detail": DASHBOARD_IMPORT_ERROR}
 
 
-app = create_app()
+# --- DEV-only: recipes import endpoint ---
+app.include_router(recipes_admin_router.router, prefix="/dev/recipes", tags=["dev"])
 
-if __name__ == "__main__":
-    import uvicorn
+# -----------------------------
+# Static UI
+# -----------------------------
+if not UI_DIR.exists():
+    UI_DIR.mkdir(parents=True, exist_ok=True)
 
-    host = os.getenv("API_HOST", "127.0.0.1")
-    port = int(os.getenv("API_PORT", "8090"))
-    print(f"🚀 Starting Glycofy API on http://{host}:{port}")
-    uvicorn.run("app.main:app", host=host, port=port, reload=True)
+app.mount("/ui", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse(url="/ui/")
+
+
+@app.get("/ui", include_in_schema=False)
+def ui_no_slash():
+    return RedirectResponse(url="/ui/")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    svg = UI_DIR / "favicon.svg"
+    if svg.exists():
+        return FileResponse(svg, media_type="image/svg+xml")
+    return PlainTextResponse("", status_code=204)
