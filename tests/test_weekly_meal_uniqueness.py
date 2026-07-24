@@ -60,7 +60,7 @@ def test_ai_created_meal_retries_duplicate_weekly_title(monkeypatch):
         used_protein_items=[],
         used_carb_items=[],
         used_recipe_ids=set(),
-        used_meal_titles={"savory quinoa and spinach bowl"},
+        used_meal_keys={llm_recommend._meal_similarity_key("savory quinoa and spinach bowl")},
         allow_new_recipe=True,
     )
 
@@ -71,9 +71,12 @@ def test_ai_created_meal_retries_duplicate_weekly_title(monkeypatch):
     assert meta["retry"] == "day_variety"
 
 
-def test_meal_title_normalization_is_case_and_whitespace_insensitive():
-    assert (
-        llm_recommend._normalize_meal_title("  Savory   Quinoa AND Spinach Bowl ") == "savory quinoa and spinach bowl"
+def test_meal_similarity_ignores_word_order_and_presentation_words():
+    assert llm_recommend._meal_similarity_key("Cottage Cheese and Berry Parfait") == llm_recommend._meal_similarity_key(
+        "Cottage Cheese Berry Delight"
+    )
+    assert llm_recommend._meal_similarity_key("Savory Chickpea Quinoa Bowl") == llm_recommend._meal_similarity_key(
+        "Quinoa Chickpea Breakfast Bowl"
     )
 
 
@@ -98,6 +101,23 @@ def test_single_day_generation_loads_titles_from_other_days_this_week():
         db.add(user)
         db.commit()
 
-        used_titles = llm_recommend._get_week_used_meal_titles(db, user, date(2026, 7, 28))
+        used_titles = llm_recommend._get_week_used_meal_keys(db, user, date(2026, 7, 28))
 
-    assert used_titles == {"lemon garlic shrimp with sweet potato and spinach"}
+    assert used_titles == {llm_recommend._meal_similarity_key("Lemon Garlic Shrimp with Sweet Potato and Spinach")}
+
+
+def test_cache_key_changes_when_weekly_meal_history_changes():
+    request = llm_recommend.RecommendRequest(
+        date="2026-07-28",
+        meals=[llm_recommend.MealTarget(slot="dinner", kcal=670, protein_g=64, carbs_g=70, fat_g=16)],
+    )
+
+    before = llm_recommend._cache_key(1, request, [], set())
+    after = llm_recommend._cache_key(
+        1,
+        request,
+        [],
+        {llm_recommend._meal_similarity_key("Lemon Garlic Pasta with Scallops and Spinach")},
+    )
+
+    assert before != after
