@@ -1,51 +1,77 @@
-const API_BASE = "";
-const $ = (s) => document.querySelector(s);
+// ui/login.js
+(function () {
+  const API = ""; // same-origin API calls
+  const form = document.getElementById("loginForm");
+  const toastEl = document.getElementById("toast");
 
-function setToken(t){ t ? localStorage.setItem("glycofy_token", t) : localStorage.removeItem("glycofy_token"); }
-function getToken(){ return localStorage.getItem("glycofy_token") || ""; }
+  function showToast(msg, isError = false) {
+    toastEl.textContent = msg;
+    toastEl.classList.toggle("error", !!isError);
+    toastEl.style.display = "block";
+    setTimeout(() => (toastEl.style.display = "none"), 3000);
+  }
 
-async function api(path, opts={}){
-  const headers = Object.assign({"Content-Type":"application/json"}, opts.headers || {});
-  const res = await fetch(API_BASE + path, { ...opts, headers });
-  const ct = res.headers.get("content-type") || "";
-  const body = ct.includes("application/json") ? await res.json() : await res.text();
-  if(!res.ok) throw {status: res.status, body};
-  return body;
-}
+  async function safeJSON(res) {
+    const ctype = res.headers.get("content-type") || "";
+    if (ctype.includes("application/json")) return await res.json();
+    const txt = await res.text();
+    try {
+      return JSON.parse(txt);
+    } catch {
+      return { raw: txt };
+    }
+  }
 
-const form = $("#loginForm");
-const email = $("#email");
-const password = $("#password");
-const errorEl = $("#error");
-const loginBtn = $("#loginBtn");
-
-function showError(msg){
-  errorEl.textContent = msg || "Login failed. Check your credentials.";
-  errorEl.hidden = false;
-}
-
-form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  errorEl.hidden = true;
-  loginBtn.disabled = true;
-  try{
-    const data = await api("/auth/login", {
+  async function login(email, password) {
+    const res = await fetch(`${API}/auth/login`, {
       method: "POST",
-      body: JSON.stringify({ email: email.value.trim(), password: password.value })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
     });
-    if(!data || !data.access_token) throw new Error("No token returned");
-    setToken(data.access_token);
-    // go to Plan
-    window.location.href = "/ui/";
-  }catch(err){
-    showError(err?.body?.detail || "Invalid email or password.");
-    loginBtn.disabled = false;
-  }
-});
 
-window.addEventListener("DOMContentLoaded", () => {
-  if(getToken()){
-    // already logged in
-    window.location.href = "/ui/";
+    if (!res.ok) {
+      const j = await safeJSON(res);
+      const msg = j?.detail || `Login failed (${res.status})`;
+      throw new Error(msg);
+    }
+
+    return await res.json(); // { access_token, token_type }
   }
-});
+
+  function storeToken(token) {
+    // Consistent key/shape used throughout the app
+    localStorage.setItem("glycofy_auth", JSON.stringify({ access_token: token }));
+  }
+
+  async function handleLogin(evt) {
+    evt.preventDefault();
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+
+    if (!email || !password) {
+      showToast("Please enter both email and password", true);
+      return;
+    }
+
+    try {
+      const data = await login(email, password);
+      if (!data?.access_token) throw new Error("Invalid response from server");
+
+      storeToken(data.access_token);
+      showToast("Login successful!");
+
+      // redirect to intended page or to /ui/plan.html by default
+      const ret = new URLSearchParams(location.search).get("return");
+      window.location.href = ret || "/ui/plan.html";
+    } catch (e) {
+      console.error(e);
+      showToast(e.message || "Login failed", true);
+    }
+  }
+
+  function init() {
+    form.addEventListener("submit", handleLogin);
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+})();

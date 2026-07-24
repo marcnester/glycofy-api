@@ -1,84 +1,148 @@
-// /ui/app.js
+// web/app.js
+// Global helpers for API access, auth, and navigation.
 
-// ---- Token helpers
-export function getToken() {
-  // prefer memory → local → session (keep simple)
-  if (window.ACCESS && typeof window.ACCESS === 'string') return window.ACCESS;
-  const t = localStorage.getItem('ACCESS')
-        || sessionStorage.getItem('ACCESS')
-        || localStorage.getItem('access_token')
-        || sessionStorage.getItem('access_token')
-        || localStorage.getItem('TOKEN')
-        || sessionStorage.getItem('TOKEN')
-        || localStorage.getItem('token')
-        || sessionStorage.getItem('token');
-  if (t) window.ACCESS = t;
-  return t || '';
-}
+(() => {
+  const API_BASE = ""; // e.g. "" or "/api" if your FastAPI is behind a prefix
 
-export function setToken(t) {
-  window.ACCESS = t;
-  localStorage.setItem('ACCESS', t);
-  sessionStorage.setItem('ACCESS', t);
-}
-
-export function clearToken() {
-  window.ACCESS = '';
-  ['ACCESS','access_token','TOKEN','token'].forEach(k=>{
-    localStorage.removeItem(k); sessionStorage.removeItem(k);
-  });
-}
-
-// ---- Redirect to login if not authenticated
-export function ensureAuthOrRedirect(returnUrl) {
-  const t = getToken();
-  if (t) return t;
-  const target = '/ui/login.html?return=' + encodeURIComponent(returnUrl || window.location.pathname + window.location.search);
-  window.location.replace(target);
-  throw new Error('Auth required; redirecting to ' + target);
-}
-
-// ---- API wrapper that injects Authorization header
-export async function api(path, opts={}) {
-  const t = getToken();
-  const headers = Object.assign({}, opts.headers || {});
-  if (t) headers['Authorization'] = 'Bearer ' + t;
-  const r = await fetch(path, { ...opts, headers });
-  const ct = r.headers.get('content-type') || '';
-  const isJson = ct.includes('application/json');
-  const data = isJson ? await r.json() : await r.text();
-  if (!r.ok) {
-    if (r.status === 401) {
-      // Likely expired or missing → force login
-      ensureAuthOrRedirect(window.location.pathname + window.location.search);
+  // --- Storage helpers ---
+  function getToken() {
+    try {
+      return localStorage.getItem("glyco.jwt") || "";
+    } catch {
+      return "";
     }
-    throw new Error(isJson ? JSON.stringify(data) : data);
   }
-  return data;
-}
 
-// ---- Utility DOM helpers
-export function $(sel, root=document){ return root.querySelector(sel); }
-export function $all(sel, root=document){ return Array.from(root.querySelectorAll(sel)); }
-export function el(tag, attrs={}, children=[]) {
-  const n = document.createElement(tag);
-  for (const [k,v] of Object.entries(attrs)) {
-    if (k === 'class') n.className = v;
-    else if (k === 'text') n.textContent = v;
-    else if (k === 'html') n.innerHTML = v;
-    else n.setAttribute(k, v);
+  function setToken(tok) {
+    try {
+      if (tok) localStorage.setItem("glyco.jwt", tok);
+      else localStorage.removeItem("glyco.jwt");
+    } catch {
+      // ignore storage errors (private mode, etc.)
+    }
   }
-  (Array.isArray(children) ? children : [children]).forEach(c=>{
-    if (typeof c === 'string') n.appendChild(document.createTextNode(c));
-    else if (c) n.appendChild(c);
+
+  function isLoggedIn() {
+    return !!getToken();
+  }
+
+  function logoutAndRedirect() {
+    setToken("");
+    const here = window.location.pathname.split("/").pop();
+    if (here !== "login.html") {
+      window.location.href = "login.html";
+    }
+  }
+
+  // --- Fetch helper that injects Authorization and handles 401 globally ---
+  async function fetchJSON(path, opts = {}) {
+    const url = path.startsWith("http") ? path : API_BASE + path;
+    const token = getToken();
+
+    const headers = new Headers(opts.headers || {});
+    headers.set("Accept", "application/json");
+    if (!(opts.body instanceof FormData)) {
+      headers.set("Content-Type", "application/json");
+    }
+    if (token) {
+      headers.set("Authorization", "Bearer " + token);
+    }
+
+    const resp = await fetch(url, {
+      method: opts.method || "GET",
+      headers,
+      body: opts.body,
+      credentials: "omit",
+    });
+
+    // If unauthorized, clear token and bounce to login
+    if (resp.status === 401) {
+      logoutAndRedirect();
+      throw new Error("Unauthorized");
+    }
+
+    // Try JSON; fall back to text for error details
+    const text = await resp.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      // non-JSON response
+      data = text;
+    }
+
+    if (!resp.ok) {
+      const detail =
+        (data && (data.detail || data.message)) ||
+        `HTTP ${resp.status}: ${resp.statusText}`;
+      throw new Error(detail);
+    }
+    return data;
+  }
+
+  // --- Simple auth gate for pages that require login ---
+  function ensureAuth() {
+    if (!isLoggedIn()) {
+      logoutAndRedirect();
+      return false;
+    }
+    return true;
+  }
+
+  // --- Date/number helpers used across pages ---
+  function fmtDateTime(s) {
+    try {
+      const d = new Date(s);
+      return d.toLocaleString();
+    } catch {
+      return s;
+    }
+  }
+
+  function fmtDateOnly(s) {
+    try {
+      const d = new Date(s);
+      return d.toLocaleDateString();
+    } catch {
+      return s;
+    }
+  }
+
+  function fmtMinSec(totalSeconds) {
+    const sec = Math.max(0, Number(totalSeconds) || 0);
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}m ${s}s`;
+  }
+
+  function fmtKm(meters) {
+    const m = Number(meters) || 0;
+    return m > 0 ? `${(m / 1000).toFixed(1)} km` : "—";
+  }
+
+  // --- Expose on window ---
+  window.__glyco = {
+    API_BASE,
+    getToken,
+    setToken,
+    isLoggedIn,
+    logoutAndRedirect,
+    fetchJSON,
+    ensureAuth,
+    fmtDateTime,
+    fmtDateOnly,
+    fmtMinSec,
+    fmtKm,
+  };
+
+  // Optional: wire a global logout button if present
+  window.addEventListener("DOMContentLoaded", () => {
+    const btn = document.getElementById("logout");
+    if (btn) {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        logoutAndRedirect();
+      });
+    }
   });
-  return n;
-}
-
-export function todayISO() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth()+1).padStart(2,'0');
-  const dd = String(d.getDate()).padStart(2,'0');
-  return `${yyyy}-${mm}-${dd}`;
-}
+})();

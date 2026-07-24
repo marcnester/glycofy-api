@@ -2,151 +2,135 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>Glycofy · Profile</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Glycofy • Profile</title>
   <link rel="stylesheet" href="/ui/styles.css"/>
-  <style>
-    .container{max-width:1100px;margin:0 auto;padding:16px;}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
-    @media (max-width: 900px){ .grid{grid-template-columns:1fr;} }
-    .card{background:#0f1216;border:1px solid var(--border);border-radius:14px;padding:16px;}
-    .card h2{margin:0 0 8px 0;font-size:18px;}
-    .muted{color:var(--muted);}
-    .row{display:flex;gap:8px;align-items:center;}
-    .between{justify-content:space-between;}
-    .wrap{flex-wrap:wrap;}
-    .btn{appearance:none;border:1px solid var(--border);background:#121621;color:#e9eefc;
-         padding:8px 12px;border-radius:10px;cursor:pointer}
-    .btn:hover{background:#1a2233;}
-    .btn.primary{background:#1e2a44;border-color:#2b3a5c;}
-    .btn.destructive{background:#2a1515;border-color:#482020;}
-    .input, select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);
-                   background:#0b0f14;color:#e9eefc;outline:none}
-    label{display:block;font-size:13px;color:var(--muted);margin:6px 0 6px;}
-    .pill{background:#111926;border:1px dashed #2b3a5c;border-radius:999px;padding:6px 10px;font-size:12px;color:#b8c7ff}
-    .status-ok{color:#b7f4e2}
-    .status-warn{color:#ffe3a1}
-    .status-bad{color:#ffd2d2}
-    .toast{position:fixed;right:16px;bottom:16px;background:#0e2a22;border:1px solid #1d4f3f;color:#e7fff8;padding:10px 12px;border-radius:10px;display:none;}
-    .toast.error{background:#3a1212;border-color:#4a1a1a;color:#ffd2d2}
-    nav.top{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border);position:sticky;top:0;background:#090c10;z-index:10}
-    nav.top .links a{color:#c6d3f7;text-decoration:none;margin-right:14px}
-    nav.top .links a.active{color:#ffffff}
-    .help{font-size:12px;color:var(--muted);}
-  </style>
+  <link rel="icon" href="/ui/favicon.svg" type="image/svg+xml"/>
 </head>
 <body>
-  <nav class="top">
-    <div class="row wrap">
-      <div class="pill">Glycofy</div>
-      <div class="links">
-        <a href="/ui/">Plan</a>
-        <a href="/ui/summary.html">Summary</a>
-        <a class="active" href="/ui/profile.html">Profile</a>
-      </div>
-    </div>
-    <div class="row wrap">
-      <button id="logoutBtn" class="btn">Log out</button>
-    </div>
-  </nav>
+  <!-- Top nav (consistent with other pages) -->
+  <header class="site-header">
+    <nav class="nav">
+      <a href="/ui/index.html">Home</a>
+      <a href="/ui/plan.html">Plan</a>
+      <a href="/ui/profile.html" class="active">Profile</a>
+      <a href="/ui/activities.html">Activities</a>
+      <span id="unitBadge" class="pill hidden">Units: —</span>
+      <button id="logout_btn" class="btn subtle">Logout</button>
+    </nav>
+  </header>
 
-  <div class="container">
-    <div class="grid">
-      <!-- Account -->
-      <section class="card">
+  <main class="container">
+    <section class="page-head">
+      <h1>Profile</h1>
+      <p class="muted">Manage your account, preferences, and connected apps.</p>
+    </section>
+
+    <!-- Account card -->
+    <section class="card">
+      <header class="card-head">
         <h2>Account</h2>
-        <p class="muted">Manage your account information.</p>
-        <div class="row between">
+      </header>
+      <div class="card-body">
+        <div class="grid grid-2">
           <div>
-            <div style="font-size:14px;color:var(--muted);">Email</div>
-            <div id="acctEmail" style="font-size:16px;font-weight:600;">(loading…)</div>
+            <div class="label muted">Email</div>
+            <div id="acctEmail" class="value">—</div>
           </div>
-          <span id="acctId" class="pill">User ID: —</span>
+          <div>
+            <div class="label muted">User</div>
+            <div id="acctId" class="value">—</div>
+          </div>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <!-- Connected Apps -->
-      <section class="card">
-        <h2>Connected Apps</h2>
-        <div id="appsStatus" class="muted">Checking Strava status…</div>
-        <div class="row wrap" style="margin-top:8px;">
-          <button id="linkStravaBtn" class="btn primary">Link Strava</button>
-          <button id="syncStravaBtn" class="btn">Sync now</button>
-        </div>
-        <p class="help" style="margin-top:8px;">
-          “Link Strava” opens Strava to grant access. “Sync now” pulls your latest activities into Glycofy.
-        </p>
-      </section>
-
-      <!-- Preferences -->
-      <section class="card">
+    <!-- Preferences form -->
+    <section class="card">
+      <header class="card-head">
         <h2>Preferences</h2>
-        <form id="prefsForm">
-          <div class="grid">
-            <div>
-              <label for="sex">Sex</label>
-              <select id="sex" class="input">
-                <option value="">—</option>
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-              </select>
-            </div>
-            <div>
-              <label for="dob">Date of birth</label>
-              <input type="date" id="dob" class="input"/>
-            </div>
-            <div>
-              <label for="height_cm">Height (cm)</label>
-              <input type="number" id="height_cm" class="input" step="0.1" min="0"/>
-            </div>
-            <div>
-              <label for="weight_kg">Weight (kg)</label>
-              <input type="number" id="weight_kg" class="input" step="0.1" min="0"/>
-            </div>
-            <div>
-              <label for="diet_pref">Diet preference</label>
-              <select id="diet_pref" class="input">
-                <option value="">—</option>
-                <option value="omnivore">Omnivore</option>
-                <option value="pescatarian">Pescatarian</option>
-                <option value="vegan">Vegan</option>
-              </select>
-            </div>
-            <div>
-              <label for="goal">Goal</label>
-              <select id="goal" class="input">
-                <option value="maintain">Maintain</option>
-                <option value="loss">Loss</option>
-                <option value="gain">Gain</option>
-              </select>
-            </div>
-            <div>
-              <label for="timezone">Timezone (IANA)</label>
-              <input type="text" id="timezone" class="input" placeholder="e.g. America/Los_Angeles"/>
-            </div>
+        <div id="saveStatus" class="muted"></div>
+      </header>
+      <div class="card-body">
+        <form id="prefsForm" class="form-grid">
+          <div class="field">
+            <label for="sex">Sex</label>
+            <select id="sex">
+              <option value="">—</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+              <option value="other">Other</option>
+            </select>
           </div>
 
-          <div class="row between" style="margin-top:12px;">
-            <div class="help">These fields influence your daily targets and meal planning.</div>
-            <button type="submit" class="btn primary">Save</button>
+          <div class="field">
+            <label for="dob">Date of birth</label>
+            <input id="dob" type="date" />
+          </div>
+
+          <div class="field">
+            <label for="height_cm">Height (cm)</label>
+            <input id="height_cm" type="number" step="0.1" inputmode="decimal" placeholder="e.g., 180" />
+          </div>
+
+          <div class="field">
+            <label for="weight_kg">Weight (kg)</label>
+            <input id="weight_kg" type="number" step="0.1" inputmode="decimal" placeholder="e.g., 75" />
+          </div>
+
+          <div class="field">
+            <label for="diet_pref">Diet preference</label>
+            <select id="diet_pref">
+              <option value="">—</option>
+              <option value="omnivore">Omnivore</option>
+              <option value="vegetarian">Vegetarian</option>
+              <option value="vegan">Vegan</option>
+              <option value="pescatarian">Pescatarian</option>
+              <option value="keto">Keto</option>
+              <option value="mediterranean">Mediterranean</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="goal">Goal</label>
+            <select id="goal">
+              <option value="">—</option>
+              <option value="weight_loss">Weight loss</option>
+              <option value="maintenance">Maintenance</option>
+              <option value="muscle_gain">Muscle gain</option>
+              <option value="endurance">Endurance</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="timezone">Time zone</label>
+            <input id="timezone" type="text" placeholder="e.g., America/Los_Angeles" />
+          </div>
+
+          <div class="actions row">
+            <button type="submit" class="btn primary">Save preferences</button>
           </div>
         </form>
-        <div id="saveStatus" class="muted" style="margin-top:6px;"></div>
-      </section>
+      </div>
+    </section>
 
-      <!-- Danger -->
-      <section class="card">
-        <h2>Danger Zone</h2>
-        <p class="muted">Developer utilities for local testing.</p>
-        <div class="row wrap">
-          <button id="refetchStatusBtn" class="btn">Refresh status</button>
+    <!-- Connected apps -->
+    <section class="card">
+      <header class="card-head">
+        <h2>Connected apps</h2>
+      </header>
+      <div class="card-body">
+        <div id="appsStatus" class="muted">—</div>
+        <div class="row gap">
+          <button id="refetchStatusBtn" class="btn subtle">Refresh status</button>
+          <button id="linkStravaBtn" class="btn">Link Strava</button>
+          <button id="syncStravaBtn" class="btn subtle">Sync recent from Strava</button>
         </div>
-      </section>
-    </div>
-  </div>
+      </div>
+    </section>
+  </main>
 
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
-
+  <script src="/ui/app.js"></script>
   <script src="/ui/profile.js"></script>
 </body>
 </html>

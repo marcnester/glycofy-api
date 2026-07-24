@@ -1,228 +1,217 @@
+// ui/profile.js — Profile & OAuth page (CSP-safe, no modules)
 (function () {
-  const API = "";
-  const toastEl = document.getElementById("toast");
+  const gly = (window.__glyco || {});
+  const { $, qs, ensureAuth, fetchJSON, detectUnitSystem } = gly;
 
-  function showToast(msg, isError=false) {
-    toastEl.textContent = msg;
-    toastEl.classList.toggle("error", !!isError);
-    toastEl.style.display = "block";
-    setTimeout(() => (toastEl.style.display = "none"), 3000);
-  }
-
-  function getToken() {
-    try {
-      const raw = localStorage.getItem("glycofy_auth");
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      return parsed.access_token || null;
-    } catch {
-      return null;
+  // ------- Toast -------
+  function ensureToast() {
+    let el = document.getElementById('toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'toast';
+      el.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:8px 12px;border-radius:8px;display:none;z-index:9999;font:13px/1.4 system-ui,-apple-system,Segoe UI,Roboto;';
+      document.body.appendChild(el);
     }
+    return el;
+  }
+  function toast(msg, isErr = false) {
+    const t = ensureToast();
+    t.textContent = msg;
+    t.style.background = isErr ? '#7a0f0f' : '#222';
+    t.style.display = '';
+    setTimeout(() => (t.style.display = 'none'), 2500);
   }
 
-  function authHeaders() {
-    const t = getToken();
-    return t ? { Authorization: `Bearer ${t}` } : {};
+  // ------- Elements -------
+  const els = {};
+  function bindEls() {
+    const byId = (id) => document.getElementById(id);
+
+    els.acctEmail = byId('acctEmail');
+    els.acctId = byId('acctId');
+    els.unitBadge = byId('unitBadge');
+    els.saveStatus = byId('saveStatus');
+
+    els.form = byId('prefsForm');
+    els.sex = byId('sex');
+    els.dob = byId('dob');
+    els.height_cm = byId('height_cm');
+    els.weight_kg = byId('weight_kg');
+    els.diet_pref = byId('diet_pref');
+    els.goal = byId('goal');
+    els.timezone = byId('timezone');
+
+    els.appsStatus = byId('appsStatus');
+    els.refetchStatusBtn = byId('refetchStatusBtn');
+    els.linkStravaBtn = byId('linkStravaBtn');
+    els.syncStravaBtn = byId('syncStravaBtn');
+
+    els.logoutBtn = byId('logout_btn') || byId('logoutBtn');
   }
 
-  function requireAuth() {
-    const t = getToken();
-    if (!t) {
-      // If you have a dedicated login page, send them there.
-      // We’ll reuse the plan page flow that does login inline if present.
-      window.location.href = "/ui/";
-      throw new Error("No token");
-    }
-  }
-
-  async function safeJSON(res) {
-    const ctype = res.headers.get("content-type") || "";
-    if (ctype.includes("application/json")) return await res.json();
-    const txt = await res.text();
-    try { return JSON.parse(txt); } catch { return { raw: txt }; }
-  }
-
+  // ------- API -------
   async function getMe() {
-    const res = await fetch(`${API}/users/me`, { headers: authHeaders() });
-    if (res.status === 401) throw new Error("Unauthorized");
-    if (!res.ok) throw new Error(`GET /users/me ${res.status}`);
-    return await res.json();
+    return fetchJSON('/users/me');
   }
-
   async function putMe(payload) {
-    const res = await fetch(`${API}/users/me`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+    return fetchJSON('/users/me', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (res.status === 401) throw new Error("Unauthorized");
-    if (!res.ok) {
-      const j = await safeJSON(res);
-      throw new Error(j.detail || `PUT /users/me ${res.status}`);
-    }
-    return await res.json();
   }
-
   async function getOAuthStatus() {
-    const res = await fetch(`${API}/oauth/status`, { headers: authHeaders() });
-    if (res.status === 401) throw new Error("Unauthorized");
-    if (!res.ok) throw new Error(`GET /oauth/status ${res.status}`);
-    return await res.json();
+    return fetchJSON('/oauth/status');
   }
-
   async function getStravaStartUrl() {
-    const res = await fetch(`${API}/oauth/start-url`, { headers: authHeaders() });
-    if (res.status === 401) throw new Error("Unauthorized");
-    if (!res.ok) {
-      const j = await safeJSON(res);
-      throw new Error(j.detail || `GET /oauth/start-url ${res.status}`);
-    }
-    return await res.json();
+    return fetchJSON('/oauth/start-url');
   }
-
-  async function syncStrava() {
+  async function syncStravaSinceMonthStart() {
     const now = new Date();
     const since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
-      .toISOString().slice(0, 10); // YYYY-MM-DD
-    const res = await fetch(`${API}/imports/strava/sync?since=${since}`, {
-      method: "POST",
-      headers: authHeaders(),
-    });
-    if (res.status === 401) throw new Error("Unauthorized");
-    if (!res.ok) {
-      const j = await safeJSON(res);
-      throw new Error(j.detail || `POST /imports/strava/sync ${res.status}`);
-    }
-    return await res.json();
+      .toISOString().slice(0, 10);
+    return fetchJSON(`/imports/strava/sync?since=${encodeURIComponent(since)}`, { method: 'POST' });
   }
 
+  // ------- Fill UI -------
+  function setVal(el, v) { if (el) el.value = (v ?? ''); }
   function fillAccount(me) {
-    document.getElementById("acctEmail").textContent = me.email || "(unknown)";
-    document.getElementById("acctId").textContent = `User ID: ${me.id ?? "—"}`;
-  }
+    if (els.acctEmail) els.acctEmail.textContent = me?.email || '(unknown)';
+    if (els.acctId) els.acctId.textContent = `User ID: ${me?.id ?? '—'}`;
 
+    const unit = detectUnitSystem ? detectUnitSystem(me || {}) : 'metric';
+    if (els.unitBadge) {
+      els.unitBadge.textContent = unit === 'us' ? 'Units: US' : 'Units: Metric';
+      els.unitBadge.classList.remove('hidden');
+    }
+  }
   function fillPrefs(me) {
-    const pick = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ""; };
-    pick("sex", me.sex);
-    pick("dob", me.dob ? me.dob.slice(0,10) : "");
-    pick("height_cm", me.height_cm);
-    pick("weight_kg", me.weight_kg);
-    pick("diet_pref", me.diet_pref);
-    pick("goal", me.goal);
-    pick("timezone", me.timezone);
+    setVal(els.sex, me?.sex);
+    setVal(els.dob, me?.dob ? String(me.dob).slice(0, 10) : '');
+    setVal(els.height_cm, me?.height_cm);
+    setVal(els.weight_kg, me?.weight_kg);
+    setVal(els.diet_pref, me?.diet_pref);
+    setVal(els.goal, me?.goal);
+    setVal(els.timezone, me?.timezone);
   }
-
   function renderOAuthStatus(status) {
-    const el = document.getElementById("appsStatus");
-    const s = status?.strava || {};
-    if (!status || !("strava" in status)) {
-      el.innerHTML = `<span class="status-bad">Strava not configured</span>`;
-      return;
-    }
-    if (!s.configured) {
-      el.innerHTML = `<span class="status-bad">Strava not configured on server</span>`;
-      return;
-    }
-    if (s.linked) {
-      const expires = s.expires_at ? new Date(s.expires_at * 1000).toLocaleString() : "(unknown)";
-      el.innerHTML = `
-        <div class="row wrap">
-          <span class="pill">Linked: Strava</span>
-          <span class="status-ok">Athlete: ${s.external_athlete_id || "(unknown)"} </span>
-          <span class="muted">Scope: ${s.scope || "(none)"}</span>
-          <span class="muted">Expires: ${expires}</span>
-        </div>`;
-    } else {
-      el.innerHTML = `<span class="status-warn">Strava not linked</span>`;
+    if (!els.appsStatus) return;
+    try {
+      const s = status && status.strava ? status.strava : null;
+      if (!status || s == null) {
+        els.appsStatus.innerHTML = `<span class="muted">Strava not configured</span>`;
+        return;
+      }
+      if (s.configured === false) {
+        els.appsStatus.innerHTML = `<span class="muted">Strava not configured on server</span>`;
+        return;
+      }
+      if (s.linked) {
+        const expires = s.expires_at ? new Date(s.expires_at * 1000).toLocaleString() : '(unknown)';
+        els.appsStatus.innerHTML = `
+          <div class="row wrap">
+            <span class="pill">Linked: Strava</span>
+            <span class="muted">Athlete: ${s.external_athlete_id || '(unknown)'} </span>
+            <span class="muted">Scope: ${s.scope || '(none)'}</span>
+            <span class="muted">Expires: ${expires}</span>
+          </div>`;
+      } else {
+        els.appsStatus.innerHTML = `<span class="muted">Strava not linked</span>`;
+      }
+    } catch (e) {
+      console.error(e);
+      els.appsStatus.textContent = 'Unable to render status';
     }
   }
 
+  // ------- Events -------
   function wireEvents() {
-    document.getElementById("logoutBtn").addEventListener("click", () => {
-      localStorage.removeItem("glycofy_auth");
-      window.location.href = "/ui/";
-    });
+    if (els.logoutBtn) {
+      els.logoutBtn.addEventListener('click', async () => {
+        try { localStorage.removeItem('glyco_token'); } catch {}
+        try { await fetch('/auth/logout', { method: 'POST', credentials: 'include' }); } catch {}
+        window.location.href = '/ui/login.html';
+      });
+    }
 
-    document.getElementById("refetchStatusBtn").addEventListener("click", async () => {
-      try {
-        const status = await getOAuthStatus();
-        renderOAuthStatus(status);
-        showToast("Status refreshed");
-      } catch (e) {
-        console.error(e);
-        showToast(String(e.message || e), true);
-      }
-    });
+    if (els.refetchStatusBtn) {
+      els.refetchStatusBtn.addEventListener('click', async () => {
+        try { renderOAuthStatus(await getOAuthStatus()); toast('Status refreshed'); }
+        catch (e) { console.error(e); toast(e?.message || 'Failed to refresh', true); }
+      });
+    }
 
-    document.getElementById("linkStravaBtn").addEventListener("click", async () => {
-      try {
-        const { authorize_url } = await getStravaStartUrl();
-        if (!authorize_url) throw new Error("No authorize_url returned");
-        window.location.href = authorize_url;
-      } catch (e) {
-        console.error(e);
-        showToast(String(e.message || e), true);
-      }
-    });
+    if (els.linkStravaBtn) {
+      els.linkStravaBtn.addEventListener('click', async () => {
+        try {
+          const { authorize_url } = await getStravaStartUrl();
+          window.location.href = authorize_url || '/oauth/start-url';
+        } catch (e) {
+          console.error(e);
+          toast(e?.message || 'Failed to start Strava link', true);
+        }
+      });
+    }
 
-    document.getElementById("syncStravaBtn").addEventListener("click", async () => {
-      try {
-        const res = await syncStrava();
-        showToast(`Synced: created ${res.created}, updated ${res.updated}, skipped ${res.skipped}`);
-      } catch (e) {
-        console.error(e);
-        showToast(String(e.message || e), true);
-      }
-    });
+    if (els.syncStravaBtn) {
+      els.syncStravaBtn.addEventListener('click', async () => {
+        try {
+          const r = await syncStravaSinceMonthStart();
+          toast(`Synced: created ${r.created ?? 0}, updated ${r.updated ?? 0}, skipped ${r.skipped ?? 0}`);
+        } catch (e) {
+          const m = e?.detail || e?.message || String(e);
+          if (/404/.test(m)) toast('Sync endpoint not available on this server build.', true);
+          else toast(m, true);
+        }
+      });
+    }
 
-    document.getElementById("prefsForm").addEventListener("submit", async (evt) => {
-      evt.preventDefault();
-      const payload = {
-        sex: document.getElementById("sex").value || null,
-        dob: document.getElementById("dob").value || null,
-        height_cm: parseFloat(document.getElementById("height_cm").value || "0") || null,
-        weight_kg: parseFloat(document.getElementById("weight_kg").value || "0") || null,
-        diet_pref: document.getElementById("diet_pref").value || null,
-        goal: document.getElementById("goal").value || null,
-        timezone: document.getElementById("timezone").value || null,
-      };
-      try {
-        const updated = await putMe(payload);
-        document.getElementById("saveStatus").textContent = "Saved ✓";
-        fillPrefs(updated);
-        showToast("Preferences saved");
-      } catch (e) {
-        console.error(e);
-        document.getElementById("saveStatus").textContent = "Save failed";
-        showToast(String(e.message || e), true);
-      }
-    });
+    if (els.form) {
+      els.form.addEventListener('submit', async (evt) => {
+        evt.preventDefault();
+        const payload = {
+          sex: els.sex?.value || null,
+          dob: els.dob?.value || null,
+          height_cm: parseFloat(els.height_cm?.value || '0') || null,
+          weight_kg: parseFloat(els.weight_kg?.value || '0') || null,
+          diet_pref: els.diet_pref?.value || null,
+          goal: els.goal?.value || null,
+          timezone: els.timezone?.value || null,
+        };
+        try {
+          const updated = await putMe(payload);
+          fillPrefs(updated);
+          if (els.saveStatus) els.saveStatus.textContent = 'Saved ✓';
+          toast('Preferences saved');
+        } catch (e) {
+          console.error(e);
+          if (els.saveStatus) els.saveStatus.textContent = 'Save failed';
+          toast(e?.message || 'Save failed', true);
+        }
+      });
+    }
   }
 
+  // ------- Init -------
   async function init() {
+    try { if (!ensureAuth || !ensureAuth()) { return; } } catch { return; }
+    bindEls();
+
     try {
-      requireAuth();
-    } catch {
-      return;
-    }
-    wireEvents();
-    try {
-      const me = await getMe();
+      const me = await getMe();              // should be 200 now
       fillAccount(me);
       fillPrefs(me);
     } catch (e) {
       console.error(e);
-      showToast("Failed loading profile", true);
+      toast('Failed loading profile', true);
       return;
     }
-    try {
-      const status = await getOAuthStatus();
-      renderOAuthStatus(status);
-    } catch (e) {
-      console.error(e);
-      document.getElementById("appsStatus").textContent = "Unable to load status";
-    }
+
+    try { renderOAuthStatus(await getOAuthStatus()); }
+    catch (e) { console.error(e); if (els.appsStatus) els.appsStatus.textContent = 'Unable to load status'; }
+
+    wireEvents();
   }
 
-  document.addEventListener("DOMContentLoaded", init);
+  document.addEventListener('DOMContentLoaded', init);
 })();
