@@ -139,6 +139,7 @@ class WeeklyRecommendRequest(BaseModel):
 # ===========================
 
 _MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
+_SLOT_RECOMMENDATION_ATTEMPTS = 3
 
 
 def _normalize_slot(s: str) -> str:
@@ -1977,22 +1978,38 @@ def _recommend_for_single_meal(
         disallowed_carb_items=banned_carb_items_day or None,
     )
 
-    mode, picked_recipe, deltas, reason, pick_meta, ai_idea_payload = _llm_pick_or_create(
-        client=client,
-        slot=tgt.slot,
-        tgt=tgt,
-        candidates=candidates,
-        date=date,
-        diet_tags=diet_tags,
-        primary_diet=primary_diet,
-        user_pref=pref,
-        used_protein_items=used_protein_items,
-        used_carb_items=used_carb_items,
-        used_recipe_ids=used_recipe_ids,
-        used_meal_keys=used_meal_keys,
-        allow_new_recipe=allow_new_recipe,
-        banned_protein_groups=banned_groups_week or None,  # keep weekly cap semantics for this param
-    )
+    result = None
+    for attempt in range(1, _SLOT_RECOMMENDATION_ATTEMPTS + 1):
+        result = _llm_pick_or_create(
+            client=client,
+            slot=tgt.slot,
+            tgt=tgt,
+            candidates=candidates,
+            date=date,
+            diet_tags=diet_tags,
+            primary_diet=primary_diet,
+            user_pref=pref,
+            used_protein_items=used_protein_items,
+            used_carb_items=used_carb_items,
+            used_recipe_ids=used_recipe_ids,
+            used_meal_keys=used_meal_keys,
+            allow_new_recipe=allow_new_recipe,
+            banned_protein_groups=banned_groups_week or None,
+        )
+        mode, picked_recipe, _deltas, _reason, _meta, ai_idea_payload = result
+        if mode != "empty" and (picked_recipe is not None or ai_idea_payload):
+            if attempt > 1:
+                _meta["slot_retry_attempts"] = attempt
+            break
+        logger.warning(
+            "LLM recommend-slot: date=%s slot=%s attempt=%d returned empty; retrying",
+            date,
+            tgt.slot,
+            attempt,
+        )
+
+    assert result is not None
+    mode, picked_recipe, deltas, reason, pick_meta, ai_idea_payload = result
 
     pick_meta.setdefault("timestamp", datetime.now(UTC).isoformat())
     pick_meta.setdefault("diet_tags", diet_tags or [])
@@ -2107,6 +2124,11 @@ def _recommend_for_single_meal(
         meta=pick_meta,
         ai_idea=None,
     )
+
+
+def _missing_recommendation_slots(items: list[SlotRecommendation]) -> list[str]:
+    """Return requested slots that do not contain an applicable meal."""
+    return [_normalize_slot(item.slot) for item in items if item.recipe is None and not item.ai_idea]
 
 
 # ===========================
@@ -2386,7 +2408,11 @@ def recommend_recipes(
     key = _cache_key(user.id, payload, pref_tags, week_used_meal_keys)
     cached = _CACHE.get(key)
     if cached:
-        return cached
+        cached_items = cached.get("items") or []
+        if cached_items and all(item.get("recipe") or item.get("ai_idea") for item in cached_items):
+            return cached
+        _CACHE.data.pop(key, None)
+        logger.warning("LLM cache: discarded incomplete recommendation key=%s", key)
 
     client = _get_openai_client()
     provider = "openai" if client else "stub"
@@ -2418,6 +2444,16 @@ def recommend_recipes(
             protein_cap_per_slot=2,
         )
         items.append(rec)
+
+    missing_slots = _missing_recommendation_slots(items)
+    if missing_slots:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Unable to generate a complete meal plan without weekly duplicates",
+                "missing_slots": missing_slots,
+            },
+        )
 
     resp = RecommendResponse(provider=provider, items=items).model_dump()
     _CACHE.set(key, resp)
@@ -2600,6 +2636,18 @@ def recommend_weekly_apply(
                 protein_cap_per_slot=2,
             )
             day_items.append(dinner_rec)
+
+        missing_slots = _missing_recommendation_slots(day_items)
+        if missing_slots:
+            db.rollback()
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Unable to generate a complete weekly meal plan without duplicates",
+                    "date": date_iso,
+                    "missing_slots": missing_slots,
+                },
+            )
 
         out_days.append(
             {

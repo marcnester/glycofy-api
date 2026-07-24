@@ -1,4 +1,5 @@
 from datetime import date
+from unittest.mock import MagicMock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -121,3 +122,64 @@ def test_cache_key_changes_when_weekly_meal_history_changes():
     )
 
     assert before != after
+
+
+def test_empty_slot_is_retried_until_it_has_an_applicable_meal(monkeypatch):
+    attempts = iter(
+        [
+            ("empty", None, None, "duplicate", {"mode": "empty"}, None),
+            ("empty", None, None, "duplicate", {"mode": "empty"}, None),
+            (
+                "create",
+                None,
+                {"kcal": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0},
+                "unique snack",
+                {"mode": "create"},
+                {
+                    "title": "Greek Yogurt Apple Crunch",
+                    "approx_macros": {"kcal": 300, "protein_g": 25, "carbs_g": 35, "fat_g": 8},
+                    "protein_group": "dairy",
+                    "protein_item": "greek yogurt",
+                    "carb_item": "apple",
+                },
+            ),
+        ]
+    )
+    monkeypatch.setattr(llm_recommend, "_top_k_candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(llm_recommend, "_llm_pick_or_create", lambda **_kwargs: next(attempts))
+
+    recommendation = llm_recommend._recommend_for_single_meal(
+        client=object(),
+        db=MagicMock(),
+        date="2026-07-29",
+        tgt=llm_recommend.MealTarget(slot="snack", kcal=300, protein_g=25, carbs_g=35, fat_g=8),
+        diet_tags=None,
+        primary_diet="omnivore",
+        pref=None,
+        provider="openai",
+        used_protein_items=[],
+        used_carb_items=[],
+        used_recipe_ids=set(),
+        used_meal_keys=set(),
+    )
+
+    assert recommendation.ai_idea is not None
+    assert recommendation.ai_idea["title"] == "Greek Yogurt Apple Crunch"
+    assert recommendation.meta["slot_retry_attempts"] == 3
+
+
+def test_missing_slot_detection_covers_snacks_and_main_meals():
+    items = [
+        llm_recommend.SlotRecommendation(
+            slot="breakfast",
+            target={},
+            ai_idea={"title": "Oats"},
+        ),
+        llm_recommend.SlotRecommendation(
+            slot="snack",
+            target={},
+            meta={"mode": "empty"},
+        ),
+    ]
+
+    assert llm_recommend._missing_recommendation_slots(items) == ["snack"]

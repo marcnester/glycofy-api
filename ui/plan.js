@@ -655,6 +655,21 @@
     const plan = await ensurePlan(iso);
     const rec = await llmRecommendAll(iso, plan);
     const itemsArr = normalizeItemsArray(rec);
+    const applicableSlots = new Set(
+      toCleanItems(itemsArr, new Set(CANONICAL_SLOTS)).map((item) =>
+        normalizeSlot(item.slot)
+      )
+    );
+    const missingSlots = CANONICAL_SLOTS.filter(
+      (slot) => !applicableSlots.has(slot)
+    );
+    if (missingSlots.length) {
+      throw new Error(
+        `AI returned an incomplete day (missing: ${missingSlots.join(
+          ', '
+        )}). The existing plan was not changed.`
+      );
+    }
 
     if (updateUI) {
       AI_REASONS = {};
