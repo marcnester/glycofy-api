@@ -1269,6 +1269,11 @@ def _normalize_key_set(keys: list[str]) -> set[str]:
     return out
 
 
+def _normalize_meal_title(title: str | None) -> str:
+    """Normalize a meal title for exact weekly duplicate detection."""
+    return " ".join((title or "").strip().lower().split())
+
+
 def _llm_pick_or_create(
     client: ClientType,
     slot: str,
@@ -1281,6 +1286,7 @@ def _llm_pick_or_create(
     used_protein_items: list[str],
     used_carb_items: list[str],
     used_recipe_ids: set[int] | None,
+    used_meal_titles: set[str] | None,
     allow_new_recipe: bool,
     banned_protein_groups: set[str] | None = None,
 ) -> tuple[str, Recipe | None, dict[str, float] | None, str, dict[str, Any], dict[str, Any] | None]:
@@ -1322,6 +1328,7 @@ def _llm_pick_or_create(
         "  - used_protein_items_today: specific proteins already used today.\n"
         "  - used_carb_items_today: specific carbs already used today.\n"
         "  - used_recipe_ids_week: recipe IDs already used this week.\n"
+        "  - used_meal_titles_week: meal titles already used this week.\n"
         "  - banned_protein_groups_slot_week: protein groups that are ALREADY used twice\n"
         "    for this slot in the current week — you MUST NOT use these groups again for this slot.\n"
         "  - allow_new_recipe: flag indicating whether you may invent a new recipe.\n\n"
@@ -1343,6 +1350,7 @@ def _llm_pick_or_create(
         "- Total active cooking time ~20–30 minutes.\n"
         "- Respect diet_tags + ingredient_exclusions strictly.\n"
         "- NEVER use a protein_group that appears in banned_protein_groups_slot_week for this slot.\n\n"
+        "- NEVER create a recipe whose title appears in used_meal_titles_week.\n\n"
         "OUTPUT FORMAT (STRICT JSON ONLY):\n"
         "{\n"
         '  "slot": "<slot name>",\n'
@@ -1393,6 +1401,7 @@ def _llm_pick_or_create(
         "disallowed_protein_items_today": sorted(list(used_protein_set)) if enforce_day_unique else [],
         "disallowed_carb_items_today": sorted(list(used_carb_set)) if enforce_day_unique else [],
         "used_recipe_ids_week": used_ids,
+        "used_meal_titles_week": sorted(used_meal_titles or set()),
         "banned_protein_groups_slot_week": sorted(list(banned_groups)),
         "allow_new_recipe": bool(allow_new_recipe),
         "ingredient_exclusions": ingredient_exclusions,
@@ -1405,9 +1414,10 @@ def _llm_pick_or_create(
 
         strict_system = system_msg + (
             "\n\nIMPORTANT (RETRY):\n"
-            "- Your previous selection violated a DAY VARIETY rule.\n"
+            "- Your previous selection violated a meal variety rule.\n"
             f"- violated_kind={violated_kind!r} violated_value={violated_value!r}\n"
             "- You MUST avoid any value listed in disallowed_*_items_today for this main meal.\n"
+            "- You MUST NOT reuse any title listed in used_meal_titles_week.\n"
             "- Regenerate now with different protein_item and/or carb_item.\n"
         )
         strict_payload = dict(user_payload)
@@ -1560,6 +1570,9 @@ def _llm_pick_or_create(
             return "empty", None, None, "All protein groups for this slot are capped this week.", meta, None
 
         violated, kind, val = _violates_day_unique(protein_item, carb_item)
+        normalized_title = _normalize_meal_title(title)
+        if not violated and normalized_title and used_meal_titles and normalized_title in used_meal_titles:
+            violated, kind, val = True, "meal_title", normalized_title
         if violated:
             data2, meta2 = _call_llm(extra_strict=True, violated_kind=kind, violated_value=val)
             meta2.setdefault("timestamp", datetime.now(UTC).isoformat())
@@ -1574,10 +1587,15 @@ def _llm_pick_or_create(
                         str(nr2)
                     )
                     ci2 = str(nr2.get("carb_item", "") or "").strip().lower() or _guess_carb_item_from_text(str(nr2))
+                    title2 = str(nr2.get("title", title)).strip() or title
+                    normalized_title2 = _normalize_meal_title(title2)
 
                     violated2, _k2, _v2 = _violates_day_unique(pi2, ci2)
-                    if not violated2 and (not banned_groups2 or pg2 not in banned_groups2):
-                        title = str(nr2.get("title", title)).strip() or title
+                    duplicate_title2 = bool(
+                        normalized_title2 and used_meal_titles and normalized_title2 in used_meal_titles
+                    )
+                    if not violated2 and not duplicate_title2 and (not banned_groups2 or pg2 not in banned_groups2):
+                        title = title2
                         ingredients = nr2.get("ingredients") or ingredients
                         instructions = nr2.get("instructions") or instructions
                         macro_est = nr2.get("macro_estimate") or macro_est
@@ -1791,6 +1809,34 @@ def _get_week_used_recipe_ids(db: Session, user: User, target_date: date) -> set
     return out
 
 
+def _get_week_used_meal_titles(db: Session, user: User, target_date: date) -> set[str]:
+    """Return normalized meal titles used on other days in the same calendar week."""
+    ws, we = _week_span_for_date(target_date)
+    rows = (
+        db.query(PlanMeal.title)
+        .join(Plan, PlanMeal.plan_id == Plan.id)
+        .filter(
+            Plan.user_id == user.id,
+            Plan.date >= ws,
+            Plan.date <= we,
+            Plan.date != target_date,
+            PlanMeal.title.isnot(None),
+        )
+        .all()
+    )
+    titles = {_normalize_meal_title(title) for (title,) in rows}
+    titles.discard("")
+    logger.info(
+        "LLM week_used_meal_titles: user_id=%s target_date=%s week_span=(%s,%s) count=%d",
+        user.id,
+        target_date.isoformat(),
+        ws.isoformat(),
+        we.isoformat(),
+        len(titles),
+    )
+    return titles
+
+
 def _get_week_protein_counts(db: Session, user: User, target_date: date) -> dict[tuple[str, str], int]:
     ws, we = _week_span_for_date(target_date)
     rows = (
@@ -1849,6 +1895,7 @@ def _recommend_for_single_meal(
     used_protein_items: list[str],
     used_carb_items: list[str],
     used_recipe_ids: set[int] | None = None,
+    used_meal_titles: set[str] | None = None,
     allow_new_recipe: bool = True,
     week_protein_counts: dict[tuple[str, str], int] | None = None,
     protein_cap_per_slot: int = 2,
@@ -1911,6 +1958,7 @@ def _recommend_for_single_meal(
         used_protein_items=used_protein_items,
         used_carb_items=used_carb_items,
         used_recipe_ids=used_recipe_ids,
+        used_meal_titles=used_meal_titles,
         allow_new_recipe=allow_new_recipe,
         banned_protein_groups=banned_groups_week or None,  # keep weekly cap semantics for this param
     )
@@ -1952,6 +2000,9 @@ def _recommend_for_single_meal(
         pg = ai_idea_payload.get("protein_group") or "unknown"
         pi = ai_idea_payload.get("protein_item") or "unknown"
         ci = ai_idea_payload.get("carb_item") or "unknown"
+        normalized_title = _normalize_meal_title(str(ai_idea_payload.get("title") or ""))
+        if used_meal_titles is not None and normalized_title:
+            used_meal_titles.add(normalized_title)
 
         if enforce_day:
             if isinstance(pi, str) and pi and pi != "unknown":
@@ -1989,6 +2040,9 @@ def _recommend_for_single_meal(
             used_recipe_ids.add(int(picked_recipe.id))
         except Exception:
             pass
+    normalized_title = _normalize_meal_title(getattr(picked_recipe, "title", None))
+    if used_meal_titles is not None and normalized_title:
+        used_meal_titles.add(normalized_title)
 
     pg = _guess_protein_group_for_recipe(picked_recipe)
     pi = _guess_protein_item_for_recipe(picked_recipe)
@@ -2302,8 +2356,10 @@ def recommend_recipes(
 
     target_date = _parse_iso_date(payload.date)
     week_used_recipe_ids = _get_week_used_recipe_ids(db, user, target_date)
+    week_used_meal_titles = _get_week_used_meal_titles(db, user, target_date)
     week_protein_counts = _get_week_protein_counts(db, user, target_date)
     used_recipe_ids: set[int] = set(week_used_recipe_ids)
+    used_meal_titles: set[str] = set(week_used_meal_titles)
 
     items: list[SlotRecommendation] = []
     used_protein_items: list[str] = []
@@ -2322,6 +2378,7 @@ def recommend_recipes(
             used_protein_items=used_protein_items,
             used_carb_items=used_carb_items,
             used_recipe_ids=used_recipe_ids,
+            used_meal_titles=used_meal_titles,
             allow_new_recipe=allow_new,
             week_protein_counts=week_protein_counts,
             protein_cap_per_slot=2,
@@ -2373,6 +2430,7 @@ def recommend_weekly_apply(
 
     out_days: list[dict[str, Any]] = []
     used_recipe_ids: set[int] = set()
+    used_meal_titles: set[str] = set()
     week_protein_counts: dict[tuple[str, str], int] = {}
 
     persist_summaries: list[dict[str, Any]] = []
@@ -2462,6 +2520,7 @@ def recommend_weekly_apply(
                 used_protein_items=used_protein_items,
                 used_carb_items=used_carb_items,
                 used_recipe_ids=used_recipe_ids,
+                used_meal_titles=used_meal_titles,
                 allow_new_recipe=allow_new,
                 week_protein_counts=week_protein_counts,
                 protein_cap_per_slot=2,
@@ -2501,6 +2560,7 @@ def recommend_weekly_apply(
                 used_protein_items=used_protein_items,
                 used_carb_items=used_carb_items,
                 used_recipe_ids=used_recipe_ids,
+                used_meal_titles=used_meal_titles,
                 allow_new_recipe=allow_new,
                 week_protein_counts=week_protein_counts,
                 protein_cap_per_slot=2,
