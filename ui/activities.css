@@ -1,0 +1,79 @@
+/* Activities – page-specific tweaks only.
+   Shared layout/skin comes from /ui/styles.css and /ui/styles.plan.css. */
+
+/* --- Error row --- */
+.error-msg{
+  margin-top:8px; color:#ffb3b3;
+  border:1px solid rgba(255,107,107,.35);
+  background:rgba(255,107,107,.08);
+  padding:8px 10px; border-radius:10px;
+}
+
+/* --- Two-column layout (donut + tables) --- */
+.grid.grid--two{
+  display:grid; grid-template-columns:420px 1fr;
+  gap:18px; margin-top:18px;
+}
+@media (max-width:1100px){ .grid.grid--two{ grid-template-columns:1fr; } }
+
+/* --- Table header row inside cards --- */
+.table-head{ display:flex; align-items:center; justify-content:space-between; }
+.table-controls{ display:inline-flex; gap:10px; align-items:center; }
+
+/* --- Donut legend --- */
+.legend{ margin-top:12px; display:grid; gap:6px; }
+.legend-row{ display:flex; align-items:center; justify-content:space-between; font-size:13px; }
+.legend-key{ display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:8px; vertical-align:middle; }
+
+/* --- Pills / status --- */
+#strava_badge{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:8px 12px; border-radius:999px;
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.04);
+  font-weight:700; color:#e5ecff;
+}
+#strava_badge.ok   { border-color:rgba(34,197,94,.35); background:rgba(34,197,94,.10); }
+#strava_badge.warn { border-color:rgba(245,158,11,.35); background:rgba(245,158,11,.10); }
+
+#sync_status.pill{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:6px 10px; font-weight:700; border-radius:999px;
+  border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.04);
+}
+#sync_status.ok{ border-color:rgba(34,197,94,.35);  background:rgba(34,197,94,.10); }
+#sync_status.err{ border-color:rgba(239,68,68,.35);  background:rgba(239,68,68,.10); }
+#sync_status.spin{ border-color:rgba(99,179,237,.35); background:rgba(99,179,237,.10); }
+
+/* --- Controls look like chips/buttons on other pages (scoped by IDs) --- */
+#sync_btn, #full_sync_btn, #refresh, [data-nav="logout"], #logout_btn{
+  appearance:none; border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.04); color:#e5ecff;
+  padding:10px 16px; border-radius:14px; font-weight:600; line-height:1;
+  cursor:pointer; transition:transform .05s ease, background .15s ease, border-color .15s ease;
+}
+#sync_btn:hover, #full_sync_btn:hover, #refresh:hover, [data-nav="logout"]:hover, #logout_btn:hover{
+  background:rgba(255,255,255,.07); border-color:rgba(255,255,255,.14);
+}
+#sync_btn:active, #full_sync_btn:active, #refresh:active, [data-nav="logout"]:active, #logout_btn:active{
+  transform:translateY(1px);
+}
+#sync_btn     { border-color:rgba(99,179,237,.28); background:rgba(99,179,237,.12); }
+#sync_btn:hover{ background:rgba(99,179,237,.18); }
+#full_sync_btn{ border-color:rgba(248,191,84,.28); background:rgba(248,191,84,.12); }
+#full_sync_btn:hover{ background:rgba(248,191,84,.18); }
+
+/* Date pills */
+#from,#to{
+  appearance:none; background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.08); color:#e5ecff;
+  padding:10px 12px; border-radius:12px; font-weight:600; line-height:1; min-width:130px;
+}
+#from:focus,#to:focus{ outline:none; border-color:rgba(99,179,237,.35); box-shadow:0 0 0 3px rgba(99,179,237,.12); }
+
+/* Selects */
+#ps,#sum_ps{
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.08);
+  color:#e5ecff; padding:8px 10px; border-radius:10px; font-weight:600;
+}

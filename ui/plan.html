@@ -1,148 +1,436 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="en" class="ui-root">
 <head>
   <meta charset="utf-8" />
-  <title>Glycofy — Plan</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'">
-  <link rel="icon" href="/ui/favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="/ui/styles.css" />
-  <script src="/ui/app.js?v=14" defer></script>
-  <script src="/ui/plan.js?v=14" defer></script>
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Meal Plan • Glycofy</title>
+  <link rel="icon" href="/ui/favicon.svg" />
+  <link rel="stylesheet" href="/ui/styles.css?v=2025-11-04" />
   <style>
-    .page{max-width:1200px;margin:0 auto;padding:18px}
-    .top-controls{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
-    .seg{display:inline-flex;border:1px solid #2a3a4d;border-radius:12px;overflow:hidden}
-    .seg button{padding:8px 14px;background:#0f1822;border:none;color:#cfe3ff;cursor:pointer}
-    .seg button.active{background:#1b2a3d}
-    .card{border:1px solid #1f2a38;background:#0e141b;border-radius:14px;padding:16px}
-    .muted{color:#93a5b1}
-    .pill{display:inline-block;padding:8px 12px;border-radius:999px;border:1px solid #2a3a4d;background:#0f1822;color:#cfe3ff;margin-right:8px}
-    .row{display:grid;grid-template-columns:1fr;gap:16px}
-    @media(min-width:980px){.row{grid-template-columns:2fr 1fr}}
-    .meal{border:1px solid #203042;background:#101722;border-radius:12px;padding:12px;margin-bottom:12px}
-    .meal header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-    .list{white-space:pre-wrap}
-    .kv{display:flex;align-items:center;gap:8px}
-    .btn{padding:10px 14px;border-radius:10px;border:1px solid #2a3a4d;background:#132235;color:#d7e6ff;cursor:pointer;text-decoration:none}
-    .input{background:#0f1822;border:1px solid #2a3a4d;color:#d6e6ff;padding:10px 12px;border-radius:10px}
-    /* week */
-    .week-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
-    @media(max-width:1024px){.week-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
-    @media(max-width:640px){.week-grid{grid-template-columns:1fr;}}
-    .day-card{border:1px solid #1f2a38;background:#0e141b;border-radius:14px;padding:12px}
-    .day-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-    .targets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
-    .meal-sm{border:1px solid #203042;background:#101722;border-radius:10px;padding:10px;margin-top:8px}
-    .meta{color:#9fb2c2;font-size:13px}
-    .controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+    html.ui-root,
+    body.ui-root {
+      background:#0f1318;
+      color:#e7ecf3;
+      font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+    }
+    .container{max-width:1200px;margin:0 auto;padding:0 24px}
+    .topbar{position:sticky;top:0;z-index:100;background:rgba(16,20,28,.85);
+      border-bottom:1px solid rgba(110,168,254,.10); backdrop-filter:saturate(140%) blur(8px)}
+    .topbar .brand{color:#6ea8fe;text-decoration:none;font-weight:800;letter-spacing:.2px}
+    .nav{display:flex;gap:10px;align-items:center}
+    .nav a{display:inline-flex;align-items:center;height:36px;padding:0 14px;border-radius:999px;
+      color:#e7ecf3;text-decoration:none;border:1px solid transparent}
+    .nav a.active{background:#101826;border-color:rgba(110,168,254,.18)}
+    .btn.btn--pill{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);
+      color:#e5ecff;padding:10px 16px;border-radius:14px;font-weight:600}
+
+    .page{padding:40px 0 80px}
+    h1{margin:0 0 8px 0;font-size:clamp(28px,4vw,42px);line-height:1.05}
+    .muted{color:#9fb0c9}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .spacer{height:12px}
+
+    #plan-date-display{
+      color:#9fb0c9;
+      font-size:15px;
+      margin-top:4px;
+      margin-bottom:14px;
+    }
+
+    .panel__header{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      flex-wrap:wrap;
+      margin:8px 0 14px;
+    }
+
+    .chip{
+      display:inline-flex;
+      gap:8px;
+      align-items:center;
+      height:36px;
+      padding:0 14px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.02);
+      color:#e7ecf3;
+    }
+
+    .btn{
+      height:36px;
+      padding:0 14px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.06);
+      color:#fff;
+      font-size:14px;
+    }
+
+    .btn--primary{
+      background:#6ea8fe;
+      border-color:rgba(110,168,254,.35);
+      color:#0d1320;
+      font-weight:700;
+    }
+
+    .btn--ghost{
+      background:transparent;
+    }
+
+    .totals{
+      display:grid;
+      grid-template-columns:repeat(6, max-content);
+      gap:18px;
+      align-items:baseline;
+      margin-bottom:12px;
+    }
+
+    .totals .k{
+      display:block;
+      font-size:12px;
+      color:#9fb0c9
+    }
+
+    .totals .v{
+      font-weight:700
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:16px;
+      margin-top:18px;
+    }
+
+    @media (max-width:1000px){
+      .grid{grid-template-columns:1fr}
+    }
+
+    .meal-card{
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:16px;
+      background:rgba(255,255,255,.02);
+      padding:18px;
+    }
+
+    .meal-card-header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:6px;
+    }
+
+    .meal-header-main{
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+    }
+
+    .meal-title{
+      margin:0;
+      font-size:18px;
+      font-weight:600;
+    }
+
+    .meal-section-label{
+      font-size:12px;
+      text-transform:uppercase;
+      letter-spacing:.06em;
+      color:#9fb0c9;
+      margin:0;
+    }
+
+    .meal-badge{
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:2px 8px;
+      border-radius:999px;
+      font-size:11px;
+      font-weight:600;
+      border:1px solid rgba(110,168,254,.55);
+      background:rgba(110,168,254,.14);
+      color:#cfe0ff;
+      white-space:nowrap;
+    }
+
+    .meal-badge--ai{
+      border-color:rgba(255,255,255,.4);
+      background:rgba(255,255,255,.06);
+      color:#ffd09c;
+    }
+
+    .meal-macros{
+      display:flex;
+      gap:12px;
+      color:#9fb0c9;
+      font-size:13px;
+      margin-bottom:8px;
+    }
+
+    .meal-body{
+      font-size:14px;
+      color:#d5deed;
+      min-height:40px;
+    }
+
+    .meal-ingredients{
+      list-style:none;
+      margin:0;
+      padding:0;
+    }
+
+    .meal-ingredients li{
+      padding:8px 0;
+      border-top:1px dashed rgba(255,255,255,.12);
+      display:flex;
+      justify-content:space-between;
+      gap:8px;
+    }
+
+    .meal-ingredients li:first-child{
+      border-top:none;
+    }
+
+    .meal-ingredient-name{
+      font-weight:500;
+    }
+
+    .meal-ingredient-amount{
+      font-size:13px;
+      color:#9fb0c9;
+    }
+
+    .meal-ai-desc{
+      margin:0 0 6px 0;
+    }
+
+    .meal-empty{
+      margin:0;
+      color:#6d7a92;
+      font-style:italic;
+    }
+
+    .meal-card-actions{
+      margin-top:12px;
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+
+    .meal-card-actions .btn{
+      height:32px;
+      padding:0 12px;
+      font-size:13px;
+    }
+
+    .plan-busy{
+      position:fixed;
+      inset:0;
+      background:rgba(3,6,12,0.75);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      z-index:200;
+    }
+
+    .plan-busy__box{
+      min-width:220px;
+      padding:16px 20px;
+      border-radius:14px;
+      background:#151b24;
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow:0 18px 45px rgba(0,0,0,.6);
+      font-size:14px;
+      text-align:center;
+    }
+
+    .plan-msg{
+      margin:12px 0;
+      padding:10px 12px;
+      border-radius:12px;
+      font-size:13px;
+      display:none;
+    }
+
+    .plan-msg--ok{
+      display:block;
+      background:rgba(46,204,113,.12);
+      border:1px solid rgba(46,204,113,.25);
+    }
+
+    .plan-msg--error{
+      display:block;
+      background:rgba(231,76,60,.12);
+      border:1px solid rgba(231,76,60,.25);
+    }
   </style>
 </head>
-<body>
-<header class="topbar">
-  <div class="brand">
-    <img src="/ui/favicon.svg" alt="G" width="18" height="18" />
-    <strong>Glycofy</strong>
-  </div>
-  <nav class="nav-links">
-    <a href="/ui/plan.html">Plan</a>
-    <a href="/ui/activities.html">Activities</a>
-    <a href="/ui/profile.html">Profile</a>
-  </nav>
-  <button id="logout_btn" class="logout-btn">Logout</button>
-</header>
+<body class="ui-root">
+  <header class="topbar">
+    <div class="container topbar__inner" style="display:flex;align-items:center;justify-content:space-between;height:64px;">
+      <a class="brand" href="/ui/index.html">GLYCOFY</a>
 
-<main class="page">
-  <div class="top-controls">
-    <h1 style="margin:0">Plan</h1>
-    <div class="seg" role="tablist" aria-label="View">
-      <button id="tab_day" class="active" aria-selected="true">Day</button>
-      <button id="tab_week" aria-selected="false">Week</button>
+      <nav class="nav" aria-label="Primary">
+        <a href="/ui/index.html">Home</a>
+        <a href="/ui/plan.html" class="active">Plan</a>
+        <a href="/ui/profile.html">Profile</a>
+        <a href="/ui/activities.html">Activities</a>
+      </nav>
+
+      <div class="nav">
+        <button id="logout_btn" class="btn btn--pill">Logout</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="container">
+      <h1>Meal Plan</h1>
+
+      <div id="plan-date-display">Loading date...</div>
+
+      <div class="panel__header">
+        <button id="plan-date-chip" class="chip" type="button">—</button>
+
+        <button id="plan-prev" class="btn btn--ghost" title="Previous day" type="button">
+          ←
+        </button>
+
+        <button id="plan-next" class="btn btn--ghost" title="Next day" type="button">
+          →
+        </button>
+
+        <div class="spacer" style="width:8px"></div>
+
+        <button id="plan-lock" class="btn" type="button">Lock</button>
+        <button id="plan-regen" class="btn" type="button">Regenerate</button>
+        <button id="plan-ai-all" class="btn btn--primary" type="button">Today (AI)</button>
+        <button id="plan-ai-week" class="btn" type="button">Week (AI)</button>
+
+        <div class="spacer" style="width:8px"></div>
+
+        <a id="dl_txt" class="btn btn--ghost" href="#" download>Grocery .txt</a>
+        <a id="dl_csv" class="btn btn--ghost" href="#" download>Grocery .csv</a>
+      </div>
+
+      <div id="plan-msg" class="plan-msg" style="display:none;"></div>
+
+      <div id="totals" class="totals">
+        <div><span class="k">kcal</span><span class="v" id="plan-total-kcal">—</span></div>
+        <div><span class="k">protein</span><span class="v" id="plan-total-protein">—</span></div>
+        <div><span class="k">carbs</span><span class="v" id="plan-total-carbs">—</span></div>
+        <div><span class="k">fat</span><span class="v" id="plan-total-fat">—</span></div>
+        <div><span class="k">source</span><span class="v" id="plan-source">—</span></div>
+        <div><span class="k">locked</span><span class="v" id="plan-locked">—</span></div>
+      </div>
+
+      <div id="empty_state" class="muted" style="display:none;margin:16px 0;">
+        No plan yet for this day.
+        <button id="create_btn" class="btn btn--primary" style="margin-left:8px;">
+          Create plan
+        </button>
+      </div>
+
+      <div id="meals" class="grid" aria-live="polite">
+        <section class="meal-card" data-slot="breakfast">
+          <div class="meal-card-header">
+            <div class="meal-header-main">
+              <p class="meal-section-label meal-slot-label">Breakfast</p>
+              <h2 class="meal-title">Breakfast</h2>
+            </div>
+            <span class="meal-badge"></span>
+          </div>
+
+          <div class="meal-macros"></div>
+
+          <div class="meal-body">
+            <p class="meal-empty">No meal planned yet.</p>
+          </div>
+
+          <div class="meal-card-actions">
+            <button class="btn btn--ghost" data-action="swap-ai" type="button">Swap (AI)</button>
+            <button class="btn btn--ghost" data-action="why" type="button">Why?</button>
+          </div>
+        </section>
+
+        <section class="meal-card" data-slot="lunch">
+          <div class="meal-card-header">
+            <div class="meal-header-main">
+              <p class="meal-section-label meal-slot-label">Lunch</p>
+              <h2 class="meal-title">Lunch</h2>
+            </div>
+            <span class="meal-badge"></span>
+          </div>
+
+          <div class="meal-macros"></div>
+
+          <div class="meal-body">
+            <p class="meal-empty">No meal planned yet.</p>
+          </div>
+
+          <div class="meal-card-actions">
+            <button class="btn btn--ghost" data-action="swap-ai" type="button">Swap (AI)</button>
+            <button class="btn btn--ghost" data-action="why" type="button">Why?</button>
+          </div>
+        </section>
+
+        <section class="meal-card" data-slot="dinner">
+          <div class="meal-card-header">
+            <div class="meal-header-main">
+              <p class="meal-section-label meal-slot-label">Dinner</p>
+              <h2 class="meal-title">Dinner</h2>
+            </div>
+            <span class="meal-badge"></span>
+          </div>
+
+          <div class="meal-macros"></div>
+
+          <div class="meal-body">
+            <p class="meal-empty">No meal planned yet.</p>
+          </div>
+
+          <div class="meal-card-actions">
+            <button class="btn btn--ghost" data-action="swap-ai" type="button">Swap (AI)</button>
+            <button class="btn btn--ghost" data-action="why" type="button">Why?</button>
+          </div>
+        </section>
+
+        <section class="meal-card" data-slot="snack">
+          <div class="meal-card-header">
+            <div class="meal-header-main">
+              <p class="meal-section-label meal-slot-label">Snack</p>
+              <h2 class="meal-title">Snack</h2>
+            </div>
+            <span class="meal-badge"></span>
+          </div>
+
+          <div class="meal-macros"></div>
+
+          <div class="meal-body">
+            <p class="meal-empty">No meal planned yet.</p>
+          </div>
+
+          <div class="meal-card-actions">
+            <button class="btn btn--ghost" data-action="swap-ai" type="button">Swap (AI)</button>
+            <button class="btn btn--ghost" data-action="why" type="button">Why?</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <div id="plan-busy" class="plan-busy" style="display:none;">
+    <div class="plan-busy__box">
+      <span id="plan-busy-msg">Working…</span>
     </div>
   </div>
 
-  <!-- Strava sync (lives on Plan now) -->
-  <section class="card" style="margin-bottom:14px">
-    <span id="strava_badge" class="pill">Strava: —</span>
-    <a id="strava_connect" class="btn" href="/oauth/strava/start" style="display:none">Connect Strava</a>
-    <button id="strava_sync" class="btn">Sync</button>
-    <button id="strava_resync" class="btn">Full re-sync</button>
-    <span id="sync_status" class="muted"></span>
-  </section>
-
-  <!-- DAY VIEW -->
-  <section id="view_day" class="card" aria-labelledby="tab_day">
-    <div class="controls">
-      <div class="kv">
-        <label for="planDate">Date</label>
-        <input id="planDate" class="input" type="date" />
-      </div>
-      <div class="kv">
-        <label for="dietSelect">Diet</label>
-        <select id="dietSelect" class="input">
-          <option value="omnivore">omnivore</option>
-          <option value="pescatarian">pescatarian</option>
-          <option value="vegan">vegan</option>
-          <option value="vegetarian">vegetarian</option>
-          <option value="keto">keto</option>
-          <option value="none">none</option>
-        </select>
-      </div>
-      <button id="refreshBtn" class="btn">Refresh</button>
-      <button id="swapSnackBtn" class="btn" title="Swap snack">Swap snack</button>
-      <button id="lockBtn" class="btn" title="Lock/unlock">Lock</button>
-      <a id="gTxt" class="pill" href="#" download>Grocery .txt</a>
-      <a id="gCsv" class="pill" href="#" download>Grocery .csv</a>
-      <span id="status" class="muted"></span>
-    </div>
-
-    <div class="row" style="margin-top:12px">
-      <section class="card">
-        <h2>Meals</h2>
-        <div class="muted" id="mealsEmpty" style="display:none">No meals yet. Click <b>Refresh</b>.</div>
-        <div id="meals"></div>
-      </section>
-
-      <section class="card">
-        <h2>Totals</h2>
-        <div class="pill" id="tdeePill">TDEE: —</div>
-        <div class="pill" id="trainPill">Training: —</div>
-        <div class="pill" id="protPill">Protein: —</div>
-        <div class="pill" id="carbPill">Carbs: —</div>
-        <div class="pill" id="fatPill">Fat: —</div>
-        <div class="muted" style="margin-top:10px" id="lockState"></div>
-        <h3 style="margin-top:18px">Grocery list</h3>
-        <div id="grocery" class="list muted"></div>
-      </section>
-    </div>
-  </section>
-
-  <!-- WEEK VIEW -->
-  <section id="view_week" class="card" aria-labelledby="tab_week" style="display:none">
-    <div class="controls">
-      <div class="kv">
-        <label for="week_start">Week starting (UTC)</label>
-        <input id="week_start" class="input" type="date" />
-      </div>
-      <div class="kv">
-        <label for="week_diet_pref">Diet</label>
-        <select id="week_diet_pref" class="input">
-          <option value="omnivore">omnivore</option>
-          <option value="pescatarian">pescatarian</option>
-          <option value="vegan">vegan</option>
-          <option value="vegetarian">vegetarian</option>
-          <option value="keto">keto</option>
-        </select>
-      </div>
-      <button id="week_load" class="btn">Load week</button>
-      <button id="week_regen" class="btn">Regenerate week</button>
-      <a id="week_g_txt" class="pill" href="#" download>Export grocery (.txt)</a>
-      <a id="week_g_csv" class="pill" href="#" download>Export grocery (.csv)</a>
-      <span id="week_status" class="muted"></span>
-    </div>
-
-    <div id="week_grid" class="week-grid" style="margin-top:12px"></div>
-  </section>
-</main>
+  <script src="/ui/core.js?v=2025-11-04" defer></script>
+  <script src="/ui/plan.js?v=2026-05-13c" defer></script>
 </body>
 </html>

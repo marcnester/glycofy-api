@@ -1,149 +1,170 @@
-// ui/login.js — robust cookie-based login (CSP-safe, no modules)
+// /ui/login.js — self-contained login (no core.js dependency)
+// Default post-login destination: /ui/index.html
 (function () {
-  // ---------- tiny DOM helpers ----------
-  function $(id) { return document.getElementById(id); }
-  function show(el) { if (el) el.style.display = ''; }
-  function hide(el) { if (el) el.style.display = 'none'; }
+  "use strict";
 
-  function flash(msg, type = 'notice') {
-    const box = $('msg');
+  // --- DOM helpers ---
+  const $ = (id) => document.getElementById(id);
+  const show = (el) => { if (el) el.style.display = ""; };
+  function flash(msg, type = "notice") {
+    const box = $("msg");
     if (!box) return;
-    box.textContent = msg;
-    box.className = (type === 'error') ? 'error' : 'notice';
+    box.textContent = msg || "";
+    box.className = "msg " + (type === "error" ? "error" : "notice");
     show(box);
   }
 
-  // Default post-login destination → Plan (MVP)
-  function getReturnPath() {
+  // --- return handling ---
+  function sanitizeReturnPath(p) {
     try {
-      const u = new URL(window.location.href);
-      const ret = u.searchParams.get('return');
-      // Only allow same-origin paths; otherwise fall back to Plan
-      return (ret && ret.startsWith('/')) ? ret : '/ui/plan.html';
-    } catch {
-      return '/ui/plan.html';
-    }
+      if (p && p.startsWith("/") && !p.startsWith("//")) return p;
+    } catch {}
+    return "/ui/index.html";
+  }
+  function parseReturn(def) {
+    try {
+      const u = new URL(location.href);
+      let v = u.searchParams.get("return");
+      // force home if caller tried to send us to /ui/plan.html
+      if (v === "/ui/plan.html" || v === "/ui/plan") v = null;
+      return sanitizeReturnPath(v) || (def || "/ui/index.html");
+    } catch {}
+    return def || "/ui/index.html";
+  }
+  function redirectToReturn(def) {
+    const dest = parseReturn(def);
+    const here = location.pathname + location.search;
+    if (here !== dest) location.replace(dest);
+    else location.reload();
   }
 
-  async function alreadyAuthenticated() {
-    try {
-      const r = await fetch('/users/me', { credentials: 'include' });
-      return r.ok;
-    } catch { return false; }
+  // --- bearer token store ---
+  const TOKEN_KEY = "glyco_token";
+  function setToken(v) {
+    try { v ? localStorage.setItem(TOKEN_KEY, String(v)) : localStorage.removeItem(TOKEN_KEY); } catch {}
+  }
+  function getToken() {
+    try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
   }
 
-  // Cookie-based login. Server sets HttpOnly cookie; response may be { ok:true }.
-  async function doLogin(email, password) {
-    const res = await fetch('/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      credentials: 'include', // send/receive cookies
+  // --- /users/me probe ---
+  let _probe = null;
+  async function ensureAuth({ force = false } = {}) {
+    if (force) _probe = null;
+    if (_probe) return _probe;
+    const headers = { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" };
+    const tok = getToken(); if (tok) headers["Authorization"] = "Bearer " + tok;
+    _probe = fetch("/users/me", { credentials: "include", headers, cache: "no-store" })
+      .then(r => r.ok).catch(() => false);
+    return _probe;
+  }
+
+  // --- password login ---
+  async function passwordLogin(email, password) {
+    const res = await fetch("/auth/login", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "X-Requested-With": "XMLHttpRequest"
+      },
       body: JSON.stringify({ email, password })
     });
-
     if (!res.ok) {
-      let detail = '';
+      let msg = `HTTP ${res.status}`;
       try {
-        const ct = res.headers.get('Content-Type') || '';
-        if (ct.includes('application/json')) {
-          const data = await res.json();
-          detail = data?.detail || data?.message || '';
-        } else {
-          detail = await res.text();
-        }
+        const ct = res.headers.get("Content-Type") || "";
+        if (ct.includes("application/json")) {
+          const j = await res.json().catch(() => null);
+          msg = (j && (j.detail || j.message)) || msg;
+        } else msg = (await res.text()) || msg;
       } catch {}
-      throw new Error(detail || `HTTP ${res.status}`);
+      throw new Error(msg);
     }
+    try {
+      const ct = res.headers.get("Content-Type") || "";
+      if (ct.includes("application/json")) {
+        const j = await res.json().catch(() => null);
+        if (j && j.access_token) setToken(j.access_token);
+      }
+    } catch {}
     return true;
   }
 
-  async function maybeRenderGoogleButton() {
-    const wrap = $('google_wrap');
-    const btn = $('google_btn');
-    if (!wrap || !btn) return;
+  // --- Google login button ---
+  async function wireGoogle() {
+    const btn = $("googleBtn"); if (!btn) return;
     try {
-      const r = await fetch('/oauth/google/status', { headers: { 'Accept': 'application/json' }, credentials: 'include' });
-      if (!r.ok) throw new Error(String(r.status));
-      const info = await r.json().catch(() => ({}));
-      if (info && (info.configured || info.enabled)) {
-        btn.setAttribute('href', '/oauth/google/start');
-        show(btn);
-        hide(wrap);
-      } else {
-        wrap.textContent = 'Google Sign-In is not configured on this server.';
-        show(wrap);
-        hide(btn);
-      }
+      const r = await fetch("/oauth/google/status", { credentials: "include" });
+      const j = await r.json().catch(() => ({}));
+      if (!j || !j.configured) { btn.disabled = true; btn.title = "Google not configured"; return; }
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const ret = encodeURIComponent(parseReturn("/ui/index.html"));
+        location.href = "/oauth/google/start?return=" + ret;
+      });
     } catch {
-      hide(btn);
-      hide(wrap);
+      btn.disabled = true; btn.title = "Google status unavailable";
     }
   }
 
-  function handleDemoPrefill() {
-    const demo = $('demo');
-    if (!demo) return;
-    demo.addEventListener('click', () => {
-      const email = $('email'); const pw = $('password');
-      if (email) email.value = 'demo@glycofy.app';
-      if (pw) pw.value = 'Demo1234!';
-      flash('Demo credentials filled. Click “Sign in”.');
-    });
-  }
+  // --- init ---
+  document.addEventListener("DOMContentLoaded", async () => {
+    const note = $("endpointNote"); if (note) note.textContent = location.origin;
 
-  function handleFormSubmit() {
-    const form = $('login-form');
-    const submitBtn = $('submitBtn');
-    if (!form || !submitBtn) return;
-
-    let inFlight = false;
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();                  // prevent browser default submission
-      if (inFlight) return;
-      inFlight = true;
-
-      const email = $('email')?.value?.trim();
-      const password = $('password')?.value || '';
-      if (!email || !password) {
-        flash('Please enter both email and password.', 'error');
-        inFlight = false;
-        return;
-      }
-
-      submitBtn.disabled = true;
-      flash('Signing in…');
-
-      try {
-        await doLogin(email, password);
-
-        // Allow Set-Cookie to commit, then leave the login page
-        setTimeout(() => {
-          window.location.replace(getReturnPath());
-        }, 0);
-      } catch (e2) {
-        flash(e2?.message || 'Login failed', 'error');
-      } finally {
-        submitBtn.disabled = false;
-        inFlight = false;
-      }
-    });
-  }
-
-  document.addEventListener('DOMContentLoaded', async () => {
-    const note = $('endpointNote');
-    if (note) note.textContent = `API: ${location.origin}`;
-
-    // If already logged in, bounce off the login page immediately
     try {
-      if (await alreadyAuthenticated()) {
-        window.location.replace(getReturnPath());
+      const ok = await ensureAuth({ force: true });
+      if (ok) {
+        flash("Already signed in. Redirecting…");
+        setTimeout(() => redirectToReturn("/ui/index.html"), 250);
         return;
       }
     } catch {}
 
-    handleDemoPrefill();
-    handleFormSubmit();
-    void maybeRenderGoogleButton();
+    const demo = $("demo");
+    if (demo) {
+      demo.addEventListener("click", (e) => {
+        e.preventDefault();
+        $("email").value = "demo@glycofy.app";
+        $("password").value = "Demo1234!";
+        flash("Demo credentials filled. Click “Sign in”.");
+      });
+    }
+
+    await wireGoogle();
+
+    const form = $("login-form"); const submitBtn = $("submitBtn");
+    if (!form || !submitBtn) return;
+    let inflight = false;
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault(); if (inflight) return; inflight = true;
+
+      const email = ($("email")?.value || "").trim();
+      const pw = $("password")?.value || "";
+      if (!email || !pw) { flash("Please enter both email and password.", "error"); inflight = false; return; }
+
+      submitBtn.disabled = true;
+      submitBtn.dataset.prevText = submitBtn.textContent;
+      submitBtn.textContent = "Signing in…";
+      form.querySelectorAll("input,button").forEach(el => el.disabled = true);
+      flash("Signing in…");
+
+      try {
+        await passwordLogin(email, pw);
+        const ok = await ensureAuth({ force: true });
+        if (!ok) throw new Error("Authentication failed after login.");
+        flash("Login successful. Redirecting…");
+        setTimeout(() => redirectToReturn("/ui/index.html"), 300);
+      } catch (err) {
+        console.error("[login] failed:", err);
+        flash(err?.message || "Login failed. Please try again.", "error");
+        submitBtn.disabled = false;
+        submitBtn.textContent = submitBtn.dataset.prevText || "Sign in";
+        form.querySelectorAll("input,button").forEach(el => el.disabled = false);
+        inflight = false;
+      }
+    });
   });
 })();

@@ -1,67 +1,223 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="en" class="ui-root">
 <head>
   <meta charset="utf-8" />
-  <title>Glycofy</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Glycofy · Home</title>
   <link rel="icon" href="/ui/favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="/ui/styles.css" />
-  <style>
-    body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;margin:0;color:#e6edf3;background:#0b0f14}
-    header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #1e2632;background:#0e141b;position:sticky;top:0;z-index:5}
-    nav a{color:#b8c7d9;text-decoration:none;margin-right:14px;padding:6px 10px;border-radius:8px}
-    nav a.active,nav a:hover{background:#15202b;color:#fff}
-    .container{max-width:1200px;margin:0 auto;padding:20px}
-    .hero{display:flex;flex-direction:column;gap:10px;margin:20px 0 10px}
-    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-    @media (max-width:900px){.grid{grid-template-columns:1fr}}
-    .card{border:1px solid #1f2a38;background:#0e141b;border-radius:14px;padding:16px}
-    .muted{color:#93a5b1}
-    .cta{display:inline-flex;align-items:center;gap:8px;border:1px solid #32445a;background:#112033;color:#d7e6ff;padding:10px 14px;border-radius:10px;text-decoration:none}
-  </style>
-  <script src="/ui/app.js" defer></script>
-</head>
-<body>
-  <header class="topbar">
-  <div class="brand">
-    <img src="/ui/favicon.svg" alt="G" width="18" height="18" />
-    <strong>Glycofy</strong>
-  </div>
-  <nav class="nav-links">
-    <a href="/ui/activities.html">Activities</a>
-    <a href="/ui/plan.html">Plan</a>
-    <a href="/ui/plan-week.html">Week</a>
-    <a href="/ui/summary.html">Summary</a>
-    <a href="/ui/profile.html">Profile</a>
-  </nav>
-    <button id="logout_btn" class="logout-btn">Logout</button>
-</header>
 
-  <main class="container">
+  <!-- Shared global styles (includes the hard-locked Topbar) -->
+  <link rel="stylesheet" href="/ui/styles.css?v=2025-11-04" />
+
+  <!-- Page-local styles (no header/nav rules here) -->
+  <style>
+    :root{
+      --bg:#0d1117; --bg-grad-1:#0b1220; --bg-grad-2:#0e1626;
+      --panel:#111826; --panel-2:#0c121e; --border:#1b2433;
+      --text:#e8eef5; --muted:#9db3cf; --accent:#4ba3ff; --accent-2:#7ec4ff;
+      --ok:#3dd68c; --warn:#ffd166; --radius:16px;
+      --shadow:0 18px 40px rgba(0,0,0,.45); --transition:150ms ease;
+    }
+    *{box-sizing:border-box}
+    html,body{
+      height:100%;
+      margin:0;
+      font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
+    body{
+      background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(75,163,255,.12), transparent 60%),
+        radial-gradient(900px 500px at 90% 0%, rgba(126,196,255,.10), transparent 55%),
+        linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2));
+    }
+    a{color:var(--accent);text-decoration:none}
+    a:hover{text-decoration:underline}
+
+    /* layout */
+    main{padding:32px;max-width:1200px;margin:0 auto}
+    .hero{
+      position:relative;
+      border:1px solid var(--border);
+      background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.00));
+      border-radius:24px;
+      padding:40px 32px;
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+    .hero:before{
+      content:'';position:absolute;inset:-2px;
+      background:radial-gradient(600px 200px at 30% -20%, rgba(75,163,255,.10), transparent 60%);
+      pointer-events:none;
+    }
+    .hero h1{font-size:2.2rem;line-height:1.1;margin:0 0 6px}
+    .hero p.lede{margin:0;color:var(--muted)}
+    .hero .cta{display:flex;gap:12px;margin-top:20px;flex-wrap:wrap}
+    .btn{
+      background:var(--accent);
+      border:none;
+      border-radius:12px;
+      padding:12px 16px;
+      color:#fff;
+      font-weight:700;
+      cursor:pointer;
+      transition:transform var(--transition),background var(--transition);
+    }
+    .btn:hover{transform:translateY(-1px);background:var(--accent-2)}
+    .btn.secondary{
+      background:transparent;
+      border:1px solid var(--border);
+      color:var(--text);
+    }
+    .btn.secondary:hover{border-color:var(--accent);color:#fff}
+
+    /* quick stats */
+    .stats{
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:12px;
+      margin-top:24px;
+    }
+    .stat{
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:14px 16px;
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      min-height:92px;
+    }
+    .stat .k{color:var(--muted);font-size:13px;font-weight:600}
+    .stat .v{font-size:22px;font-weight:800}
+    .stat .u{color:var(--muted);font-size:12px;margin-top:-4px}
+
+    /* sections */
+    .grid{
+      display:grid;
+      grid-template-columns:1.1fr .9fr;
+      gap:16px;
+      margin-top:18px;
+    }
+    .card{
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:16px;
+      padding:20px;
+      box-shadow:var(--shadow);
+    }
+    .card h3{margin:0 0 10px;font-size:16px}
+    .list{display:flex;flex-direction:column;gap:10px}
+    .row{
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      padding:12px;
+      border-radius:10px;
+      background:var(--panel-2);
+      border:1px solid var(--border);
+      color:var(--text);
+    }
+    .row .muted{color:var(--muted)}
+    .row .ok{color:var(--ok)}
+    .row .warn{color:var(--warn)}
+    .small{font-size:12px;color:var(--muted)}
+    .links{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}
+    .link-like{font-weight:600}
+
+    /* footer micro */
+    footer{
+      padding:24px 32px;
+      color:var(--muted);
+      font-size:12px;
+      text-align:center;
+    }
+
+    @media (max-width:900px){
+      .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .grid{grid-template-columns:1fr}
+      .hero h1{font-size:1.8rem}
+    }
+  </style>
+</head>
+<body class="ui-root">
+  <!-- Topbar — identical markup/classes to Profile & Activities -->
+  <header class="topbar">
+    <div class="container topbar__inner" style="display:flex;align-items:center;justify-content:space-between;height:64px;">
+      <a class="brand" href="/ui/index.html" data-nav="Home">GLYCOFY</a>
+      <nav class="nav" aria-label="Primary">
+        <a href="/ui/index.html" data-nav="Home" class="active">Home</a>
+        <a href="/ui/plan.html" data-nav="Plan">Plan</a>
+        <a href="/ui/profile.html" data-nav="Profile">Profile</a>
+        <a href="/ui/activities.html" data-nav="Activities">Activities</a>
+      </nav>
+      <div class="nav">
+        <button id="logout_btn" class="btn btn--pill" data-nav="logout" type="button">Logout</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- HERO -->
     <section class="hero">
-      <h1>Welcome to Glycofy</h1>
-      <p class="muted">Connect training, compute nutrition targets, and get simple, actionable meal plans.</p>
-      <div>
-        <a class="cta" href="/ui/activities.html">View Activities</a>
-        <a class="cta" href="/ui/plan.html">See Today’s Plan</a>
+      <h1 id="heroTitle">Eat with intent. Train with data.</h1>
+      <p class="lede" id="heroSub">Plan meals that match your macros and your day.</p>
+      <div class="cta">
+        <button class="btn" id="openPlanner" type="button">Open Meal Planner</button>
+        <a class="btn secondary" id="viewActivities" href="/ui/activities.html">View Activities</a>
+        <a class="btn secondary" id="openProfile" href="/ui/profile.html">Profile</a>
+      </div>
+
+      <!-- Quickly glance today's macro targets (if available) -->
+      <div class="stats" id="stats">
+        <div class="stat"><span class="k">Calories</span><span class="v" id="sCal">—</span><span class="u">kcal</span></div>
+        <div class="stat"><span class="k">Protein</span><span class="v" id="sP">—</span><span class="u">g</span></div>
+        <div class="stat"><span class="k">Carbs</span><span class="v" id="sC">—</span><span class="u">g</span></div>
+        <div class="stat"><span class="k">Fat</span><span class="v" id="sF">—</span><span class="u">g</span></div>
       </div>
     </section>
 
+    <!-- CONTENT -->
     <section class="grid">
       <div class="card">
-        <h3>What’s included</h3>
-        <ul class="muted">
-          <li>Strava import (MVP)</li>
-          <li>Daily energy & macros targets</li>
-          <li>Auto-generated meals & grocery list</li>
-        </ul>
+        <h3>Today, at a glance</h3>
+        <div class="list" id="todayList">
+          <div class="row"><div>Breakfast</div><div class="muted">— kcal · P— · C— · F—</div></div>
+          <div class="row"><div>Lunch</div><div class="muted">— kcal · P— · C— · F—</div></div>
+          <div class="row"><div>Dinner</div><div class="muted">— kcal · P— · C— · F—</div></div>
+          <div class="row"><div>Snack</div><div class="muted">— kcal · P— · C— · F—</div></div>
+        </div>
+        <div class="links">
+          <a class="link-like" id="adjustMeals" href="/ui/plan.html">Adjust meals</a>
+          <a class="link-like" id="dlTxt" href="#" style="display:none">Download grocery.txt</a>
+          <a class="link-like" id="dlCsv" href="#" style="display:none">Download grocery.csv</a>
+        </div>
       </div>
+
       <div class="card">
-        <h3>Get started</h3>
-        <p class="muted">Log in, check your profile details, and—if needed—link Strava.</p>
+        <h3>Account</h3>
+        <div class="list">
+          <div class="row"><div>Status</div><div id="accStatus" class="ok">Signed in</div></div>
+          <div class="row"><div>User</div><div id="accUser" class="muted">—</div></div>
+          <div class="row"><div>Auth</div><div id="accAuth" class="muted">Cookie</div></div>
+        </div>
+        <div class="links">
+          <button class="btn" id="goLogin" style="display:none" type="button">Sign in</button>
+          <button class="btn secondary" id="doLogout" type="button">Logout</button>
+        </div>
+        <p class="small" id="apiNote">API: —</p>
       </div>
     </section>
   </main>
+
+  <footer>
+    © <span id="yr"></span> Glycofy · Build your nutrition with intention.
+  </footer>
+
+  <script src="/ui/core.js?v=2025-11-04" defer></script>
+  <script src="/ui/index.js?v=2025-11-17" defer></script>
 </body>
 </html>
