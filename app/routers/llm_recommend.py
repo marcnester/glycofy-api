@@ -27,6 +27,11 @@ from app.models import (
     User,
     UserPreference,  # ORM mapped to user_preferences
 )
+from app.services.training_nutrition import (
+    MacroTargets,
+    TrainingNutritionResult,
+    calculate_training_nutrition,
+)
 
 # Optional OpenAI client (lazy import so dev works without the package)
 ClientType = Any
@@ -110,6 +115,7 @@ class SlotRecommendation(BaseModel):
 class RecommendResponse(BaseModel):
     provider: str
     items: list[SlotRecommendation]
+    nutrition: dict[str, Any] | None = None
 
 
 # ---------- Weekly models ----------
@@ -144,6 +150,39 @@ _SLOT_RECOMMENDATION_ATTEMPTS = 3
 
 def _normalize_slot(s: str) -> str:
     return (s or "").strip().lower()
+
+
+def _baseline_from_meals(meals: list[MealTarget]) -> MacroTargets:
+    return MacroTargets(
+        kcal=sum(max(0.0, meal.kcal) for meal in meals),
+        protein_g=sum(max(0.0, meal.protein_g) for meal in meals),
+        carbs_g=sum(max(0.0, meal.carbs_g) for meal in meals),
+        fat_g=sum(max(0.0, meal.fat_g) for meal in meals),
+    )
+
+
+def _apply_nutrition_targets(
+    meals: list[MealTarget],
+    nutrition: TrainingNutritionResult,
+) -> list[MealTarget]:
+    baseline = nutrition.baseline
+    final = nutrition.final
+    scales = {
+        "kcal": final.kcal / baseline.kcal if baseline.kcal > 0 else 1.0,
+        "protein_g": final.protein_g / baseline.protein_g if baseline.protein_g > 0 else 1.0,
+        "carbs_g": final.carbs_g / baseline.carbs_g if baseline.carbs_g > 0 else 1.0,
+        "fat_g": final.fat_g / baseline.fat_g if baseline.fat_g > 0 else 1.0,
+    }
+    return [
+        MealTarget(
+            slot=meal.slot,
+            kcal=max(0.0, meal.kcal * scales["kcal"]),
+            protein_g=max(0.0, meal.protein_g * scales["protein_g"]),
+            carbs_g=max(0.0, meal.carbs_g * scales["carbs_g"]),
+            fat_g=max(0.0, meal.fat_g * scales["fat_g"]),
+        )
+        for meal in meals
+    ]
 
 
 def _score_recipe_vs_target(rec: Recipe, tgt: MealTarget) -> tuple[float, dict[str, float]]:
@@ -1081,9 +1120,14 @@ def _compute_training_load_for_date(db: Session, user_id: int, date_str: str) ->
         dur = None
         dist = None
         try:
-            dur = getattr(a, "moving_time_s", None)
+            dur = getattr(a, "duration_s", None)
         except Exception:
             dur = None
+        if dur is None:
+            try:
+                dur = getattr(a, "moving_time_s", None)
+            except Exception:
+                dur = None
         if dur is None:
             try:
                 dur = getattr(a, "elapsed_time", None)
@@ -1728,6 +1772,7 @@ def _cache_key(
     req: RecommendRequest,
     pref_tags: list[str],
     week_meal_keys: set[str] | None = None,
+    nutrition_fingerprint: dict[str, Any] | None = None,
 ) -> str:
     blob = json.dumps(
         {
@@ -1738,6 +1783,7 @@ def _cache_key(
             "diet_tags": (req.diet_tags or []),
             "pref_tags": pref_tags,
             "week_meal_keys": sorted(week_meal_keys or set()),
+            "nutrition": nutrition_fingerprint or {},
         },
         sort_keys=True,
     )
@@ -2402,10 +2448,23 @@ def recommend_recipes(
     week_used_recipe_ids = _get_week_used_recipe_ids(db, user, target_date)
     week_used_meal_keys = _get_week_used_meal_keys(db, user, target_date)
     week_protein_counts = _get_week_protein_counts(db, user, target_date)
+    nutrition = calculate_training_nutrition(
+        db=db,
+        user=user,
+        plan_date=target_date,
+        baseline=_baseline_from_meals(payload.meals),
+    )
+    adjusted_meals = _apply_nutrition_targets(payload.meals, nutrition)
 
     # Weekly variety is mutable state. Include it in the cache key so an older
     # recommendation cannot be replayed after another day has used that meal.
-    key = _cache_key(user.id, payload, pref_tags, week_used_meal_keys)
+    key = _cache_key(
+        user.id,
+        payload,
+        pref_tags,
+        week_used_meal_keys,
+        nutrition.cache_fingerprint(),
+    )
     cached = _CACHE.get(key)
     if cached:
         cached_items = cached.get("items") or []
@@ -2425,7 +2484,7 @@ def recommend_recipes(
     used_protein_items: list[str] = []
     used_carb_items: list[str] = []
 
-    for tgt in payload.meals:
+    for tgt in adjusted_meals:
         rec = _recommend_for_single_meal(
             client=client,
             db=db,
@@ -2455,7 +2514,11 @@ def recommend_recipes(
             },
         )
 
-    resp = RecommendResponse(provider=provider, items=items).model_dump()
+    resp = RecommendResponse(
+        provider=provider,
+        items=items,
+        nutrition=nutrition.to_dict(),
+    ).model_dump()
     _CACHE.set(key, resp)
     return resp
 
@@ -2486,8 +2549,6 @@ def recommend_weekly_apply(
     client = _get_openai_client()
     provider = "openai" if client else "stub"
     allow_new = _allow_new_recipe()
-
-    training_info_by_date = _compute_training_factors_for_week(db, user.id, dates)
 
     global_dinner_base: MealTarget | None = None
     for d in payload.days:
@@ -2538,18 +2599,15 @@ def recommend_weekly_apply(
                 dedup.append(t_norm)
         day_diet_tags = dedup or None
 
-        train_meta = training_info_by_date.get(
-            date_iso,
-            {
-                "factor": 1.0,
-                "metric_name": "score",
-                "metric_value": 0.0,
-                "score": 0.0,
-                "is_race": False,
-                "zone": "steady",
-            },
+        plan_date = _parse_iso_date(date_iso)
+        nutrition = calculate_training_nutrition(
+            db=db,
+            user=user,
+            plan_date=plan_date,
+            baseline=_baseline_from_meals(day.meals),
         )
-        factor = float(train_meta.get("factor", 1.0))
+        adjusted_meals = _apply_nutrition_targets(day.meals, nutrition)
+        factor = nutrition.final.kcal / nutrition.baseline.kcal if nutrition.baseline.kcal > 0 else 1.0
 
         # Carry forward recent protein/carb history across days
         used_protein_items: list[str] = list(dict.fromkeys(rolling_protein_items[-8:]))
@@ -2558,26 +2616,7 @@ def recommend_weekly_apply(
 
         day_items: list[SlotRecommendation] = []
 
-        for base_tgt in day.meals:
-            kcal = base_tgt.kcal * factor
-            carbs = base_tgt.carbs_g * factor
-
-            if factor >= 1.0:
-                protein = base_tgt.protein_g * min(1.25, factor + 0.10)
-            else:
-                protein = base_tgt.protein_g * max(0.95, factor + 0.05)
-
-            fat_factor = 0.9 + 0.25 * (factor - 1.0)
-            fat = base_tgt.fat_g * max(0.85, min(1.10, fat_factor))
-
-            scaled = MealTarget(
-                slot=base_tgt.slot,
-                kcal=max(0.0, kcal),
-                protein_g=max(0.0, protein),
-                carbs_g=max(0.0, carbs),
-                fat_g=max(0.0, fat),
-            )
-
+        for scaled in adjusted_meals:
             rec = _recommend_for_single_meal(
                 client=client,
                 db=db,
@@ -2599,24 +2638,26 @@ def recommend_weekly_apply(
 
         slots_present = sorted({it.slot for it in day_items})
         if "dinner" not in slots_present and global_dinner_base is not None:
-            base = global_dinner_base
-
-            dinner_kcal = base.kcal * factor
-            dinner_carbs = base.carbs_g * factor
-            if factor >= 1.0:
-                dinner_protein = base.protein_g * min(1.25, factor + 0.10)
-            else:
-                dinner_protein = base.protein_g * max(0.95, factor + 0.05)
-            dinner_fat_factor = 0.9 + 0.25 * (factor - 1.0)
-            dinner_fat = base.fat_g * max(0.85, min(1.10, dinner_fat_factor))
-
-            fallback_dinner = MealTarget(
-                slot="dinner",
-                kcal=max(0.0, dinner_kcal),
-                protein_g=max(0.0, dinner_protein),
-                carbs_g=max(0.0, dinner_carbs),
-                fat_g=max(0.0, dinner_fat),
-            )
+            fallback_dinner = _apply_nutrition_targets(
+                [global_dinner_base],
+                TrainingNutritionResult(
+                    baseline=_baseline_from_meals([global_dinner_base]),
+                    training=nutrition.training,
+                    adjustment=nutrition.adjustment,
+                    final=MacroTargets(
+                        kcal=global_dinner_base.kcal * factor,
+                        protein_g=global_dinner_base.protein_g,
+                        carbs_g=global_dinner_base.carbs_g
+                        * (
+                            nutrition.final.carbs_g / nutrition.baseline.carbs_g
+                            if nutrition.baseline.carbs_g > 0
+                            else 1.0
+                        ),
+                        fat_g=global_dinner_base.fat_g,
+                    ),
+                    rationale=nutrition.rationale,
+                ),
+            )[0]
 
             dinner_rec = _recommend_for_single_meal(
                 client=client,
@@ -2653,7 +2694,7 @@ def recommend_weekly_apply(
             {
                 "date": date_iso,
                 "factor": factor,
-                "training": train_meta,
+                "training": nutrition.to_dict(),
                 "items": [it.model_dump() for it in day_items],
             }
         )
