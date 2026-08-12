@@ -1,6 +1,7 @@
 # app/db.py
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 
@@ -11,16 +12,15 @@ from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from app.config import settings
 
 
-# Ensure SQLite enforces foreign keys
+# Ensure SQLite enforces foreign keys without issuing SQLite-only SQL against
+# PostgreSQL (where even a caught syntax error aborts the transaction).
 @event.listens_for(Engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, connection_record):  # type: ignore[no-untyped-def]
-    try:
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-    except Exception:
-        # If not SQLite, ignore
-        pass
+    if not isinstance(dbapi_connection, sqlite3.Connection):
+        return
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 
 
 DATABASE_URL = settings.DATABASE_URL
