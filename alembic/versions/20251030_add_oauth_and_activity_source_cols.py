@@ -1,6 +1,6 @@
 """add oauth_accounts table and activity source columns
 
-Revision ID: 20251030_add_oauth_and_activity_source_cols
+Revision ID: 20251030_oauth_activity
 Revises: fd4129b081fe
 Create Date: 2025-10-30 23:25:00
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # Revision identifiers, used by Alembic.
-revision = "20251030_add_oauth_and_activity_source_cols"
+revision = "20251030_oauth_activity"
 down_revision = "fd4129b081fe"
 branch_labels = None
 depends_on = None
