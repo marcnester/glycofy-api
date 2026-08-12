@@ -11,8 +11,6 @@ Notes:
 
 from __future__ import annotations
 
-from datetime import datetime
-
 import sqlalchemy as sa
 
 from alembic import op
@@ -41,8 +39,8 @@ def upgrade() -> None:
         sa.Column("allergies", sa.JSON(), nullable=False, server_default=JSON_EMPTY_ARRAY),
         # Flexible per-user settings container (units, cuisine prefs, etc.)
         sa.Column("settings", sa.JSON(), nullable=False, server_default=JSON_EMPTY_OBJECT),
-        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
-        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
+        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.UniqueConstraint("user_id", name="uq_user_preferences_user_id"),
     )
 
@@ -59,8 +57,8 @@ def upgrade() -> None:
         sa.Column("carbs_g", sa.Float, nullable=True),
         sa.Column("fat_g", sa.Float, nullable=True),
         sa.Column("meta", sa.JSON(), nullable=False, server_default=JSON_EMPTY_OBJECT),
-        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
-        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
+        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.UniqueConstraint("user_id", "date", name="uq_energy_targets_user_date"),
     )
 
@@ -70,12 +68,12 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True),
         sa.Column("date", sa.Date, nullable=False, index=True),
-        sa.Column("locked", sa.Boolean, nullable=False, server_default=sa.text("0")),
+        sa.Column("locked", sa.Boolean, nullable=False, server_default=sa.false()),
         # Totals container (kcal/protein/carbs/fat) to mirror API shape
         sa.Column("totals", sa.JSON(), nullable=False, server_default=JSON_EMPTY_OBJECT),
         sa.Column("source", sa.String(32), nullable=False, server_default="heuristic"),  # heuristic | llm | import
-        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
-        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
+        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.UniqueConstraint("user_id", "date", name="uq_plans_user_date"),
     )
 
@@ -94,8 +92,8 @@ def upgrade() -> None:
         sa.Column("order_index", sa.Integer, nullable=False, server_default="0"),
         # Optional tags on a meal (e.g., "high-carb", "pre-ride", cuisine, etc.)
         sa.Column("tags", sa.JSON(), nullable=False, server_default=JSON_EMPTY_ARRAY),
-        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
-        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
+        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
     )
     op.create_index("ix_plan_meals_plan_order", "plan_meals", ["plan_id", "order_index"], unique=False)
 
@@ -115,8 +113,8 @@ def upgrade() -> None:
         sa.Column("fat_g", sa.Float, nullable=True),
         # Per-item extra metadata (brand, UPC, substitutions, etc.)
         sa.Column("meta", sa.JSON(), nullable=False, server_default=JSON_EMPTY_OBJECT),
-        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
-        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
+        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
     )
 
     # ---- meal_suggestions (candidate meals/plans; can store LLM output) -------
@@ -129,7 +127,7 @@ def upgrade() -> None:
         sa.Column("source", sa.String(16), nullable=False, server_default="llm"),  # llm | heuristic | import
         # Store the entire suggestion blob (prompt/result/choices/justification)
         sa.Column("payload", sa.JSON(), nullable=False, server_default=JSON_EMPTY_OBJECT),
-        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
+        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
     )
 
     # ---- llm_prompts (versioned prompt templates) -----------------------------
@@ -139,8 +137,8 @@ def upgrade() -> None:
         sa.Column("name", sa.String(100), nullable=False, unique=True),
         sa.Column("template", sa.Text, nullable=False),
         sa.Column("variables", sa.JSON(), nullable=False, server_default=JSON_EMPTY_ARRAY),
-        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
-        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
+        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
     )
 
     # ---- generation_jobs (LLM async jobs / audit) ----------------------------
@@ -154,8 +152,8 @@ def upgrade() -> None:
         sa.Column("request", sa.JSON(), nullable=False, server_default=JSON_EMPTY_OBJECT),
         sa.Column("result", sa.JSON(), nullable=False, server_default=JSON_EMPTY_OBJECT),
         sa.Column("error", sa.Text, nullable=True),
-        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
-        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("(datetime('now'))")),
+        sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+        sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
     )
 
 
