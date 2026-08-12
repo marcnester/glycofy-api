@@ -44,7 +44,7 @@ def _now_utc() -> datetime:
     return datetime.now(tz=UTC)
 
 
-def create_access_token(subject: str | int, expires_minutes: int | None = None) -> str:
+def create_access_token(subject: str | int, expires_minutes: int | None = None, token_version: int = 0) -> str:
     if expires_minutes is None:
         expires_minutes = int(getattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 60) or 60)
 
@@ -53,6 +53,9 @@ def create_access_token(subject: str | int, expires_minutes: int | None = None) 
         "sub": str(subject),
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(minutes=expires_minutes)).timestamp()),
+        "iss": settings.JWT_ISS,
+        "aud": settings.JWT_AUD,
+        "ver": int(token_version),
     }
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=ALG)
 
@@ -66,7 +69,9 @@ def _decode_token_internal(token: str) -> dict:
             token,
             settings.JWT_SECRET,
             algorithms=ALLOWED_ALGS,
-            options={"require": ["sub", "exp"], "verify_signature": True},
+            issuer=settings.JWT_ISS,
+            audience=settings.JWT_AUD,
+            options={"require": ["sub", "exp", "iat", "iss", "aud", "ver"], "verify_signature": True},
         )
     except jwt.ExpiredSignatureError:
         # Session expired is a useful, specific message.
@@ -101,24 +106,18 @@ def _header_alg(token: str) -> str | None:
 def _pick_app_token(request: Request) -> str | None:
     """
     Prefer app-issued JWTs only:
-      1) glyco_token (readable)
-      2) access_token (HttpOnly)
-      3) Authorization: Bearer <jwt>
+      1) access_token (HttpOnly)
+      2) Authorization: Bearer <jwt>
     Explicitly ignore Google id_token (RS256) and any non-HS256 token.
     """
     cookies = request.cookies or {}
 
-    # 1) glyco_token
-    t = (cookies.get("glyco_token") or "").strip()
+    # Browser session cookie.
+    t = (cookies.get(settings.SESSION_COOKIE_NAME) or "").strip()
     if _looks_like_jwt(t) and _header_alg(t) in ALLOWED_ALGS:
         return t
 
-    # 2) access_token
-    t = (cookies.get("access_token") or "").strip()
-    if _looks_like_jwt(t) and _header_alg(t) in ALLOWED_ALGS:
-        return t
-
-    # 3) Authorization: Bearer
+    # Non-browser API client.
     auth = request.headers.get("Authorization") or request.headers.get("authorization")
     if auth and auth.lower().startswith("bearer "):
         bearer = auth.split(" ", 1)[1].strip()
@@ -160,5 +159,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = db.query(User).filter(User.id == uid).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    if int(payload.get("ver", -1)) != int(user.token_version or 0):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
 
     return user

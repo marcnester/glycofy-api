@@ -2,15 +2,26 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
-logging.basicConfig(level=logging.INFO)
-
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.config import settings
+from app.observability import (
+    access_logger,
+    configure_logging,
+    emit_security_log,
+    new_request_id,
+    request_id_context,
+)
+
+configure_logging()
 from app.routers import user_profile, weekly_plans
 
 # --- load .env early ---
@@ -78,24 +89,104 @@ except Exception as _e:
 APP_DIR = Path(__file__).resolve().parent
 UI_DIR = APP_DIR.parent / "ui"
 
-app = FastAPI(title="Glycofy API", version="0.1")
+app = FastAPI(
+    title="Glycofy API",
+    version="0.1",
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
+)
 
 # -----------------------------
 # CORS
 # -----------------------------
-ALLOWED_ORIGINS = [
-    "http://127.0.0.1:8090",
-    "http://localhost:8090",
-    "http://127.0.0.1:8080",
-    "http://localhost:8080",
-]
+ALLOWED_ORIGINS = settings.csv_values(settings.ALLOWED_ORIGINS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
 )
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.csv_values(settings.ALLOWED_HOSTS))
+
+
+@app.middleware("http")
+async def security_controls(request: Request, call_next):
+    correlation_id = new_request_id(request.headers.get("x-request-id"))
+    context_token = request_id_context.set(correlation_id)
+    started = time.perf_counter()
+
+    def reject(message: str, status_code: int, event_type: str) -> PlainTextResponse:
+        emit_security_log(event_type, "denied", severity="warning")
+        response = PlainTextResponse(message, status_code=status_code)
+        response.headers["X-Request-ID"] = correlation_id
+        access_logger.warning(
+            "request_rejected",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": status_code,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
+        )
+        request_id_context.reset(context_token)
+        return response
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > settings.MAX_REQUEST_BODY_BYTES:
+                return reject("Request body too large", 413, "request_body_rejected")
+        except ValueError:
+            return reject("Invalid Content-Length", 400, "invalid_content_length")
+
+    # Cookie-authenticated unsafe requests must be same-origin. Bearer-only API
+    # clients normally omit Origin and are not vulnerable to browser CSRF.
+    if request.method not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+        origin = request.headers.get("origin")
+        if origin:
+            parsed = urlsplit(origin)
+            origin_value = f"{parsed.scheme}://{parsed.netloc}"
+            if origin_value not in ALLOWED_ORIGINS:
+                return reject("Cross-origin request denied", 403, "csrf_origin_rejected")
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        emit_security_log("unhandled_request_exception", "error", severity="alert")
+        logging.getLogger("glycofy.application").exception("unhandled_request_exception")
+        request_id_context.reset(context_token)
+        raise
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; "
+        "form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; connect-src 'self'",
+    )
+    if request.url.path.startswith(("/auth", "/oauth")):
+        response.headers.setdefault("Cache-Control", "no-store")
+    if settings.is_production:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    response.headers["X-Request-ID"] = correlation_id
+    access_logger.info(
+        "request_complete",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+        },
+    )
+    request_id_context.reset(context_token)
+    return response
+
 
 # -----------------------------
 # API Routers
@@ -130,7 +221,8 @@ else:
 
 
 # --- DEV-only: recipes import endpoint ---
-app.include_router(recipes_admin_router.router, prefix="/dev/recipes", tags=["dev"])
+if settings.ENABLE_DEV_ROUTES and not settings.is_production:
+    app.include_router(recipes_admin_router.router, prefix="/dev/recipes", tags=["dev"])
 
 # -----------------------------
 # Static UI

@@ -8,18 +8,12 @@
 
   // ---------- token helpers ----------
   const TOKEN_KEY = 'glyco_token';
-  function setToken(val) {
-    try { if (!val) localStorage.removeItem(TOKEN_KEY); else localStorage.setItem(TOKEN_KEY, val); } catch {}
-  }
-  function getToken() {
-    try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
-  }
+  function setToken() { try { localStorage.removeItem(TOKEN_KEY); } catch {} }
+  function getToken() { return ''; }
 
   // ---------- fetch helper (adds Bearer if present; cookie optional) ----------
   async function fetchJSON(path, opts = {}) {
-    const token = getToken();
     const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
-    if (token) headers.Authorization = `Bearer ${token}`;        // JWT support
     const res = await fetch(path, {
       method: opts.method || 'GET',
       body: opts.body ? JSON.stringify(opts.body) : undefined,
@@ -47,9 +41,7 @@
 
   // ---------- auth helpers ----------
   async function getMe() {
-    const token = getToken();
-    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-    const r = await fetch('/users/me', { headers, credentials: 'include', cache: 'no-store' });
+    const r = await fetch('/users/me', { credentials: 'include', cache: 'no-store' });
     if (!r.ok) throw new Error('Not authenticated');
     return r.json();
   }

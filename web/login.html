@@ -5,9 +5,11 @@
   <title>Glycofy — Login</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <link rel="stylesheet" href="/ui/styles.css"/>
+  <link rel="icon" href="/ui/assets/glycofy-mark.png" type="image/png"/>
   <style>
-    .auth-card{max-width:420px;margin:60px auto;padding:20px;border:1px solid var(--border);
+    .auth-card{max-width:420px;margin:40px auto 60px;padding:24px;border:1px solid var(--border);
       border-radius:14px;background:#0f1216}
+    .auth-logo{display:block;width:min(100%,360px);height:auto;margin:0 auto 22px;border-radius:12px}
     .auth-card h1{margin:0 0 14px;}
     .row{display:flex;gap:8px;align-items:center}
     .hint{color:var(--muted);font-size:13px;margin-top:8px}
@@ -17,11 +19,14 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Glycofy</div>
+    <a class="brand" href="/ui/" aria-label="Glycofy home">
+      <img class="brand-logo" src="/ui/assets/glycofy-logo-lockup.png" alt="Glycofy"/>
+    </a>
   </header>
 
   <main class="container">
     <div class="auth-card">
+      <img class="auth-logo" src="/ui/assets/glycofy-logo-lockup.png" alt="Glycofy"/>
       <h1>Log in</h1>
       <label>Email</label>
       <input id="email" class="input" type="email" placeholder="you@example.com" autocomplete="username" />

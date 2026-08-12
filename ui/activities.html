@@ -6,7 +6,7 @@
         content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Activities • Glycofy</title>
-  <link rel="icon" href="/ui/favicon.svg" />
+  <link rel="icon" href="/ui/assets/glycofy-mark.png" type="image/png" />
   <link rel="stylesheet" href="/ui/styles.css?v=2025-11-04">
   <link rel="stylesheet" href="/ui/styles.plan.css?v=2025-11-04">
   <link rel="stylesheet" href="/ui/styles.activities.css?v=2025-11-04">
@@ -15,12 +15,11 @@
       font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif }
     .container{max-width:1200px;margin:0 auto;padding:0 24px}
     .topbar{position:sticky;top:0;z-index:100;background:rgba(16,20,28,.85);
-      border-bottom:1px solid rgba(110,168,254,.10); backdrop-filter:saturate(140%) blur(8px)}
-    .topbar .brand{color:#6ea8fe;text-decoration:none;font-weight:800;letter-spacing:.2px}
+      border-bottom:1px solid rgba(80,200,138,.10); backdrop-filter:saturate(140%) blur(8px)}
     .nav{display:flex;gap:10px;align-items:center}
     .nav a{display:inline-flex;align-items:center;height:36px;padding:0 14px;border-radius:999px;
       color:#e7ecf3;text-decoration:none;border:1px solid transparent}
-    .nav a.active{background:#101826;border-color:rgba(110,168,254,.18)}
+    .nav a.active{background:#101826;border-color:rgba(80,200,138,.24)}
     .btn.btn--pill{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);
       color:#e5ecff;padding:10px 16px;border-radius:14px;font-weight:600}
     .page{padding:40px 0 80px}
@@ -32,7 +31,7 @@
 <body class="ui-root">
   <header class="topbar">
     <div class="container topbar__inner" style="display:flex;align-items:center;justify-content:space-between;height:64px;">
-      <a class="brand" href="/ui/index.html">GLYCOFY</a>
+      <a class="brand" href="/ui/index.html" aria-label="Glycofy home"><img src="/ui/assets/glycofy-logo-lockup.png" alt="Glycofy"/></a>
       <nav class="nav" aria-label="Primary">
         <a href="/ui/index.html">Home</a>
         <a href="/ui/plan.html">Plan</a>
@@ -88,7 +87,7 @@
           </div>
           <div class="stat" style="border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.02);border-radius:16px;padding:12px 14px">
             <div class="stat__label muted" style="font-size:12px;margin-bottom:6px">Downloads</div>
-            <div class="downloads"><a id="dl_csv" class="link" href="#csv" style="color:#6ea8fe;text-decoration:underline;text-underline-offset:2px">CSV</a></div>
+            <div class="downloads"><a id="dl_csv" class="link" href="#csv" style="color:#50c88a;text-decoration:underline;text-underline-offset:2px">CSV</a></div>
           </div>
         </div>
       </div>

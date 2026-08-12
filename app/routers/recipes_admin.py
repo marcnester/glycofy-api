@@ -1,13 +1,13 @@
 # app/routers/recipes_admin.py
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.auth_utils import get_current_user
+from app.config import settings
 from app.db import get_db
 from app.models import Recipe, User
 
@@ -15,7 +15,7 @@ router = APIRouter()
 
 
 def _dev_only():
-    if os.environ.get("ENV", "").lower() not in {"dev", "development", ""}:
+    if settings.is_production or not settings.ENABLE_DEV_ROUTES:
         raise HTTPException(status_code=403, detail="Not available in this environment")
 
 

@@ -25,10 +25,20 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):  # type: ignore[no-
 
 DATABASE_URL = settings.DATABASE_URL
 
+# Render supplies a standard ``postgresql://`` URL. SQLAlchemy otherwise
+# assumes psycopg2 for that scheme, while Glycofy intentionally ships with
+# psycopg 3. Normalize it once so the application and Alembic use the same
+# production driver without requiring a second PostgreSQL client package.
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+
 # For SQLite, disable same-thread check for FastAPI dev server convenience
 engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+    pool_pre_ping=not DATABASE_URL.startswith("sqlite"),
     future=True,
 )
 

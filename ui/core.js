@@ -23,8 +23,8 @@
 
   // ----- token helpers -----
   const TOKEN_KEY = "glyco_token";
-  function setToken(val) { try { if (!val) localStorage.removeItem(TOKEN_KEY); else localStorage.setItem(TOKEN_KEY, val); } catch {} }
-  function getToken()     { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } }
+  function setToken() { try { localStorage.removeItem(TOKEN_KEY); } catch {} }
+  function getToken() { return ""; }
 
   // ----- return helpers (DEFAULT → /ui/index.html) -----
   const DEFAULT_RETURN = "/ui/index.html";
@@ -49,7 +49,6 @@
   // ----- auth header / fetch -----
   function authHeader() {
     const h = { "Accept":"application/json","X-Requested-With":"XMLHttpRequest" };
-    const tok = getToken(); if (tok) h["Authorization"] = "Bearer " + tok;
     return h;
   }
 
@@ -141,8 +140,7 @@
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     try {
-      const j = await res.json().catch(()=>null);
-      if (j && j.access_token) setToken(j.access_token);
+      await res.json().catch(()=>null);
     } catch {}
     _authMemo = null; _authAt = 0;
     return true;

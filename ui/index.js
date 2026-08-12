@@ -116,10 +116,12 @@
 
       const row = document.createElement("div");
       row.className = "row";
-      row.innerHTML = `
-        <div>${title}</div>
-        <div class="muted">${kcal} kcal · P ${P} · C ${C} · F ${F}</div>
-      `;
+      const titleEl = document.createElement("div");
+      titleEl.textContent = title;
+      const macroEl = document.createElement("div");
+      macroEl.className = "muted";
+      macroEl.textContent = `${kcal} kcal · P ${P} · C ${C} · F ${F}`;
+      row.append(titleEl, macroEl);
       list.appendChild(row);
     }
   }

@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm audit --omit=dev --audit-level=high",
+    "security": "npm audit --omit=dev"
   },
   "repository": {
     "type": "git",

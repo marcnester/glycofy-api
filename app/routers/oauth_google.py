@@ -6,26 +6,22 @@ import os
 import time
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import get_db
 from app.models import OAuthAccount, User
-from app.routers.auth import _create_access_token  # reuse same JWT helper
+from app.observability import record_security_event
+from app.routers.auth import COOKIE_ACCESS, _cookie_kwargs, _create_access_token
 
 router = APIRouter()
 
 # ---- Config from env ----
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
-GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
-GOOGLE_REDIRECT_URL = os.environ.get("GOOGLE_REDIRECT_URL", "").strip()
-
-# Cookie names (align with auth.py)
-COOKIE_ACCESS = "access_token"
-COOKIE_LEGACY = "glyco_auth"
-COOKIE_ID = "id_token"
-COOKIE_READABLE = "glyco_token"
+GOOGLE_CLIENT_ID = (settings.GOOGLE_CLIENT_ID or "").strip()
+GOOGLE_CLIENT_SECRET = (settings.GOOGLE_CLIENT_SECRET or "").strip()
+GOOGLE_REDIRECT_URL = (settings.GOOGLE_REDIRECT_URI or settings.GOOGLE_REDIRECT_URL or "").strip()
 
 # Temp cookies for OAuth round-trip
 STATE_COOKIE_NAME = "oauth_state"
@@ -45,13 +41,13 @@ DEFAULT_RETURN_PATH = "/ui/index.html"  # default destination after login
 # ---- helpers ----------------------------------------------------------------
 
 
-def _cookie_kwargs_dev() -> dict:
+def _oauth_cookie_kwargs() -> dict:
     return {
         "httponly": True,
-        "secure": False,
+        "secure": settings.COOKIE_SECURE,
         "samesite": "lax",
         "path": "/",
-        "max_age": 60 * 60 * 24 * 14,
+        "max_age": settings.OAUTH_STATE_TTL_SECONDS,
     }
 
 
@@ -137,9 +133,9 @@ async def google_start(request: Request, return_: str | None = None) -> Response
     resp.set_cookie(
         STATE_COOKIE_NAME,
         nonce,
-        max_age=600,
+        max_age=settings.OAUTH_STATE_TTL_SECONDS,
         httponly=True,
-        secure=False,
+        secure=settings.COOKIE_SECURE,
         samesite="lax",
         path="/",
     )
@@ -147,9 +143,9 @@ async def google_start(request: Request, return_: str | None = None) -> Response
     resp.set_cookie(
         RETURN_COOKIE_NAME,
         safe_return,
-        max_age=600,
+        max_age=settings.OAUTH_STATE_TTL_SECONDS,
         httponly=True,
-        secure=False,
+        secure=settings.COOKIE_SECURE,
         samesite="lax",
         path="/",
     )
@@ -176,6 +172,7 @@ async def google_start(request: Request, return_: str | None = None) -> Response
 @router.get("/callback")
 async def google_callback(
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     code: str | None = None,
     state: str | None = None,
@@ -194,7 +191,11 @@ async def google_callback(
     if not state:
         raise HTTPException(status_code=400, detail="Missing state")
 
-    verify_state(request, state)
+    try:
+        verify_state(request, state)
+    except HTTPException:
+        record_security_event(db, request, "oauth_google_callback", "invalid_state", severity="alert")
+        raise
 
     # Exchange code for tokens
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -211,9 +212,17 @@ async def google_callback(
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         if token_res.status_code != 200:
+            record_security_event(
+                db,
+                request,
+                "oauth_google_callback",
+                "token_exchange_failure",
+                severity="warning",
+                details={"provider_status": token_res.status_code},
+            )
             raise HTTPException(
                 status_code=400,
-                detail=f"Token exchange failed: {token_res.text}",
+                detail="Google token exchange failed",
             )
 
         token = token_res.json()
@@ -221,7 +230,6 @@ async def google_callback(
         refresh_token = token.get("refresh_token")
         expires_in = token.get("expires_in")
         scope = token.get("scope")
-        id_token = token.get("id_token") or ""
 
         if not access_token:
             raise HTTPException(status_code=400, detail="No access_token in token response")
@@ -234,7 +242,7 @@ async def google_callback(
         if ures.status_code != 200:
             raise HTTPException(
                 status_code=400,
-                detail=f"Userinfo fetch failed: {ures.text}",
+                detail="Google user profile request failed",
             )
 
         profile = ures.json()
@@ -321,30 +329,24 @@ async def google_callback(
         )
         db.add(account)
     db.commit()
+    record_security_event(db, request, "oauth_google_login", "success", user_id=user.id)
 
     # Mint JWT and set cookies
-    app_jwt = _create_access_token(str(user.id), minutes=60)
+    app_jwt = _create_access_token(str(user.id), minutes=60, token_version=user.token_version)
 
     # Safe redirect path
     dest = _safe_return_path(request.cookies.get(RETURN_COOKIE_NAME))
 
     resp = RedirectResponse(url=dest, status_code=302)
     # Set cookies
-    resp.set_cookie(COOKIE_ACCESS, app_jwt, **_cookie_kwargs_dev())
-    resp.set_cookie(COOKIE_LEGACY, app_jwt, **_cookie_kwargs_dev())
-    if id_token:
-        resp.set_cookie(COOKIE_ID, id_token, **_cookie_kwargs_dev())
-    resp.set_cookie(
-        COOKIE_READABLE,
-        app_jwt,
-        httponly=False,
-        secure=False,
-        samesite="lax",
-        path="/",
-        max_age=60 * 60 * 24 * 14,
-    )
+    resp.set_cookie(COOKIE_ACCESS, app_jwt, **_cookie_kwargs(http_only=True))
+    for legacy_name in ("glyco_auth", "id_token", "glyco_token"):
+        resp.delete_cookie(legacy_name, path="/", samesite="lax")
 
     # Clean up
     resp.delete_cookie(STATE_COOKIE_NAME, path="/")
     resp.delete_cookie(RETURN_COOKIE_NAME, path="/")
+    from app.routers.oauth_strava import schedule_strava_sync_on_login
+
+    schedule_strava_sync_on_login(background_tasks=background_tasks, db=db, user_id=user.id)
     return resp

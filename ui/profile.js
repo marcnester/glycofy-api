@@ -143,6 +143,7 @@
   const DIET_DEFAULT = "omnivore";
   const statusEl = $("#pref_status");
   const dietRadios = $$('input[name="diet"]');
+  const allergenChecks = $$('input[name="allergen"]');
   const exclInput = $("#exclusions_input");
   let saveTimer = null;
 
@@ -180,6 +181,7 @@
       const exclusionsList = parseExclusions(
         prefs && (prefs.ingredient_exclusions ?? prefs.diet_exclusions)
       );
+      const allergens = new Set(parseExclusions(prefs && prefs.allergens));
 
       // Set radio
       (dietRadios.find((r) => r.value === String(diet).toLowerCase()) || dietRadios[0]).checked = true;
@@ -188,9 +190,11 @@
       if (exclInput) {
         exclInput.value = exclusionsList.join(", ");
       }
+      allergenChecks.forEach((input) => { input.checked = allergens.has(input.value); });
 
       // Wire change listeners once
       dietRadios.forEach((r) => r.addEventListener("change", requestSave));
+      allergenChecks.forEach((input) => input.addEventListener("change", requestSave));
       exclInput?.addEventListener("input", requestSave);
 
       setPrefStatus("Auto-saves");
@@ -207,6 +211,7 @@
     return {
       diet: dietVal,
       ingredient_exclusions: exclusionsStr,
+      allergens: allergenChecks.filter((input) => input.checked).map((input) => input.value),
     };
   }
 

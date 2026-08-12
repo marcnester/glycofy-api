@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth_utils import get_current_user
@@ -84,11 +84,13 @@ def _primary_diet_from_tags(tags: list[str]) -> str:
 class PreferencesOut(BaseModel):
     diet: str  # 'omnivore'|'pescatarian'|'vegetarian'|'vegan'
     ingredient_exclusions: str  # comma-separated for the textbox
+    allergens: list[str] = Field(default_factory=list)
 
 
 class PreferencesIn(BaseModel):
     diet: str | None = None
     ingredient_exclusions: str | None = None
+    allergens: list[str] | None = None
 
 
 # ---------------------------
@@ -100,7 +102,7 @@ def _to_out(pref: UserPreference | None) -> PreferencesOut:
     if not pref:
         # Default for new users
         logger.info("Preferences _to_out: no existing row, returning defaults")
-        return PreferencesOut(diet="omnivore", ingredient_exclusions="")
+        return PreferencesOut(diet="omnivore", ingredient_exclusions="", allergens=[])
 
     # 1) Prefer explicit diet_type column if present
     raw_diet = getattr(pref, "diet_type", None)
@@ -130,7 +132,8 @@ def _to_out(pref: UserPreference | None) -> PreferencesOut:
         excl_str,
     )
 
-    return PreferencesOut(diet=diet, ingredient_exclusions=excl_str)
+    allergens = _coerce_list(getattr(pref, "allergies", None))
+    return PreferencesOut(diet=diet, ingredient_exclusions=excl_str, allergens=allergens)
 
 
 # ---------------------------
@@ -180,6 +183,7 @@ def upsert_preferences(
     """
     diet = _normalize_diet(payload.diet)
     excl_list = _coerce_list(payload.ingredient_exclusions or "")
+    allergens = _coerce_list(payload.allergens or [])
 
     logger.info(
         "Preferences PUT incoming: user_id=%s raw_diet=%r normalized_diet=%s raw_exclusions=%r -> excl_list=%r",
@@ -217,6 +221,8 @@ def upsert_preferences(
     # Persist exclusions into TEXT column; we keep it simple CSV
     if hasattr(pref, "ingredient_exclusions"):
         pref.ingredient_exclusions = ", ".join(excl_list) if excl_list else ""
+    if hasattr(pref, "allergies"):
+        pref.allergies = allergens
 
     if hasattr(pref, "updated_at"):
         pref.updated_at = now

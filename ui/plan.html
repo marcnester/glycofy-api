@@ -6,7 +6,7 @@
         content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Meal Plan • Glycofy</title>
-  <link rel="icon" href="/ui/favicon.svg" />
+  <link rel="icon" href="/ui/assets/glycofy-mark.png" type="image/png" />
   <link rel="stylesheet" href="/ui/styles.css?v=2025-11-04" />
   <style>
     html.ui-root,
@@ -17,12 +17,11 @@
     }
     .container{max-width:1200px;margin:0 auto;padding:0 24px}
     .topbar{position:sticky;top:0;z-index:100;background:rgba(16,20,28,.85);
-      border-bottom:1px solid rgba(110,168,254,.10); backdrop-filter:saturate(140%) blur(8px)}
-    .topbar .brand{color:#6ea8fe;text-decoration:none;font-weight:800;letter-spacing:.2px}
+      border-bottom:1px solid rgba(80,200,138,.10); backdrop-filter:saturate(140%) blur(8px)}
     .nav{display:flex;gap:10px;align-items:center}
     .nav a{display:inline-flex;align-items:center;height:36px;padding:0 14px;border-radius:999px;
       color:#e7ecf3;text-decoration:none;border:1px solid transparent}
-    .nav a.active{background:#101826;border-color:rgba(110,168,254,.18)}
+    .nav a.active{background:#101826;border-color:rgba(80,200,138,.24)}
     .btn.btn--pill{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);
       color:#e5ecff;padding:10px 16px;border-radius:14px;font-weight:600}
 
@@ -70,8 +69,8 @@
     }
 
     .btn--primary{
-      background:#6ea8fe;
-      border-color:rgba(110,168,254,.35);
+      background:#50c88a;
+      border-color:rgba(80,200,138,.42);
       color:#0d1320;
       font-weight:700;
     }
@@ -152,8 +151,8 @@
       border-radius:999px;
       font-size:11px;
       font-weight:600;
-      border:1px solid rgba(110,168,254,.55);
-      background:rgba(110,168,254,.14);
+      border:1px solid rgba(80,200,138,.55);
+      background:rgba(80,200,138,.14);
       color:#cfe0ff;
       white-space:nowrap;
     }
@@ -273,7 +272,7 @@
 <body class="ui-root">
   <header class="topbar">
     <div class="container topbar__inner" style="display:flex;align-items:center;justify-content:space-between;height:64px;">
-      <a class="brand" href="/ui/index.html">GLYCOFY</a>
+      <a class="brand" href="/ui/index.html" aria-label="Glycofy home"><img src="/ui/assets/glycofy-logo-lockup.png" alt="Glycofy"/></a>
 
       <nav class="nav" aria-label="Primary">
         <a href="/ui/index.html">Home</a>
@@ -309,13 +308,12 @@
 
         <button id="plan-lock" class="btn" type="button">Lock</button>
         <button id="plan-regen" class="btn" type="button">Regenerate</button>
-        <button id="plan-ai-all" class="btn btn--primary" type="button">Today (AI)</button>
-        <button id="plan-ai-week" class="btn" type="button">Week (AI)</button>
+        <button id="plan-ai-all" class="btn" type="button" title="Use AI to update today's meals only">Today (AI)</button>
+        <button id="plan-ai-week" class="btn btn--primary" type="button" title="Use AI to create meals for the next seven days">Plan My Week (AI)</button>
 
         <div class="spacer" style="width:8px"></div>
 
-        <a id="dl_txt" class="btn btn--ghost" href="#" download>Grocery .txt</a>
-        <a id="dl_csv" class="btn btn--ghost" href="#" download>Grocery .csv</a>
+        <a id="grocery-list-link" class="btn btn--ghost" href="/ui/grocery.html">Grocery List</a>
       </div>
 
       <div id="plan-msg" class="plan-msg" style="display:none;"></div>
@@ -431,6 +429,6 @@
   </div>
 
   <script src="/ui/core.js?v=2025-11-04" defer></script>
-  <script src="/ui/plan.js?v=2026-05-13c" defer></script>
+  <script src="/ui/plan.js?v=2026-08-06-quantities-speed" defer></script>
 </body>
 </html>

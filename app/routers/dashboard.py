@@ -5,10 +5,11 @@ import json
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.auth_utils import get_current_user
 from app.db import get_db
 from app.models import User  # NOTE: avoid Activity ORM (schema drift)
 
@@ -76,18 +77,16 @@ def _rollup_totals(meals: list[dict[str, Any]]) -> dict[str, int]:
 
 
 @router.get("/today")
-def today_summary(db: Session = Depends(get_db), user_id: int | None = None) -> dict[str, Any]:
+def today_summary(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
     """
     Unified dashboard payload for the current day:
       - account
       - nutrition: totals + targets + meals (from meal_plan; falls back to recipes)
       - activities: last-7d rollup + latest 5 (SQL, not ORM, to avoid column drift)
     """
-    # Pick current user (replace with real auth context later)
-    user = db.query(User).first() if user_id is None else db.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="No user available")
-
     today = date.today()
 
     # --------- Meals (meal_plan or fabricate from recipes) ---------

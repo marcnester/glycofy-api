@@ -1,0 +1,56 @@
+services:
+  - type: web
+    name: glycofy-api
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    preDeployCommand: alembic upgrade head
+    healthCheckPath: /ready
+    autoDeployTrigger: checksPass
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: LOG_LEVEL
+        value: info
+      - key: DATABASE_URL
+        fromDatabase:
+          name: glycofy-db
+          property: connectionString
+      - key: PUBLIC_BASE_URL
+        value: https://app.glycofy.ai
+      - key: ALLOWED_ORIGINS
+        value: https://app.glycofy.ai,https://glycofy-api.onrender.com
+      - key: ALLOWED_HOSTS
+        value: app.glycofy.ai,*.onrender.com
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: ENABLE_DEV_ROUTES
+        value: "false"
+      - key: JWT_ISS
+        value: https://app.glycofy.ai
+      - key: JWT_AUD
+        value: glycofy.web
+      - key: JWT_SECRET
+        sync: false
+      - key: OAUTH_TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SECURITY_ALERT_EMAIL_TO
+        value: marcnester@gmail.com
+      - key: SECURITY_ALERT_EMAIL_ENABLED
+        value: "false"
+
+databases:
+  - name: glycofy-db
+    plan: basic-256mb
+    region: oregon
+    postgresMajorVersion: "18"
+    databaseName: glycofy
+    user: glycofy
+    ipAllowList: []

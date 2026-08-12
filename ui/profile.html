@@ -6,7 +6,7 @@
         content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Profile • Glycofy</title>
-  <link rel="icon" href="/ui/favicon.svg" />
+  <link rel="icon" href="/ui/assets/glycofy-mark.png" type="image/png" />
   <link rel="stylesheet" href="/ui/styles.css?v=2025-11-04" />
   <link rel="stylesheet" href="/ui/styles.activities.css?v=2025-11-04" />
 
@@ -20,16 +20,15 @@
     .topbar{
       position:sticky;top:0;z-index:100;
       background:rgba(16,20,28,.85);
-      border-bottom:1px solid rgba(110,168,254,.10);
+      border-bottom:1px solid rgba(80,200,138,.10);
       backdrop-filter:saturate(140%) blur(8px)
     }
-    .topbar .brand{color:#6ea8fe;text-decoration:none;font-weight:800;letter-spacing:.2px}
     .nav{display:flex;gap:10px;align-items:center}
     .nav a{
       display:inline-flex;align-items:center;height:36px;padding:0 14px;
       border-radius:999px;color:#e7ecf3;text-decoration:none;border:1px solid transparent
     }
-    .nav a.active{background:#101826;border-color:rgba(110,168,254,.18)}
+    .nav a.active{background:#101826;border-color:rgba(80,200,138,.24)}
     .btn.btn--pill{
       border:1px solid rgba(255,255,255,.08);
       background:rgba(255,255,255,.04);
@@ -110,8 +109,9 @@
       border-radius:999px;border:1px solid rgba(255,255,255,.35);display:inline-block
     }
     .radio-chip input:checked{
-      background:#6ea8fe;
-      border-color:#6ea8fe
+      background:#50c88a;
+      border-color:#50c88a;
+      color:#071b14
     }
     .save-hint{font-size:.85rem}
 
@@ -126,7 +126,7 @@
     }
     .editable-field:focus{
       outline:none;
-      border-color:rgba(110,168,254,.6);
+      border-color:rgba(80,200,138,.6);
       background:rgba(255,255,255,.04);
     }
   </style>
@@ -134,7 +134,7 @@
 <body class="ui-root">
   <header class="topbar">
     <div class="container topbar__inner" style="display:flex;align-items:center;justify-content:space-between;height:64px;">
-      <a class="brand" href="/ui/index.html">GLYCOFY</a>
+      <a class="brand" href="/ui/index.html" aria-label="Glycofy home"><img src="/ui/assets/glycofy-logo-lockup.png" alt="Glycofy"/></a>
       <nav class="nav" aria-label="Primary">
         <a href="/ui/index.html">Home</a>
         <a href="/ui/plan.html">Plan</a>
@@ -184,8 +184,24 @@
       </div>
 
       <div class="field" style="margin-top:14px">
-        <label>Ingredient exclusions (comma-separated)</label>
-        <input id="exclusions_input" class="input input--wide" placeholder="e.g., mushrooms, shellfish" />
+        <label>Food allergies (strictly excluded)</label>
+        <div class="radio-set" id="allergen_group" aria-label="Food allergies">
+          <label class="radio-chip"><input type="checkbox" name="allergen" value="milk"> Milk</label>
+          <label class="radio-chip"><input type="checkbox" name="allergen" value="egg"> Egg</label>
+          <label class="radio-chip"><input type="checkbox" name="allergen" value="fish"> Fish</label>
+          <label class="radio-chip"><input type="checkbox" name="allergen" value="shellfish"> Shellfish</label>
+          <label class="radio-chip"><input type="checkbox" name="allergen" value="tree_nuts"> Tree nuts</label>
+          <label class="radio-chip"><input type="checkbox" name="allergen" value="peanut"> Peanuts</label>
+          <label class="radio-chip"><input type="checkbox" name="allergen" value="wheat"> Wheat</label>
+          <label class="radio-chip"><input type="checkbox" name="allergen" value="soy"> Soy</label>
+          <label class="radio-chip"><input type="checkbox" name="allergen" value="sesame"> Sesame</label>
+        </div>
+        <p class="muted" style="margin:8px 0 0">Meal suggestions exclude these ingredients. Always verify product labels and cross-contact risk.</p>
+      </div>
+
+      <div class="field" style="margin-top:14px">
+        <label>Other intolerances, dislikes, or ingredients to avoid (comma-separated)</label>
+        <input id="exclusions_input" class="input input--wide" placeholder="e.g., lactose intolerant, mushrooms, cilantro" />
         <div id="pref_status" class="muted save-hint" style="margin-top:6px">Auto-saves</div>
       </div>
     </section>
@@ -208,6 +224,6 @@
   </main>
 
   <script src="/ui/core.js?v=2025-11-04"></script>
-  <script src="/ui/profile.js?v=2025-11-18-nameedit2"></script>
+  <script src="/ui/profile.js?v=2026-08-06-allergen-safety"></script>
 </body>
 </html>

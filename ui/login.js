@@ -38,22 +38,12 @@
     else location.reload();
   }
 
-  // --- bearer token store ---
-  const TOKEN_KEY = "glyco_token";
-  function setToken(v) {
-    try { v ? localStorage.setItem(TOKEN_KEY, String(v)) : localStorage.removeItem(TOKEN_KEY); } catch {}
-  }
-  function getToken() {
-    try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
-  }
-
   // --- /users/me probe ---
   let _probe = null;
   async function ensureAuth({ force = false } = {}) {
     if (force) _probe = null;
     if (_probe) return _probe;
     const headers = { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" };
-    const tok = getToken(); if (tok) headers["Authorization"] = "Bearer " + tok;
     _probe = fetch("/users/me", { credentials: "include", headers, cache: "no-store" })
       .then(r => r.ok).catch(() => false);
     return _probe;
@@ -82,13 +72,6 @@
       } catch {}
       throw new Error(msg);
     }
-    try {
-      const ct = res.headers.get("Content-Type") || "";
-      if (ct.includes("application/json")) {
-        const j = await res.json().catch(() => null);
-        if (j && j.access_token) setToken(j.access_token);
-      }
-    } catch {}
     return true;
   }
 

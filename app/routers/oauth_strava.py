@@ -2,20 +2,27 @@
 from __future__ import annotations
 
 import base64
-import re
+import hashlib
+import hmac
+import json
+import logging
+import os
+import secrets
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import requests
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.auth_utils import get_current_user
 from app.config import settings
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.models import Activity, OAuthAccount, User
+from app.observability import record_security_event
 
 # Router for OAuth endpoints (mounted at /oauth/strava)
 router = APIRouter(tags=["oauth/strava"])
@@ -28,10 +35,27 @@ STRAVA_ACTIVITIES = "https://www.strava.com/api/v3/athlete/activities"
 STRAVA_ACTIVITY_DETAIL = "https://www.strava.com/api/v3/activities/{id}"
 
 DEFAULT_PROFILE_URL = "/ui/profile.html"
+STATE_COOKIE_NAME = "strava_oauth_state"
 UA = "glycofy-app/1.0 (+https://example.invalid)"  # simple UA for Strava API etiquette
 
 # ---- kcal detail fetch cap per sync to protect rate limits
 DETAIL_KCAL_FETCH_CAP = 60
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        return max(minimum, min(maximum, int(os.getenv(name, str(default)))))
+    except (TypeError, ValueError):
+        return default
+
+
+LOGIN_SYNC_FRESHNESS_MINUTES = _env_int("STRAVA_LOGIN_SYNC_FRESHNESS_MINUTES", 30, 1, 1440)
+INCREMENTAL_OVERLAP_HOURS = _env_int("STRAVA_INCREMENTAL_OVERLAP_HOURS", 24, 1, 168)
+INITIAL_INCREMENTAL_MONTHS = _env_int("STRAVA_INITIAL_SYNC_MONTHS", 6, 1, 36)
+
+logger = logging.getLogger(__name__)
+_LOGIN_SYNC_LOCK = threading.Lock()
+_LOGIN_SYNCS_IN_FLIGHT: set[int] = set()
 
 # ---- sport labels we normalize to "cycling-like"
 CYCLING_LIKE = {"Cycling", "Cycling (Virtual)"}
@@ -80,34 +104,40 @@ def _safe_return_path(raw: str | None) -> str | None:
 
 
 def _encode_state(user_id: int, return_path: str | None) -> str:
-    """
-    Encode state as: user-<id> optionally with |r=<base64url path>
-    """
-    if not return_path:
-        return f"user-{user_id}"
-    b64 = base64.urlsafe_b64encode(return_path.encode("utf-8")).decode("ascii").rstrip("=")
-    return f"user-{user_id}|r={b64}"
+    payload = {
+        "uid": user_id,
+        "return": _safe_return_path(return_path),
+        "exp": _now_ts() + settings.OAUTH_STATE_TTL_SECONDS,
+        "nonce": secrets.token_urlsafe(24),
+    }
+    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
+    signature = hmac.new(settings.JWT_SECRET.encode(), body.encode(), hashlib.sha256).digest()
+    sig = base64.urlsafe_b64encode(signature).decode().rstrip("=")
+    return f"{body}.{sig}"
 
 
 def _decode_state(state: str) -> tuple[int, str | None]:
     """
     Decode user id (required) and optional return path from state.
     """
-    m = re.match(r"^user-(\d+)(?:\|r=([A-Za-z0-9_\-]+))?$", state or "")
-    if not m:
+    try:
+        body, supplied_sig = state.split(".", 1)
+    except ValueError:
         raise ValueError("bad_state")
-    user_id = int(m.group(1))
-    ret_b64 = m.group(2)
-    return_path = None
-    if ret_b64:
-        # add padding if needed
-        pad = "=" * ((4 - (len(ret_b64) % 4)) % 4)
-        try:
-            candidate = base64.urlsafe_b64decode(ret_b64 + pad).decode("utf-8")
-            return_path = _safe_return_path(candidate)
-        except Exception:
-            return_path = None
-    return user_id, return_path
+    expected = hmac.new(settings.JWT_SECRET.encode(), body.encode(), hashlib.sha256).digest()
+    expected_sig = base64.urlsafe_b64encode(expected).decode().rstrip("=")
+    if not hmac.compare_digest(supplied_sig, expected_sig):
+        raise ValueError("bad_state")
+    try:
+        pad = "=" * ((4 - len(body) % 4) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(body + pad))
+        user_id = int(payload["uid"])
+        expires = int(payload["exp"])
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        raise ValueError("bad_state")
+    if expires < _now_ts():
+        raise ValueError("expired_state")
+    return user_id, _safe_return_path(payload.get("return"))
 
 
 def _authorize_url(user_id: int, return_path: str | None = None) -> str:
@@ -164,6 +194,85 @@ def _upsert_strava_account(
 
 def _load_strava_account(db: Session, user_id: int) -> OAuthAccount | None:
     return db.query(OAuthAccount).filter(OAuthAccount.user_id == user_id, OAuthAccount.provider == "strava").first()
+
+
+def _coerce_utc_naive(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo else value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+        except ValueError:
+            return None
+    return None
+
+
+def _latest_strava_activity_at(db: Session, user_id: int) -> datetime | None:
+    row = (
+        db.query(Activity.start_time)
+        .filter(Activity.user_id == user_id, Activity.source_provider == "strava")
+        .order_by(Activity.start_time.desc())
+        .first()
+    )
+    return row[0] if row and isinstance(row[0], datetime) else None
+
+
+def _background_incremental_sync(user_id: int) -> None:
+    try:
+        with SessionLocal() as db:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return
+            result = sync_strava(replace=False, months=INITIAL_INCREMENTAL_MONTHS, db=db, user=user)
+            logger.info("Strava login sync completed user_id=%s result=%s", user_id, result)
+    except Exception:
+        logger.exception("Strava login sync failed user_id=%s", user_id)
+    finally:
+        with _LOGIN_SYNC_LOCK:
+            _LOGIN_SYNCS_IN_FLIGHT.discard(user_id)
+
+
+def schedule_strava_sync_on_login(
+    *,
+    background_tasks: BackgroundTasks,
+    db: Session,
+    user_id: int,
+    freshness_minutes: int = LOGIN_SYNC_FRESHNESS_MINUTES,
+) -> bool:
+    """Queue a deduplicated incremental Strava sync when stored data is stale."""
+    if not _configured():
+        return False
+
+    acct = _load_strava_account(db, user_id)
+    if not acct or not acct.access_token:
+        return False
+
+    latest_activity = _latest_strava_activity_at(db, user_id)
+    last_sync = _coerce_utc_naive(acct.updated_at)
+    fresh_after = datetime.utcnow() - timedelta(minutes=max(1, freshness_minutes))
+    if latest_activity is not None and last_sync is not None and last_sync >= fresh_after:
+        return False
+
+    with _LOGIN_SYNC_LOCK:
+        if user_id in _LOGIN_SYNCS_IN_FLIGHT:
+            return False
+        _LOGIN_SYNCS_IN_FLIGHT.add(user_id)
+
+    try:
+        # A short database-backed lease prevents another app worker from
+        # scheduling the same user's sync during a simultaneous login.
+        acct.updated_at = datetime.utcnow()
+        db.add(acct)
+        db.commit()
+        background_tasks.add_task(_background_incremental_sync, user_id)
+        return True
+    except Exception:
+        db.rollback()
+        with _LOGIN_SYNC_LOCK:
+            _LOGIN_SYNCS_IN_FLIGHT.discard(user_id)
+        logger.exception("Unable to schedule Strava login sync user_id=%s", user_id)
+        return False
 
 
 def _refresh_if_needed(db: Session, acct: OAuthAccount) -> str:
@@ -380,14 +489,38 @@ def strava_start_url(
 ):
     if not _configured():
         raise HTTPException(status_code=400, detail="Strava is not configured on this server.")
-    return {"authorize_url": _authorize_url(user.id, _safe_return_path(return_path))}
+    url = _authorize_url(user.id, _safe_return_path(return_path))
+    state = url.rsplit("&state=", 1)[1]
+    response = JSONResponse({"authorize_url": url})
+    response.set_cookie(
+        STATE_COOKIE_NAME,
+        state,
+        max_age=settings.OAUTH_STATE_TTL_SECONDS,
+        httponly=True,
+        secure=settings.COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+    return response
 
 
 @router.get("/start")
 def strava_start(return_path: str | None = Query(default=None, alias="return"), user: User = Depends(get_current_user)):
     if not _configured():
         raise HTTPException(status_code=400, detail="Strava is not configured on this server.")
-    return RedirectResponse(url=_authorize_url(user.id, _safe_return_path(return_path)), status_code=302)
+    url = _authorize_url(user.id, _safe_return_path(return_path))
+    state = url.rsplit("&state=", 1)[1]
+    response = RedirectResponse(url=url, status_code=302)
+    response.set_cookie(
+        STATE_COOKIE_NAME,
+        state,
+        max_age=settings.OAUTH_STATE_TTL_SECONDS,
+        httponly=True,
+        secure=settings.COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+    return response
 
 
 # ───────────────────────── PUBLIC callback (no auth) ─────────────────────────
@@ -403,7 +536,8 @@ def strava_callback(
     db: Session = Depends(get_db),
 ):
     if error:
-        return RedirectResponse(url=f"{DEFAULT_PROFILE_URL}?linked_error={error}", status_code=302)
+        record_security_event(db, request, "oauth_strava_callback", "provider_denied", severity="warning")
+        return RedirectResponse(url=f"{DEFAULT_PROFILE_URL}?linked_error=provider_denied", status_code=302)
 
     if not _configured():
         return RedirectResponse(url=f"{DEFAULT_PROFILE_URL}?linked_error=server_not_configured", status_code=302)
@@ -411,9 +545,15 @@ def strava_callback(
     if not code or not state:
         return RedirectResponse(url=f"{DEFAULT_PROFILE_URL}?linked_error=missing_code_or_state", status_code=302)
 
+    state_cookie = request.cookies.get(STATE_COOKIE_NAME, "")
+    if not state_cookie or not hmac.compare_digest(state_cookie, state):
+        record_security_event(db, request, "oauth_strava_callback", "invalid_state", severity="alert")
+        return RedirectResponse(url=f"{DEFAULT_PROFILE_URL}?linked_error=bad_state", status_code=302)
+
     try:
         user_id, return_path = _decode_state(state)
     except Exception:
+        record_security_event(db, request, "oauth_strava_callback", "invalid_state", severity="alert")
         return RedirectResponse(url=f"{DEFAULT_PROFILE_URL}?linked_error=bad_state", status_code=302)
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -498,7 +638,10 @@ def strava_callback(
 
     dest = return_path or DEFAULT_PROFILE_URL
     sep = "&" if "?" in dest else "?"
-    return RedirectResponse(url=f"{dest}{sep}linked=strava", status_code=302)
+    response = RedirectResponse(url=f"{dest}{sep}linked=strava", status_code=302)
+    record_security_event(db, request, "oauth_strava_link", "success", user_id=user.id)
+    response.delete_cookie(STATE_COOKIE_NAME, path="/", samesite="lax")
+    return response
 
 
 # ───────────────────────── Sync routes (require auth) ─────────────────────────
@@ -530,7 +673,13 @@ def sync_strava(
 
     after_ts: int | None = None
     if not replace:
-        dt = datetime.utcnow() - timedelta(days=30 * months)
+        latest_activity = _latest_strava_activity_at(db, user.id)
+        if latest_activity is not None:
+            # Include a small overlap so recently edited activities are
+            # refreshed without rescanning the user's full history.
+            dt = latest_activity - timedelta(hours=INCREMENTAL_OVERLAP_HOURS)
+        else:
+            dt = datetime.utcnow() - timedelta(days=30 * months)
         after_ts = int(dt.replace(tzinfo=UTC).timestamp())
 
     deleted = 0
@@ -629,6 +778,8 @@ def sync_strava(
             db.add(row)
             created += 1
 
+    acct.updated_at = datetime.utcnow()
+    db.add(acct)
     db.commit()
 
     return {

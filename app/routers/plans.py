@@ -4,8 +4,9 @@
 # app/routers/plans.py
 from __future__ import annotations
 
+import re
 from datetime import date as date_cls
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
@@ -90,17 +91,17 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
                 "meta": getattr(m, "meta", None) or {},
                 "ingredients": [
                     {
-                        "id": getattr(i, "id", None),
-                        "name": i.name,
-                        "qty": i.qty,
-                        "unit": i.unit,
-                        "kcal": i.kcal,
-                        "protein_g": i.protein_g,
-                        "carbs_g": i.carbs_g,
-                        "fat_g": i.fat_g,
-                        "meta": i.meta or {},
+                        "id": getattr(i, "id", None) if not isinstance(i, dict) else i.get("id"),
+                        "name": (i.name if not isinstance(i, dict) else i.get("name")) or "Item",
+                        "qty": i.qty if not isinstance(i, dict) else i.get("qty", i.get("quantity", i.get("amount"))),
+                        "unit": i.unit if not isinstance(i, dict) else i.get("unit"),
+                        "kcal": i.kcal if not isinstance(i, dict) else i.get("kcal"),
+                        "protein_g": i.protein_g if not isinstance(i, dict) else i.get("protein_g"),
+                        "carbs_g": i.carbs_g if not isinstance(i, dict) else i.get("carbs_g"),
+                        "fat_g": i.fat_g if not isinstance(i, dict) else i.get("fat_g"),
+                        "meta": (i.meta if not isinstance(i, dict) else i.get("meta")) or {},
                     }
-                    for i in (getattr(m, "items", []) or [])
+                    for i in _display_ingredients_for_meal(m)
                 ],
                 # Backward-compatible alias for older UI code.
                 "items": [
@@ -123,6 +124,23 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
         "created_at": plan.created_at.isoformat() if getattr(plan, "created_at", None) else None,
         "updated_at": plan.updated_at.isoformat() if getattr(plan, "updated_at", None) else None,
     }
+
+
+_HEURISTIC_INGREDIENT_NAMES = {"protein (lean)", "complex carbs", "fats (healthy)"}
+
+
+def _display_ingredients_for_meal(meal: PlanMeal) -> list[Any]:
+    """Use linked recipe ingredients for plans created before AI item persistence was fixed."""
+    items = list(getattr(meal, "items", []) or [])
+    names = {str(getattr(item, "name", "")).strip().lower() for item in items}
+    if names and not names.issubset(_HEURISTIC_INGREDIENT_NAMES):
+        return items
+
+    recipe = getattr(meal, "recipe", None)
+    recipe_ingredients = _extract_recipe_ingredients(recipe) if recipe is not None else []
+    if not recipe_ingredients:
+        return items
+    return [item if isinstance(item, dict) else {"name": str(item).strip()} for item in recipe_ingredients]
 
 
 def _coerce_tags(value) -> list[str]:
@@ -1093,6 +1111,191 @@ def _iter_items(plan: Plan):
     for m in plan.meals:
         for it in m.items:
             yield (m, it)
+
+
+_GROCERY_CATEGORY_KEYWORDS = {
+    "Produce": {
+        "apple",
+        "avocado",
+        "banana",
+        "berries",
+        "berry",
+        "broccoli",
+        "carrot",
+        "cucumber",
+        "garlic",
+        "greens",
+        "kale",
+        "lemon",
+        "lettuce",
+        "lime",
+        "mushroom",
+        "onion",
+        "pepper",
+        "spinach",
+        "sweet potato",
+        "tomato",
+    },
+    "Meat & Seafood": {
+        "beef",
+        "chicken",
+        "cod",
+        "fish",
+        "pork",
+        "salmon",
+        "scallop",
+        "shrimp",
+        "steak",
+        "tuna",
+        "turkey",
+    },
+    "Dairy & Eggs": {
+        "butter",
+        "cheese",
+        "cottage cheese",
+        "egg",
+        "eggs",
+        "milk",
+        "yogurt",
+    },
+    "Grains & Bakery": {
+        "bread",
+        "brown rice",
+        "oats",
+        "pasta",
+        "quinoa",
+        "rice",
+        "tortilla",
+    },
+    "Pantry": {
+        "beans",
+        "chickpea",
+        "flour",
+        "honey",
+        "lentil",
+        "oil",
+        "seasoning",
+        "spice",
+        "vinegar",
+    },
+}
+
+_GROCERY_NAME_ALIASES = {
+    "berries": "mixed berries",
+    "berry": "mixed berries",
+    "eggs": "egg",
+}
+
+
+def _grocery_name(value: str | None) -> tuple[str, str]:
+    display = re.sub(r"\s+", " ", (value or "").strip())
+    key = re.sub(r"[^a-z0-9]+", " ", display.lower()).strip()
+    key = _GROCERY_NAME_ALIASES.get(key, key)
+    if key == "egg":
+        display = "Eggs"
+    elif key == "mixed berries":
+        display = "Mixed berries"
+    return key, display
+
+
+def _grocery_unit(value: str | None) -> str:
+    unit = (value or "").strip().lower().rstrip(".")
+    aliases = {
+        "grams": "g",
+        "gram": "g",
+        "kilograms": "kg",
+        "kilogram": "kg",
+        "ounces": "oz",
+        "ounce": "oz",
+        "pounds": "lb",
+        "pound": "lb",
+        "tablespoons": "tbsp",
+        "tablespoon": "tbsp",
+        "teaspoons": "tsp",
+        "teaspoon": "tsp",
+        "cups": "cup",
+        "servings": "serving",
+    }
+    return aliases.get(unit, unit)
+
+
+def _grocery_category(name: str, meta: dict[str, Any] | None = None) -> str:
+    explicit = str((meta or {}).get("category") or "").strip()
+    if explicit:
+        return explicit
+    lowered = name.lower()
+    for category, words in _GROCERY_CATEGORY_KEYWORDS.items():
+        if any(re.search(rf"\b{re.escape(word)}\b", lowered) for word in words):
+            return category
+    return "Other"
+
+
+@router.get("/grocery-list/week", response_model=dict[str, Any])
+def grocery_list_week(
+    start: date_cls = Query(..., description="First date to include"),
+    end: date_cls | None = Query(None, description="Last date to include (inclusive)"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return a purchase-oriented, aggregated grocery list for up to 14 days."""
+    final_day = end or (start + timedelta(days=6))
+    if final_day < start:
+        raise HTTPException(status_code=400, detail="End date must be on or after start date")
+    if (final_day - start).days > 13:
+        raise HTTPException(status_code=400, detail="Grocery lists can cover at most 14 days")
+
+    plans = (
+        db.query(Plan)
+        .filter(Plan.user_id == user.id, Plan.date >= start, Plan.date <= final_day)
+        .order_by(Plan.date.asc())
+        .all()
+    )
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for plan in plans:
+        for meal, item in _iter_items(plan):
+            name_key, display_name = _grocery_name(item.name)
+            if not name_key:
+                continue
+            unit = _grocery_unit(item.unit)
+            group_key = (name_key, unit)
+            entry = grouped.setdefault(
+                group_key,
+                {
+                    "id": f"{name_key}:{unit}",
+                    "name": display_name,
+                    "quantity": 0.0 if item.qty is not None else None,
+                    "unit": unit,
+                    "category": _grocery_category(display_name, item.meta),
+                    "uses": [],
+                },
+            )
+            if item.qty is not None:
+                if entry["quantity"] is None:
+                    entry["quantity"] = 0.0
+                entry["quantity"] += float(item.qty)
+            use = {
+                "date": plan.date.isoformat(),
+                "meal_type": meal.meal_type,
+                "meal_title": meal.title or meal.meal_type.title(),
+            }
+            if use not in entry["uses"]:
+                entry["uses"].append(use)
+
+    items = sorted(grouped.values(), key=lambda value: (value["category"], value["name"].lower()))
+    for item in items:
+        quantity = item["quantity"]
+        if quantity is not None:
+            item["quantity"] = round(quantity, 2)
+
+    expected_dates = [start + timedelta(days=offset) for offset in range((final_day - start).days + 1)]
+    planned_dates = {plan.date for plan in plans}
+    return {
+        "start": start.isoformat(),
+        "end": final_day.isoformat(),
+        "plan_count": len(plans),
+        "missing_dates": [day.isoformat() for day in expected_dates if day not in planned_dates],
+        "items": items,
+    }
 
 
 @router.get("/{date}/grocery.txt")

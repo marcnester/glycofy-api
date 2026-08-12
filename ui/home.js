@@ -27,13 +27,11 @@
           rows.innerHTML = "";
           for (const m of data.nutrition.meals) {
             const tr = document.createElement("tr");
-            tr.innerHTML = `
-              <td>${m.name}</td>
-              <td>${m.kcal}</td>
-              <td>${m.protein_g}</td>
-              <td>${m.carbs_g}</td>
-              <td>${m.fat_g}</td>
-            `;
+            [m.name, m.kcal, m.protein_g, m.carbs_g, m.fat_g].forEach((value) => {
+              const td = document.createElement("td");
+              td.textContent = String(value ?? "");
+              tr.appendChild(td);
+            });
             rows.appendChild(tr);
           }
         }
@@ -43,14 +41,14 @@
       if (data.activities && Array.isArray(data.activities.latest)) {
         const actsEl = document.getElementById("acts");
         if (actsEl) {
-          actsEl.innerHTML = data.activities.latest
-            .map((a) => {
+          actsEl.replaceChildren();
+          data.activities.latest.forEach((a, index) => {
               const distKm = (a.distance_m / 1000).toFixed(1);
               const kcal = Math.round(a.kcal);
               const time = new Date(a.started).toLocaleString();
-              return `${time} — ${a.sport} · ${distKm} km · ${kcal} kcal`;
-            })
-            .join("<br>");
+              if (index) actsEl.appendChild(document.createElement("br"));
+              actsEl.appendChild(document.createTextNode(`${time} — ${a.sport} · ${distKm} km · ${kcal} kcal`));
+            });
         }
       }
     } catch (err) {

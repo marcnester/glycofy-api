@@ -17,6 +17,9 @@
   }
 
   const $ = (id) => document.getElementById(id);
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[ch]);
   document.body.classList.add('ui-root');
   setActiveNav && setActiveNav('Plan');
 
@@ -55,6 +58,7 @@
   const weekBtn = $('plan-ai-week') || $('week_ai_btn');
   const dlTxt = $('dl_txt');
   const dlCsv = $('dl_csv');
+  const groceryListLink = $('grocery-list-link');
   const flashBox = $('plan-msg') || $('flash');
 
   const totalsEl =
@@ -320,6 +324,15 @@
       const fromTopLevel =
         (m.ai_idea && m.ai_idea.reason) || m.reason || null;
       if (fromTopLevel) return String(fromTopLevel);
+
+      const macroParts = [];
+      if (m.protein_g != null) macroParts.push(`${fmt(m.protein_g)} g protein`);
+      if (m.carbs_g != null) macroParts.push(`${fmt(m.carbs_g)} g carbs`);
+      if (m.fat_g != null) macroParts.push(`${fmt(m.fat_g)} g fat`);
+      const title = m.title || `${norm} meal`;
+      return `${title} was selected to fit your ${norm} target${
+        macroParts.length ? ` (${macroParts.join(', ')})` : ''
+      } and the diet preference from your profile.`;
     }
 
     return null;
@@ -896,7 +909,7 @@
             <div class="meal-slot-label">${
               slot.charAt(0).toUpperCase() + slot.slice(1)
             }</div>
-            <h3 class="meal__title">${view.title || 'Meal'}</h3>
+            <h3 class="meal__title">${escapeHtml(view.title || 'Meal')}</h3>
             <div class="meal__actions">
               <button class="btn btn--ghost" data-ai-swap="${slot}">Swap (AI)</button>
               <button class="btn btn--ghost" data-ai-why="${slot}">Why?</button>
@@ -915,9 +928,9 @@
                 const unit = it.unit || '';
                 const suffix =
                   qty || unit
-                    ? ` <span class="muted">(${qty} ${unit})</span>`
+                    ? ` <span class="muted">(${escapeHtml(qty)} ${escapeHtml(unit)})</span>`
                     : '';
-                return `<li><span>${it.name || 'Item'}${suffix}</span></li>`;
+                return `<li><span>${escapeHtml(it.name || 'Item')}${suffix}</span></li>`;
               })
               .join('')}
           </ul>
@@ -927,7 +940,7 @@
                    <summary>Instructions</summary>
                    <ol>
                      ${instrList
-                       .map((step) => `<li>${step}</li>`)
+                       .map((step) => `<li>${escapeHtml(step)}</li>`)
                        .join('')}
                    </ol>
                  </details>`
@@ -945,6 +958,7 @@
 
     if (dlTxt) dlTxt.href = `/v1/plan/${d}/grocery.txt`;
     if (dlCsv) dlCsv.href = `/v1/plan/${d}/grocery.csv`;
+    if (groceryListLink) groceryListLink.href = `/ui/grocery.html?start=${encodeURIComponent(d)}`;
 
     if (!plan) {
       if (mealsRoot && !NEW_LAYOUT) mealsRoot.innerHTML = '';
@@ -967,8 +981,8 @@
     note.setAttribute('data-ai-banner', '1');
     note.className = 'muted';
     note.style.marginTop = '6px';
-    note.innerHTML =
-      '🤖 The AI uses your <strong>Diet</strong> from Profile (Omnivore / Pescatarian / Vegetarian).';
+    note.textContent =
+      '🤖 The AI uses your Diet and safety exclusions from Profile.';
     hdr.parentNode.insertBefore(note, hdr.nextSibling);
   }
 
@@ -1037,7 +1051,7 @@
 
     if (!existing && regenBtn) {
       btn.id = 'ai_apply_btn';
-      btn.className = 'btn btn--primary';
+      btn.className = 'btn';
       regenBtn.insertAdjacentElement('afterend', btn);
     }
 
@@ -1086,33 +1100,28 @@
       );
       try {
         // 1) Ensure each day's plan exists, unlock it, and build weekly payload
-        const weeklyDaysPayload = [];
-        for (let i = 0; i < days.length; i++) {
-          const d = days[i];
-          if (busyMsg) {
-            busyMsg.textContent = `Preparing your AI week plan (${prettyStart} – ${prettyEnd})…`;
-          }
-          const iso = isoDate(d);
-          // ensure plan + unlock
-          try {
-            await ensurePlan(iso);
-            await lockToggleAPI(iso, false);
-          } catch (e) {
-            console.warn('Week(AI): ensure/lock failed for', iso, e);
-          }
-
-          const plan = await ensurePlan(iso);
-
-          // NEW: always send 4 canonical slots for every day of the week
-          const meals = buildMealTargetsFromPlan(plan);
-          if (!meals.length) continue;
-
-          weeklyDaysPayload.push({
-            date: iso,
-            totals: plan?.totals || null,
-            meals,
-          });
+        if (busyMsg) {
+          busyMsg.textContent = `Preparing your AI week plan (${prettyStart} – ${prettyEnd})…`;
         }
+        // Prepare all seven days concurrently. Previously this made up to 21
+        // serial API requests (ensure, unlock, ensure again) before AI work
+        // even began. Reuse the loaded plan and unlock only when necessary.
+        const preparedDays = await Promise.all(
+          days.map(async (d) => {
+            const iso = isoDate(d);
+            try {
+              let plan = await ensurePlan(iso);
+              if (plan?.locked) plan = await lockToggleAPI(iso, false);
+              const meals = buildMealTargetsFromPlan(plan);
+              if (!meals.length) return null;
+              return { date: iso, totals: plan?.totals || null, meals };
+            } catch (e) {
+              console.warn('Week(AI): prepare failed for', iso, e);
+              return null;
+            }
+          })
+        );
+        const weeklyDaysPayload = preparedDays.filter(Boolean);
 
         if (!weeklyDaysPayload.length) {
           throw new Error('No meals found to plan for the week.');
@@ -1126,7 +1135,24 @@
           body: JSON.stringify({ days: weeklyDaysPayload }),
         });
         if (!r.ok) {
-          throw new Error(`Weekly AI recommend failed: ${r.status}`);
+          let detail = null;
+          try {
+            const errorBody = await r.json();
+            detail = errorBody?.detail || errorBody;
+          } catch (_) {
+            // Keep the status-based fallback when the server did not return JSON.
+          }
+          const message =
+            (typeof detail === 'string' && detail) ||
+            detail?.message ||
+            `Weekly AI recommend failed: ${r.status}`;
+          const context = [
+            detail?.date ? `Date: ${detail.date}` : '',
+            Array.isArray(detail?.missing_slots) && detail.missing_slots.length
+              ? `Missing: ${detail.missing_slots.join(', ')}`
+              : '',
+          ].filter(Boolean).join(' · ');
+          throw new Error(context ? `${message} (${context})` : message);
         }
         const data = await r.json();
         console.log('LLM weekly response', data);

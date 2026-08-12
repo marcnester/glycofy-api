@@ -28,15 +28,15 @@
 
   // ---------- token store ----------
   const TOKEN_KEY='glyco_token';
-  function getToken(){ try{ return localStorage.getItem(TOKEN_KEY)||''; }catch{ return ''; } }
-  function setToken(v){ try{ v ? localStorage.setItem(TOKEN_KEY,v) : localStorage.removeItem(TOKEN_KEY); }catch{} }
+  function getToken(){ return ''; }
+  function setToken(){ try{ localStorage.removeItem(TOKEN_KEY); }catch{} }
   function clearToken(){ setToken(''); }
 
   // ---------- API + fetch ----------
   const API={
     get token(){ return getToken(); },
     set token(t){ setToken(t); },
-    authHeaders(){ const t=getToken(); return t?{Authorization:`Bearer ${t}`}:{ }; }
+    authHeaders(){ return {}; }
   };
 
   async function fetchJSON(url, opts={}){
@@ -73,9 +73,7 @@
       throw new Error(d||'Login failed');
     }
     const data=await r.json();
-    const token=data && data.access_token;
-    if(!token) throw new Error('No access token returned');
-    setToken(token);
+    if(!data || data.ok !== true) throw new Error('Unable to establish session');
     // Normalize any /ui/plan.html → Home
     let dest = returnTo || DEFAULT_RETURN;
     if (dest === '/ui/plan.html' || dest === '/ui/plan') dest = DEFAULT_RETURN;
@@ -100,11 +98,6 @@
     let ret=params.get('return') || DEFAULT_RETURN;
     if (ret === '/ui/plan.html' || ret === '/ui/plan') ret = DEFAULT_RETURN;
 
-    if(getToken()){
-      console.log('[glyco:login] token present → redirecting to', ret);
-      location.replace(ret);
-      return;
-    }
 
     const form = $('#login-form') || $('#loginForm') || qs('form') || document.body;
     const emailEl =

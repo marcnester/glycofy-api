@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Grocery List • Glycofy</title>
+  <link rel="icon" href="/ui/favicon.svg" />
+  <link rel="stylesheet" href="/ui/styles.css" />
+  <link rel="stylesheet" href="/ui/grocery.css" />
+  <script src="/ui/app.js" defer></script>
+  <script src="/ui/grocery.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/ui/index.html">GLYCOFY</a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="/ui/index.html">Home</a>
+      <a href="/ui/plan.html">Plan</a>
+      <a href="/ui/grocery.html" class="active">Grocery</a>
+      <a href="/ui/profile.html">Profile</a>
+      <a href="/ui/activities.html">Activities</a>
+    </nav>
+    <button id="logout_btn" class="btn">Logout</button>
+  </header>
+
+  <main class="grocery-shell">
+    <div class="grocery-heading">
+      <div>
+        <p class="eyebrow">Meal plan shopping</p>
+        <h1>Grocery List</h1>
+        <p class="muted">Everything you need, combined across your selected meal plans.</p>
+      </div>
+      <div class="grocery-actions">
+        <button id="copy_btn" class="btn">Copy list</button>
+        <button id="print_btn" class="btn">Print</button>
+        <details class="more-menu">
+          <summary class="btn">More</summary>
+          <button id="csv_btn" type="button">Download CSV</button>
+          <button id="txt_btn" type="button">Download TXT</button>
+        </details>
+      </div>
+    </div>
+
+    <section class="grocery-controls" aria-label="Grocery list settings">
+      <label>From <input id="start_date" type="date" /></label>
+      <label>Through <input id="end_date" type="date" /></label>
+      <label>Household servings
+        <input id="servings" type="number" min="1" max="12" step="1" value="1" />
+      </label>
+      <button id="load_btn" class="btn btn-primary">Update list</button>
+    </section>
+
+    <div id="notice" class="notice" role="status" hidden></div>
+    <div class="grocery-progress">
+      <strong id="progress_text">0 of 0 collected</strong>
+      <button id="clear_btn" class="link-button" type="button">Reset checks</button>
+    </div>
+
+    <section id="grocery_list" class="grocery-list" aria-live="polite">
+      <p class="muted">Loading your grocery list…</p>
+    </section>
+  </main>
+</body>
+</html>

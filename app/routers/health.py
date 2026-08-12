@@ -3,8 +3,13 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from app.db import get_db
 
 router = APIRouter()
 
@@ -23,8 +28,16 @@ def health() -> HealthOut:
 
 
 @router.get("/ready", response_model=HealthOut, name="ready", include_in_schema=False)
-def ready() -> HealthOut:
+def ready(db: Session = Depends(get_db)) -> HealthOut:
     """
-    Simple readiness probe (extend with DB checks if desired).
+    Readiness probe. A web process is not ready to serve authenticated
+    requests until it can reach the primary database.
     """
+    try:
+        db.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service is not ready",
+        ) from exc
     return HealthOut(status="ready", ts=time.time())

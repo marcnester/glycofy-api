@@ -22,6 +22,7 @@ from app.auth_utils import get_current_user
 from app.db import get_db
 from app.models import (
     Plan,
+    PlanItem,
     PlanMeal,
     Recipe,
     User,
@@ -132,12 +133,12 @@ class WeeklyDayRequest(BaseModel):
 
     date: str
     totals: dict[str, float] | None = None
-    meals: list[MealTarget] = Field(default_factory=list)
-    diet_tags: list[str] | None = None
+    meals: list[MealTarget] = Field(default_factory=list, max_length=6)
+    diet_tags: list[str] | None = Field(default=None, max_length=20)
 
 
 class WeeklyRecommendRequest(BaseModel):
-    days: list[WeeklyDayRequest] = Field(default_factory=list)
+    days: list[WeeklyDayRequest] = Field(default_factory=list, max_length=14)
 
 
 # ===========================
@@ -545,6 +546,7 @@ def _top_k_candidates(
     disallowed_protein_groups: set[str] | None = None,  # weekly cap
     disallowed_protein_items: set[str] | None = None,  # day-level variety
     disallowed_carb_items: set[str] | None = None,  # day-level variety
+    ingredient_exclusions: list[str] | None = None,
 ) -> list[tuple[Recipe, dict[str, float], float]]:
     q = db.query(Recipe).filter(Recipe.meal_type == slot)
     all_items: list[Recipe] = q.all()
@@ -557,6 +559,17 @@ def _top_k_candidates(
     )
 
     items = _filter_by_diet_tags(all_items, diet_tags, primary_diet)
+
+    if ingredient_exclusions:
+        before = len(items)
+        items = [r for r in items if not _recipe_violates_exclusions(r, ingredient_exclusions)]
+        logger.info(
+            "LLM top_k_candidates: slot=%s ingredient_exclusions=%s removed=%d remaining=%d",
+            slot,
+            ingredient_exclusions,
+            before - len(items),
+            len(items),
+        )
 
     exclude_set = set(exclude_ids) if exclude_ids else None
     if exclude_set:
@@ -745,6 +758,109 @@ def _get_user_pref(db: Session, user_id: int) -> UserPreference | None:
         return None
 
 
+def _preference_exclusions(pref: UserPreference | None) -> list[str]:
+    if not pref:
+        return []
+    raw = getattr(pref, "ingredient_exclusions", None)
+    out: list[str] = []
+    if isinstance(raw, str):
+        out.extend(part.strip().lower() for part in raw.split(",") if part.strip())
+    elif isinstance(raw, list):
+        out.extend(str(part).strip().lower() for part in raw if str(part).strip())
+    allergies = getattr(pref, "allergies", None) or []
+    if isinstance(allergies, (list, tuple, set)):
+        out.extend(str(item).strip().lower() for item in allergies if str(item).strip())
+    return list(dict.fromkeys(out))
+
+
+_DAIRY_MARKERS = {
+    "butter",
+    "buttermilk",
+    "casein",
+    "cheddar",
+    "cheese",
+    "cottage cheese",
+    "cream",
+    "creme fraiche",
+    "feta",
+    "ghee",
+    "kefir",
+    "mascarpone",
+    "mozzarella",
+    "parmesan",
+    "ricotta",
+    "whey",
+    "yogurt",
+    "yoghurt",
+}
+_PLANT_MILK_MARKERS = {
+    "almond milk",
+    "cashew milk",
+    "coconut milk",
+    "hemp milk",
+    "oat milk",
+    "plant milk",
+    "rice milk",
+    "soy milk",
+    "non-dairy milk",
+    "lactose-free milk",
+}
+_ALLERGEN_MARKERS = {
+    "egg": {"egg", "eggs", "mayonnaise", "meringue"},
+    "fish": {"fish", "salmon", "tuna", "cod", "tilapia", "trout", "anchovy", "sardine"},
+    "shellfish": {"shellfish", "shrimp", "prawn", "crab", "lobster", "crayfish"},
+    "tree_nuts": {
+        "tree nut",
+        "almond",
+        "cashew",
+        "walnut",
+        "pecan",
+        "pistachio",
+        "hazelnut",
+        "macadamia",
+        "brazil nut",
+    },
+    "peanut": {"peanut", "groundnut"},
+    "wheat": {"wheat", "flour", "bread", "pasta", "couscous", "seitan", "bulgur", "farro"},
+    "soy": {"soy", "soya", "tofu", "tempeh", "edamame", "miso"},
+    "sesame": {"sesame", "tahini"},
+}
+
+
+def _text_violates_exclusions(text: str, exclusions: list[str]) -> bool:
+    haystack = re.sub(r"\s+", " ", str(text or "").lower())
+    for exclusion in exclusions:
+        term = re.sub(r"\s+", " ", exclusion.strip().lower())
+        if not term:
+            continue
+        if "lactose" in term or term in {"dairy", "milk allergy", "dairy allergy"}:
+            if any(marker in haystack for marker in _DAIRY_MARKERS):
+                return True
+            if "milk" in haystack and not any(marker in haystack for marker in _PLANT_MILK_MARKERS):
+                return True
+            continue
+        canonical = term.replace(" ", "_")
+        if canonical == "milk":
+            if any(marker in haystack for marker in _DAIRY_MARKERS):
+                return True
+            if "milk" in haystack and not any(marker in haystack for marker in _PLANT_MILK_MARKERS):
+                return True
+            continue
+        markers = _ALLERGEN_MARKERS.get(canonical)
+        if markers and any(re.search(rf"\b{re.escape(marker)}s?\b", haystack) for marker in markers):
+            return True
+        # The textbox is ingredient-oriented, so literal matching remains the
+        # safest behavior for user-entered foods such as mushrooms or cilantro.
+        if term in haystack:
+            return True
+    return False
+
+
+def _recipe_violates_exclusions(recipe: Recipe, exclusions: list[str]) -> bool:
+    text = f"{getattr(recipe, 'title', '')} {json.dumps(getattr(recipe, 'ingredients', None) or [], default=str)}"
+    return _text_violates_exclusions(text, exclusions)
+
+
 # ===========================
 # OpenAI client + guardrails
 # ===========================
@@ -930,23 +1046,17 @@ def _safe_openai_json_pick(
             except Exception:
                 content = None
 
-            if content:
-                try:
-                    logger.warning(
-                        "LLM_DEBUG_RAW_JSON slot=%s date=%s content=%s",
-                        user_payload.get("slot"),
-                        user_payload.get("date"),
-                        content,
-                    )
-                except Exception:
-                    logger.warning("LLM_DEBUG_RAW_JSON_FALLBACK content=%r", content)
-
             try:
                 data = json.loads(content) if content else None
             except Exception:
                 data = None
 
-            logger.info("LLM: raw content=%r parsed=%s", content, data)
+            logger.info(
+                "LLM response parsed=%s slot=%s date=%s",
+                isinstance(data, dict),
+                user_payload.get("slot"),
+                user_payload.get("date"),
+            )
 
             if not data or not isinstance(data, dict):
                 meta["fallback"] = "parse_error"
@@ -1419,6 +1529,9 @@ def _llm_pick_or_create(
         "- Snacks are flexible and MAY repeat if needed.\n\n"
         "RECIPE CREATION RULES (GUARDRAILS):\n"
         "- Use 5–7 main ingredients MAX (excluding pantry staples like salt, pepper, water, cooking oil).\n"
+        "- EVERY ingredient must include a practical single-serving quantity and unit.\n"
+        "- Prefer grams or ounces for proteins/starches and cups, tablespoons, teaspoons, or item counts where natural.\n"
+        "- Never return a bare ingredient name such as 'spinach' or 'olive oil'.\n"
         "- Total active cooking time ~20–30 minutes.\n"
         "- Respect diet_tags + ingredient_exclusions strictly.\n"
         "- NEVER use a protein_group that appears in banned_protein_groups_slot_week for this slot.\n\n"
@@ -1430,7 +1543,7 @@ def _llm_pick_or_create(
         '  "pick_id": <int or null>,\n'
         '  "new_recipe": {\n'
         '    "title": "<string>",\n'
-        '    "ingredients": ["<ingredient 1>", "<ingredient 2>", "..."],\n'
+        '    "ingredients": [{"name": "<ingredient>", "amount": "<number or fraction>", "unit": "<g|oz|cup|tbsp|tsp|can|item>"}],\n'
         '    "instructions": ["<step 1>", "<step 2>", "..."],\n'
         '    "protein_group": "fish" | "poultry" | "beef" | "pork" | "eggs" | "dairy" | "plant" | "unknown",\n'
         '    "protein_item": "<specific protein like salmon, tuna, shrimp, chicken, tofu, eggs>",\n'
@@ -1486,11 +1599,12 @@ def _llm_pick_or_create(
 
         strict_system = system_msg + (
             "\n\nIMPORTANT (RETRY):\n"
-            "- Your previous selection violated a meal variety rule.\n"
+            "- Your previous selection violated a required recipe rule.\n"
             f"- violated_kind={violated_kind!r} violated_value={violated_value!r}\n"
-            "- You MUST avoid any value listed in disallowed_*_items_today for this main meal.\n"
-            "- You MUST create a substantially different meal from every identity in used_meal_keys_week.\n"
-            "- Regenerate now with different protein_item and/or carb_item.\n"
+            "- If violated_kind is ingredient_quantities, return every ingredient as an object with name, amount, and unit.\n"
+            "- If violated_kind is ingredient_exclusion, remove the excluded ingredient and all related foods; do not substitute another form of it.\n"
+            "- Otherwise avoid disallowed_*_items_today and every identity in used_meal_keys_week.\n"
+            "- Regenerate now and correct the stated violation.\n"
         )
         strict_payload = dict(user_payload)
         strict_payload["retry_due_to_violation"] = violated_kind or "day_variety"
@@ -1631,6 +1745,63 @@ def _llm_pick_or_create(
         protein_group = str(new_recipe.get("protein_group", "") or "").strip().lower() or "unknown"
         protein_item = str(new_recipe.get("protein_item", "") or "").strip().lower() or "unknown"
         carb_item = str(new_recipe.get("carb_item", "") or "").strip().lower() or "unknown"
+
+        if not _ingredients_have_quantities(ingredients):
+            data2, meta2 = _call_llm(
+                extra_strict=True,
+                violated_kind="ingredient_quantities",
+                violated_value="one or more ingredients had no amount/unit",
+            )
+            nr2 = data2.get("new_recipe") if isinstance(data2, dict) else None
+            if isinstance(nr2, dict) and _ingredients_have_quantities(nr2.get("ingredients") or []):
+                new_recipe = nr2
+                title = str(nr2.get("title", title)).strip() or title
+                ingredients = nr2.get("ingredients") or []
+                instructions = nr2.get("instructions") or instructions
+                macro_est = nr2.get("macro_estimate") or macro_est
+                protein_group = str(nr2.get("protein_group", protein_group) or protein_group).strip().lower()
+                protein_item = str(nr2.get("protein_item", protein_item) or protein_item).strip().lower()
+                carb_item = str(nr2.get("carb_item", carb_item) or carb_item).strip().lower()
+                reason = str(data2.get("reason", reason))
+                meta = {**meta, **meta2, "retry": "ingredient_quantities"}
+            elif best_r is not None:
+                meta["fallback"] = "missing_ingredient_quantities"
+                meta["mode"] = "pick"
+                return "pick", best_r, best_deltas, "default: complete catalog recipe", meta, None
+            else:
+                meta["mode"] = "empty"
+                return "empty", None, None, "Unable to generate ingredients with quantities.", meta, None
+
+        if _text_violates_exclusions(json.dumps(ingredients, default=str), ingredient_exclusions):
+            data2, meta2 = _call_llm(
+                extra_strict=True,
+                violated_kind="ingredient_exclusion",
+                violated_value=", ".join(ingredient_exclusions),
+            )
+            nr2 = data2.get("new_recipe") if isinstance(data2, dict) else None
+            nr2_ingredients = nr2.get("ingredients") if isinstance(nr2, dict) else None
+            if (
+                isinstance(nr2, dict)
+                and _ingredients_have_quantities(nr2_ingredients)
+                and not _text_violates_exclusions(json.dumps(nr2_ingredients, default=str), ingredient_exclusions)
+            ):
+                new_recipe = nr2
+                title = str(nr2.get("title", title)).strip() or title
+                ingredients = nr2_ingredients
+                instructions = nr2.get("instructions") or instructions
+                macro_est = nr2.get("macro_estimate") or macro_est
+                protein_group = str(nr2.get("protein_group", protein_group) or protein_group).strip().lower()
+                protein_item = str(nr2.get("protein_item", protein_item) or protein_item).strip().lower()
+                carb_item = str(nr2.get("carb_item", carb_item) or carb_item).strip().lower()
+                reason = str(data2.get("reason", reason))
+                meta = {**meta, **meta2, "retry": "ingredient_exclusion"}
+            elif best_r is not None:
+                meta["fallback"] = "ingredient_exclusion"
+                meta["mode"] = "pick"
+                return "pick", best_r, best_deltas, "default: exclusion-safe catalog recipe", meta, None
+            else:
+                meta["mode"] = "empty"
+                return "empty", None, None, "Unable to satisfy ingredient exclusions.", meta, None
 
         banned_groups2 = {pg.strip().lower() for pg in (banned_protein_groups or set()) if pg.strip()}
         if banned_groups2 and protein_group in banned_groups2:
@@ -1977,10 +2148,12 @@ def _recommend_for_single_meal(
     allow_new_recipe: bool = True,
     week_protein_counts: dict[tuple[str, str], int] | None = None,
     protein_cap_per_slot: int = 2,
+    prefer_fast_catalog: bool = False,
 ) -> SlotRecommendation:
     logger.info("LLM recommend-slot: date=%s slot=%s target_macros=%s", date, tgt.slot, tgt.model_dump())
 
     slot_norm = _normalize_slot(tgt.slot)
+    ingredient_exclusions = _preference_exclusions(pref)
 
     # Weekly cap (per-slot) remains protein_group-based
     banned_groups_week: set[str] = set()
@@ -2022,37 +2195,82 @@ def _recommend_for_single_meal(
         disallowed_protein_groups=banned_groups_week or None,
         disallowed_protein_items=banned_protein_items_day or None,
         disallowed_carb_items=banned_carb_items_day or None,
+        ingredient_exclusions=ingredient_exclusions,
     )
+    # Legacy catalog rows may contain only bare ingredient names. Selecting
+    # those would produce a meal that cannot be cooked or shopped accurately.
+    candidates = [candidate for candidate in candidates if _recipe_has_quantified_ingredients(candidate[0])]
 
-    result = None
-    for attempt in range(1, _SLOT_RECOMMENDATION_ATTEMPTS + 1):
-        result = _llm_pick_or_create(
-            client=client,
+    # The weekly protein-group cap is a variety preference, not a reason to
+    # discard an otherwise complete week. Late in a seven-day run it is
+    # possible for every catalog option in a slot to be capped. In that case,
+    # relax only the weekly cap while preserving diet, ingredient, recipe, and
+    # same-day uniqueness constraints.
+    weekly_cap_relaxed = False
+    if not candidates and banned_groups_week:
+        logger.warning(
+            "LLM recommend-slot: date=%s slot=%s exhausted weekly protein groups; relaxing cap",
+            date,
+            slot_norm,
+        )
+        banned_groups_week = set()
+        weekly_cap_relaxed = True
+        candidates = _top_k_candidates(
+            db=db,
             slot=tgt.slot,
             tgt=tgt,
-            candidates=candidates,
-            date=date,
             diet_tags=diet_tags,
             primary_diet=primary_diet,
-            user_pref=pref,
-            used_protein_items=used_protein_items,
-            used_carb_items=used_carb_items,
-            used_recipe_ids=used_recipe_ids,
-            used_meal_keys=used_meal_keys,
-            allow_new_recipe=allow_new_recipe,
-            banned_protein_groups=banned_groups_week or None,
+            k=6,
+            exclude_ids=used_recipe_ids,
+            disallowed_protein_groups=None,
+            disallowed_protein_items=banned_protein_items_day or None,
+            disallowed_carb_items=banned_carb_items_day or None,
+            ingredient_exclusions=ingredient_exclusions,
         )
-        mode, picked_recipe, _deltas, _reason, _meta, ai_idea_payload = result
-        if mode != "empty" and (picked_recipe is not None or ai_idea_payload):
-            if attempt > 1:
-                _meta["slot_retry_attempts"] = attempt
-            break
-        logger.warning(
-            "LLM recommend-slot: date=%s slot=%s attempt=%d returned empty; retrying",
-            date,
-            tgt.slot,
-            attempt,
+        candidates = [candidate for candidate in candidates if _recipe_has_quantified_ingredients(candidate[0])]
+
+    result = None
+    if prefer_fast_catalog and candidates:
+        picked, deltas, _score = candidates[0]
+        result = (
+            "pick",
+            picked,
+            deltas,
+            "Best complete recipe match for your meal targets, diet, and weekly variety.",
+            {"provider": "catalog", "mode": "pick", "fast_path": True},
+            None,
         )
+
+    if result is None:
+        for attempt in range(1, _SLOT_RECOMMENDATION_ATTEMPTS + 1):
+            result = _llm_pick_or_create(
+                client=client,
+                slot=tgt.slot,
+                tgt=tgt,
+                candidates=candidates,
+                date=date,
+                diet_tags=diet_tags,
+                primary_diet=primary_diet,
+                user_pref=pref,
+                used_protein_items=used_protein_items,
+                used_carb_items=used_carb_items,
+                used_recipe_ids=used_recipe_ids,
+                used_meal_keys=used_meal_keys,
+                allow_new_recipe=allow_new_recipe,
+                banned_protein_groups=banned_groups_week or None,
+            )
+            mode, picked_recipe, _deltas, _reason, _meta, ai_idea_payload = result
+            if mode != "empty" and (picked_recipe is not None or ai_idea_payload):
+                if attempt > 1:
+                    _meta["slot_retry_attempts"] = attempt
+                break
+            logger.warning(
+                "LLM recommend-slot: date=%s slot=%s attempt=%d returned empty; retrying",
+                date,
+                tgt.slot,
+                attempt,
+            )
 
     assert result is not None
     mode, picked_recipe, deltas, reason, pick_meta, ai_idea_payload = result
@@ -2060,6 +2278,8 @@ def _recommend_for_single_meal(
     pick_meta.setdefault("timestamp", datetime.now(UTC).isoformat())
     pick_meta.setdefault("diet_tags", diet_tags or [])
     pick_meta.setdefault("provider", pick_meta.get("provider", provider))
+    if weekly_cap_relaxed:
+        pick_meta["weekly_protein_cap_relaxed"] = True
 
     target_dict = {
         "kcal": tgt.kcal,
@@ -2177,6 +2397,38 @@ def _missing_recommendation_slots(items: list[SlotRecommendation]) -> list[str]:
     return [_normalize_slot(item.slot) for item in items if item.recipe is None and not item.ai_idea]
 
 
+_LEADING_QUANTITY_RE = re.compile(r"^\s*(?:\d|[¼½¾⅓⅔⅛⅜⅝⅞])")
+
+
+def _ingredients_have_quantities(ingredients: Any) -> bool:
+    """Require every generated ingredient to be cookable, not merely named."""
+    if not isinstance(ingredients, list) or not ingredients:
+        return False
+    for ingredient in ingredients:
+        if isinstance(ingredient, dict):
+            name = str(ingredient.get("name") or ingredient.get("ingredient") or "").strip()
+            amount = str(ingredient.get("amount") or ingredient.get("qty") or ingredient.get("quantity") or "").strip()
+            unit = str(ingredient.get("unit") or "").strip()
+            if not name or not amount or not unit:
+                return False
+        elif isinstance(ingredient, str):
+            # Retain compatibility with catalog-style strings such as
+            # "1 cup Greek yogurt", while rejecting bare names like "spinach".
+            if not _LEADING_QUANTITY_RE.match(ingredient):
+                return False
+        else:
+            return False
+    return True
+
+
+def _recipe_has_quantified_ingredients(recipe: Recipe) -> bool:
+    """Catalog recipes are selectable only when every ingredient is usable."""
+    ingredients = getattr(recipe, "ingredients", None) or []
+    if isinstance(ingredients, str):
+        ingredients = [line.strip() for line in ingredients.splitlines() if line.strip()]
+    return _ingredients_have_quantities(ingredients)
+
+
 # ===========================
 # Persistence helpers for weekly apply
 # ===========================
@@ -2190,13 +2442,18 @@ def _coerce_ai_ingredients_to_storage(ingredients: Any) -> Any:
     if ingredients is None:
         return []
     if isinstance(ingredients, (list, tuple)):
-        # Convert ["rolled oats", "yogurt"] -> [{"name":"rolled oats"}, ...]
+        # Convert strings to named items while preserving already-structured
+        # ingredients (including quantities and units).
         out: list[Any] = []
         for x in ingredients:
-            s = str(x).strip()
-            if not s:
-                continue
-            out.append({"name": s})
+            if isinstance(x, dict):
+                name = str(x.get("name") or x.get("ingredient") or x.get("item") or "").strip()
+                if name:
+                    out.append({**x, "name": name})
+            else:
+                s = str(x).strip()
+                if s:
+                    out.append({"name": s})
         return out
     # If it's a string or other, store as a single name
     s = str(ingredients).strip()
@@ -2267,6 +2524,38 @@ def _apply_recipe_to_planmeal(pm: PlanMeal, rec: Recipe) -> None:
     for f in ("kcal", "protein_g", "carbs_g", "fat_g"):
         if hasattr(pm, f) and hasattr(rec, f):
             setattr(pm, f, _safe_float(getattr(rec, f, 0.0), 0.0))
+
+    # Replace heuristic placeholders with the selected recipe's real ingredients.
+    pm.items.clear()
+    raw_ingredients = getattr(rec, "ingredients", None) or []
+    if isinstance(raw_ingredients, str):
+        raw_ingredients = [line for line in raw_ingredients.splitlines() if line.strip()]
+    for raw in raw_ingredients:
+        name = ""
+        qty = None
+        unit = None
+        if isinstance(raw, dict):
+            name = str(raw.get("name") or raw.get("ingredient") or raw.get("item") or "").strip()
+            raw_qty = raw.get("qty", raw.get("quantity", raw.get("amount")))
+            unit = raw.get("unit")
+            try:
+                qty = float(raw_qty) if raw_qty not in (None, "") else None
+            except (TypeError, ValueError):
+                # Keep free-form amounts visible instead of dropping them.
+                unit = " ".join(str(v).strip() for v in (raw_qty, unit) if v not in (None, "")) or None
+        else:
+            name = str(raw).strip()
+        if name:
+            pm.items.append(
+                PlanItem(
+                    name=name,
+                    qty=qty,
+                    unit=unit,
+                    meta={},
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow(),
+                )
+            )
 
 
 def _apply_ai_idea_to_planmeal(pm: PlanMeal, ai: dict[str, Any], created_recipe: Recipe) -> None:
@@ -2356,6 +2645,7 @@ def _persist_day_recommendations(
             continue
 
         pm = by_slot[slot]
+        pm.meta = {**(pm.meta or {}), "reason": it.reason} if it.reason else (pm.meta or {})
 
         # Catalog pick
         if it.recipe and getattr(it.recipe, "id", None):
@@ -2402,21 +2692,12 @@ def _persist_day_recommendations(
 
 
 @router.get("/health", tags=["llm"])
-def llm_health():
+def llm_health(user: User = Depends(get_current_user)):
     _BUDGET.reset_if_new_day()
     return {
-        "provider": "openai" if _get_openai_client() else "stub",
+        "status": "degraded" if _circuit_open() else "ok",
+        "provider_configured": bool(_get_openai_client()),
         "circuit_open": _circuit_open(),
-        "spent_usd_today": round(_BUDGET.spent_usd, 6),
-        "daily_budget_usd": _daily_budget_usd(),
-        "failures_recent": _BUDGET.failures,
-        "cache_size": len(_CACHE.data),
-        "rate_limits": {
-            "per_user": int(os.environ.get("LLM_RATE_MAX_PER_USER", "30")),
-            "per_ip": int(os.environ.get("LLM_RATE_MAX_PER_IP", "60")),
-            "window_sec": int(os.environ.get("LLM_RATE_WINDOW_SEC", "3600")),
-        },
-        "model": _openai_model(),
     }
 
 
@@ -2430,7 +2711,7 @@ def recommend_recipes(
     if not payload.meals:
         raise HTTPException(status_code=400, detail="No meal targets provided")
 
-    ip = request.client.host if request and request.client else "0.0.0.0"
+    ip = request.client.host if request and request.client else "unknown"
     _RATE.check_and_add(user.id, ip)
 
     pref = _get_user_pref(db, user.id)
@@ -2536,7 +2817,7 @@ def recommend_weekly_apply(
     if not payload.days:
         raise HTTPException(status_code=400, detail="No days provided")
 
-    ip = request.client.host if request and request.client else "0.0.0.0"
+    ip = request.client.host if request and request.client else "unknown"
     _RATE.check_and_add(user.id, ip)
 
     dates = [d.date for d in payload.days if d.date]
@@ -2633,6 +2914,7 @@ def recommend_weekly_apply(
                 allow_new_recipe=allow_new,
                 week_protein_counts=week_protein_counts,
                 protein_cap_per_slot=2,
+                prefer_fast_catalog=True,
             )
             day_items.append(rec)
 
@@ -2675,6 +2957,7 @@ def recommend_weekly_apply(
                 allow_new_recipe=allow_new,
                 week_protein_counts=week_protein_counts,
                 protein_cap_per_slot=2,
+                prefer_fast_catalog=True,
             )
             day_items.append(dinner_rec)
 

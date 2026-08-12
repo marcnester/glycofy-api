@@ -2,33 +2,16 @@
   const q = new URLSearchParams(location.search);
 
   function saveToken(token) {
-    if (!token) return;
-    localStorage.setItem("access_token", token);
+    localStorage.removeItem("access_token");
   }
 
   function getToken() {
-    const tFromUrl = q.get("token");
-    if (tFromUrl) {
-      saveToken(tFromUrl);
-      const u = new URL(location.href);
-      u.searchParams.delete("token");
-      history.replaceState({}, "", u.toString());
-    }
-    return localStorage.getItem("access_token") || "";
+    return "";
   }
 
   async function api(path, opts = {}) {
-    const token = getToken();
-    if (!token) {
-      const ret = encodeURIComponent(location.pathname + location.search);
-      location.href = `/ui/login.html?return=${ret}`;
-      throw new Error("No auth token");
-    }
-    const headers = Object.assign(
-      { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      opts.headers || {}
-    );
-    const res = await fetch(path, Object.assign({}, opts, { headers }));
+    const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+    const res = await fetch(path, Object.assign({ credentials: "include" }, opts, { headers }));
     if (res.status === 401) {
       const ret = encodeURIComponent(location.pathname + location.search);
       location.href = `/ui/login.html?return=${ret}`;

@@ -18,7 +18,19 @@ header, footer{
 }
 footer{ border-top:1px solid var(--border); border-bottom:none; margin-top:12px; }
 
-.brand{ font-weight:800; letter-spacing:.3px; }
+.brand{
+  display:inline-flex;
+  align-items:center;
+  flex:0 0 auto;
+  padding:3px 8px;
+  border-radius:11px;
+  background:#fbfaf8;
+  line-height:0;
+  text-decoration:none;
+}
+.brand-logo{ display:block; width:142px; height:auto; }
+.nav{ display:flex; align-items:center; gap:8px; margin-left:auto; }
+.brand:focus-visible{ outline:3px solid rgba(77,106,255,.55); outline-offset:2px; }
 .spacer{ flex:1; }
 
 main{ padding:16px; display:grid; gap:12px; }
@@ -85,6 +97,11 @@ input:focus, select:focus{
 /* Utilities */
 .grid.two{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 @media (max-width: 900px){ .grid.two{ grid-template-columns:1fr; } }
+@media (max-width: 720px){
+  header{ flex-wrap:wrap; }
+  .brand-logo{ width:124px; }
+  .nav{ width:100%; margin-left:0; overflow-x:auto; padding-bottom:2px; }
+}
 
 /* ---- Summary KPI polish ---- */
 .kpi .big, .kpi-value { font-variant-numeric: tabular-nums; }

@@ -86,7 +86,8 @@
     for(const a of items){
       const tr=document.createElement('tr');
       const d=(a.start_time||a.date||new Date()).toString().slice(0,10);
-      tr.innerHTML=`<td>${d}</td><td>${normalizeSport(a)}</td><td>${fmtMin(a.duration_s??a.duration_sec??a.elapsed_sec??null)}</td><td>${a.kcal!=null?Math.round(a.kcal):'—'}</td><td>${fmtKm(a.distance_m??a.distance??null)}</td>`;
+      const values=[d,normalizeSport(a),fmtMin(a.duration_s??a.duration_sec??a.elapsed_sec??null),a.kcal!=null?Math.round(a.kcal):'—',fmtKm(a.distance_m??a.distance??null)];
+      values.forEach((value)=>{const td=document.createElement('td');td.textContent=String(value);tr.appendChild(td);});
       elRows.appendChild(tr);
     }
   }
@@ -259,7 +260,7 @@
       if(!elSumRows) return; elSumRows.innerHTML='';
       if(!Array.isArray(days)||days.length===0){ const tr=document.createElement('tr'); const td=document.createElement('td'); td.colSpan=4; td.textContent='No activities in this range.'; tr.appendChild(td); elSumRows.appendChild(tr); return; }
       const start=(p-1)*ps,end=Math.min(days.length,start+ps);
-      days.slice(start,end).forEach(d=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${d.date||'—'}</td><td>${d.training_kcal||0}</td><td>${d.planned_kcal||0}</td><td>${d.by_sport_text||'—'}</td>`; elSumRows.appendChild(tr); });
+      days.slice(start,end).forEach(d=>{ const tr=document.createElement('tr'); [d.date||'—',d.training_kcal||0,d.planned_kcal||0,d.by_sport_text||'—'].forEach(value=>{const td=document.createElement('td');td.textContent=String(value);tr.appendChild(td)}); elSumRows.appendChild(tr); });
       elSumPage && (elSumPage.textContent=String(p)); const max=Math.max(1,Math.ceil(days.length/ps)); elSumPrev&&(elSumPrev.disabled=p<=1); elSumNext&&(elSumNext.disabled=p>=max);
     }
 

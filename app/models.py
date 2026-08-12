@@ -35,6 +35,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
+from app.encrypted_types import EncryptedText
 
 # -------------------------
 # Users
@@ -48,6 +49,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     # human-friendly name shown in the UI (editable on Profile)
     display_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
@@ -77,6 +79,25 @@ class User(Base):
 
     def __repr__(self) -> str:
         return f"<User id={self.id} email={self.email!r}>"
+
+
+class SecurityAuditEvent(Base):
+    __tablename__ = "security_audit_events"
+    __table_args__ = (
+        Index("ix_security_audit_occurred", "occurred_at"),
+        Index("ix_security_audit_type_outcome", "event_type", "outcome"),
+        Index("ix_security_audit_user_time", "user_id", "occurred_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    event_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="info")
+    user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    client_id_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    event_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 # -------------------------
@@ -162,8 +183,8 @@ class OAuthAccount(Base):
     )
     provider: Mapped[str | None] = mapped_column(Text, nullable=True)
     external_athlete_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
-    refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_token: Mapped[str | None] = mapped_column(EncryptedText(), nullable=True)
+    refresh_token: Mapped[str | None] = mapped_column(EncryptedText(), nullable=True)
     expires_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     scope: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -237,6 +258,8 @@ class PlanMeal(Base):
     instructions: Mapped[str | None] = mapped_column(Text)
     order_index: Mapped[int] = mapped_column(Integer, default=0)
     tags: Mapped[dict | None] = mapped_column(JSON)
+    # Per-meal metadata, including the explanation returned by the AI planner.
+    meta: Mapped[dict | None] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime | None] = mapped_column(DateTime)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime)
 

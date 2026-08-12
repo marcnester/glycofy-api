@@ -6,7 +6,7 @@
         content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Glycofy · Home</title>
-  <link rel="icon" href="/ui/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/ui/assets/glycofy-mark.png" type="image/png" />
 
   <!-- Shared global styles (includes the hard-locked Topbar) -->
   <link rel="stylesheet" href="/ui/styles.css?v=2025-11-04" />
@@ -16,7 +16,7 @@
     :root{
       --bg:#0d1117; --bg-grad-1:#0b1220; --bg-grad-2:#0e1626;
       --panel:#111826; --panel-2:#0c121e; --border:#1b2433;
-      --text:#e8eef5; --muted:#9db3cf; --accent:#4ba3ff; --accent-2:#7ec4ff;
+      --text:#e8eef5; --muted:#9db3cf; --accent:#50c88a; --accent-2:#74dda9;
       --ok:#3dd68c; --warn:#ffd166; --radius:16px;
       --shadow:0 18px 40px rgba(0,0,0,.45); --transition:150ms ease;
     }
@@ -30,8 +30,8 @@
     }
     body{
       background:
-        radial-gradient(1200px 600px at 10% -10%, rgba(75,163,255,.12), transparent 60%),
-        radial-gradient(900px 500px at 90% 0%, rgba(126,196,255,.10), transparent 55%),
+        radial-gradient(1200px 600px at 10% -10%, rgba(80,200,138,.12), transparent 60%),
+        radial-gradient(900px 500px at 90% 0%, rgba(116,221,169,.10), transparent 55%),
         linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2));
     }
     a{color:var(--accent);text-decoration:none}
@@ -50,7 +50,7 @@
     }
     .hero:before{
       content:'';position:absolute;inset:-2px;
-      background:radial-gradient(600px 200px at 30% -20%, rgba(75,163,255,.10), transparent 60%);
+      background:radial-gradient(600px 200px at 30% -20%, rgba(80,200,138,.10), transparent 60%);
       pointer-events:none;
     }
     .hero h1{font-size:2.2rem;line-height:1.1;margin:0 0 6px}
@@ -61,7 +61,7 @@
       border:none;
       border-radius:12px;
       padding:12px 16px;
-      color:#fff;
+      color:#071b14;
       font-weight:700;
       cursor:pointer;
       transition:transform var(--transition),background var(--transition);
@@ -147,7 +147,7 @@
   <!-- Topbar — identical markup/classes to Profile & Activities -->
   <header class="topbar">
     <div class="container topbar__inner" style="display:flex;align-items:center;justify-content:space-between;height:64px;">
-      <a class="brand" href="/ui/index.html" data-nav="Home">GLYCOFY</a>
+      <a class="brand" href="/ui/index.html" data-nav="Home" aria-label="Glycofy home"><img src="/ui/assets/glycofy-logo-lockup.png" alt="Glycofy"/></a>
       <nav class="nav" aria-label="Primary">
         <a href="/ui/index.html" data-nav="Home" class="active">Home</a>
         <a href="/ui/plan.html" data-nav="Plan">Plan</a>

@@ -1,0 +1,47 @@
+*{box-sizing:border-box}
+body{margin:0;background:#0f1318;color:#e7ecf3;font:15px/1.45 Inter,system-ui,sans-serif}
+.topbar{min-height:64px;padding:0 max(24px,calc((100vw - 1200px)/2));display:flex;align-items:center;gap:30px;border-bottom:1px solid #202833;background:#111722}
+.brand{font-size:20px;font-weight:850;color:#75aaff;text-decoration:none}
+.nav-links{display:flex;gap:10px;flex:1}
+.nav-links a{padding:9px 13px;border-radius:999px;color:#b9c7da;text-decoration:none}
+.nav-links a.active{background:#1a2638;color:#fff}
+.btn{border:1px solid #344154;border-radius:12px;background:#182230;color:#eef4ff;padding:10px 14px;font:inherit;font-weight:700;cursor:pointer}
+.btn:hover{background:#223147}
+.btn-primary{background:#50c88a;color:#071b14;border-color:#50c88a}
+.grocery-shell{max-width:1200px;margin:0 auto;padding:48px 24px 80px}
+.grocery-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:24px}
+.grocery-heading h1{font-size:42px;line-height:1;margin:4px 0 10px}
+.eyebrow{text-transform:uppercase;letter-spacing:.12em;color:#80a9e5;font-size:12px;font-weight:800;margin:0}
+.muted{color:#9dacbf}
+.grocery-actions{display:flex;gap:9px;align-items:center}
+.more-menu{position:relative}
+.more-menu summary{list-style:none}
+.more-menu summary::-webkit-details-marker{display:none}
+.more-menu[open]{z-index:5}
+.more-menu div{display:none}
+.more-menu button{display:block;width:160px;padding:10px 12px;border:0;background:#182230;color:#e7ecf3;text-align:left;cursor:pointer}
+.more-menu button:hover{background:#26364c}
+.more-menu button:first-of-type{position:absolute;right:0;top:48px;border:1px solid #344154;border-bottom:0;border-radius:10px 10px 0 0}
+.more-menu button:last-of-type{position:absolute;right:0;top:89px;border:1px solid #344154;border-radius:0 0 10px 10px}
+.grocery-controls{display:flex;align-items:end;gap:14px;flex-wrap:wrap;margin:32px 0 18px;padding:18px;border:1px solid #263140;border-radius:16px;background:#121921}
+.grocery-controls label{display:grid;gap:6px;color:#aebbd0;font-size:13px;font-weight:700}
+.grocery-controls input{height:40px;border:1px solid #344154;border-radius:10px;background:#0d131b;color:#fff;padding:0 10px;color-scheme:dark}
+.grocery-controls #servings{width:110px}
+.notice{padding:12px 14px;margin:14px 0;border-radius:12px;background:#2b2415;border:1px solid #6c5423;color:#ffe4a6}
+.grocery-progress{display:flex;justify-content:space-between;align-items:center;margin:22px 2px 12px}
+.link-button{border:0;background:transparent;color:#86b5ff;cursor:pointer}
+.category{border:1px solid #263140;border-radius:16px;background:#121921;margin:14px 0;overflow:hidden}
+.category h2{font-size:16px;margin:0;padding:15px 18px;border-bottom:1px solid #263140}
+.grocery-item{display:grid;grid-template-columns:auto minmax(180px,1fr) 100px 100px auto;gap:12px;align-items:center;padding:13px 18px;border-top:1px solid #202a37}
+.grocery-item:first-of-type{border-top:0}
+.grocery-item.is-done{opacity:.55}
+.grocery-item.is-done .item-name{text-decoration:line-through}
+.grocery-item input[type=checkbox]{width:20px;height:20px;accent-color:#50c88a}
+.item-name{font-weight:700}
+.item-use{display:block;color:#8898ad;font-size:12px;font-weight:400}
+.quantity,.unit{width:100%;height:36px;border:1px solid #344154;border-radius:9px;background:#0d131b;color:#fff;padding:0 9px}
+.pantry-btn{border:0;background:transparent;color:#9db7dc;cursor:pointer}
+.pantry-btn.is-pantry{color:#74d2a0}
+.empty{padding:32px;text-align:center;border:1px dashed #344154;border-radius:16px}
+@media(max-width:760px){.topbar{flex-wrap:wrap;padding:14px 20px}.nav-links{order:3;overflow:auto;width:100%}.grocery-heading{align-items:flex-start;flex-direction:column}.grocery-item{grid-template-columns:auto 1fr 72px}.unit{grid-column:2}.pantry-btn{grid-column:3;grid-row:2}.grocery-actions{flex-wrap:wrap}}
+@media print{.topbar,.grocery-actions,.grocery-controls,.link-button,.pantry-btn{display:none!important}.grocery-shell{padding:0}.category{break-inside:avoid;background:#fff;color:#000;border-color:#bbb}.grocery-item{border-color:#ddd}.quantity,.unit{border:0;background:#fff;color:#000}.muted,.item-use{color:#555}}
