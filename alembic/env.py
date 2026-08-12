@@ -1,7 +1,5 @@
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
-
 # IMPORTANT: import models so they register with Base.metadata for autogenerate
 import app.models  # noqa: F401
 from alembic import context
@@ -27,7 +25,9 @@ target_metadata = Base.metadata
 # ------------------------------------------------------------------------------
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
-    url = str(engine.url)
+    # ``str(URL)`` intentionally redacts passwords as ``***``. Alembic needs
+    # the actual connection URL when configuring an offline migration.
+    url = engine.url.render_as_string(hide_password=False)
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -47,15 +47,11 @@ def run_migrations_offline() -> None:
 # ------------------------------------------------------------------------------
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-        future=True,
-        url=str(engine.url),
-    )
-
-    with connectable.connect() as connection:
+    # Reuse the application engine instead of rebuilding it from ``str(URL)``.
+    # SQLAlchemy redacts passwords in that string representation, which makes
+    # a production migration authenticate with the literal value ``***``.
+    # The engine retains the real password internally.
+    with engine.connect() as connection:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
