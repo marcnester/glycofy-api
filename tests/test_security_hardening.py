@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from sqlalchemy import create_engine
+from sqlalchemy import DateTime, create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -138,6 +138,7 @@ def test_google_callback_rejects_unverified_email(client: TestClient, monkeypatc
     monkeypatch.setattr(oauth_google, "GOOGLE_CLIENT_ID", "client-id")
     monkeypatch.setattr(oauth_google, "GOOGLE_CLIENT_SECRET", "client-secret")
     monkeypatch.setattr(oauth_google, "GOOGLE_REDIRECT_URL", "https://app.glycofy.ai/oauth/google/callback")
+    google_profile = {"sub": "google-subject", "email": "person@example.com", "email_verified": False}
 
     class FakeResponse:
         def __init__(self, payload):
@@ -161,7 +162,7 @@ def test_google_callback_rejects_unverified_email(client: TestClient, monkeypatc
             return FakeResponse({"access_token": "temporary-token", "scope": "openid email profile"})
 
         async def get(self, *args, **kwargs):
-            return FakeResponse({"sub": "google-subject", "email": "person@example.com", "email_verified": False})
+            return FakeResponse(google_profile)
 
     monkeypatch.setattr(oauth_google.httpx, "AsyncClient", FakeAsyncClient)
     start = client.get("/oauth/google/start", follow_redirects=False)
@@ -176,6 +177,23 @@ def test_google_callback_rejects_unverified_email(client: TestClient, monkeypatc
     try:
         assert db.query(User).count() == 0
         assert db.query(OAuthAccount).count() == 0
+    finally:
+        db.close()
+
+    google_profile["email_verified"] = True
+    start = client.get("/oauth/google/start", follow_redirects=False)
+    state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+    response = client.get(f"/oauth/google/callback?code=test-code&state={state}", follow_redirects=False)
+
+    assert response.status_code == 302
+    db = next(override())
+    try:
+        account = db.query(OAuthAccount).one()
+        assert account.external_athlete_id == "google-subject"
+        assert account.access_token is None
+        assert account.refresh_token is None
+        assert account.created_at is not None
+        assert isinstance(OAuthAccount.__table__.c.created_at.type, DateTime)
     finally:
         db.close()
 
