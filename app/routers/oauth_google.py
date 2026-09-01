@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import base64
 import os
-import time
+import secrets
+from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -14,7 +15,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import OAuthAccount, User
 from app.observability import record_security_event
-from app.routers.auth import COOKIE_ACCESS, _cookie_kwargs, _create_access_token
+from app.routers.auth import COOKIE_ACCESS, _cookie_kwargs, _create_access_token, hash_password
 
 router = APIRouter()
 
@@ -115,7 +116,10 @@ async def google_status() -> dict:
 
 
 @router.get("/start")
-async def google_start(request: Request, return_: str | None = None) -> Response:
+async def google_start(
+    request: Request,
+    return_: str | None = Query(default=None, alias="return"),
+) -> Response:
     """
     Begin OAuth:
       - create cryptographically-strong state
@@ -151,16 +155,12 @@ async def google_start(request: Request, return_: str | None = None) -> Response
     )
 
     # Build Google auth URL
-    from urllib.parse import urlencode
-
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": GOOGLE_REDIRECT_URL,
         "response_type": "code",
         "scope": " ".join(SCOPES),
         "state": nonce,
-        "access_type": "offline",
-        "include_granted_scopes": "true",
         "prompt": "select_account",
     }
     url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
@@ -227,8 +227,6 @@ async def google_callback(
 
         token = token_res.json()
         access_token = token.get("access_token")
-        refresh_token = token.get("refresh_token")
-        expires_in = token.get("expires_in")
         scope = token.get("scope")
 
         if not access_token:
@@ -252,11 +250,24 @@ async def google_callback(
 
         if not email:
             raise HTTPException(status_code=400, detail="Google profile missing email")
+        if profile.get("email_verified") is not True:
+            record_security_event(
+                db,
+                request,
+                "oauth_google_callback",
+                "unverified_email",
+                severity="warning",
+            )
+            raise HTTPException(status_code=400, detail="Google email is not verified")
+        if not sub:
+            raise HTTPException(status_code=400, detail="Google profile missing subject")
 
     # Find or create user
     user = db.query(User).filter(User.email == email).first()
     if not user:
-        user = User(email=email)
+        # OAuth-only users still satisfy the legacy non-null password column,
+        # but the generated value is unknown and cannot be used to log in.
+        user = User(email=email, password_hash=hash_password(secrets.token_urlsafe(48)))
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -305,16 +316,13 @@ async def google_callback(
 
     # Upsert oauth_accounts
     account = db.query(OAuthAccount).filter(OAuthAccount.user_id == user.id, OAuthAccount.provider == "google").first()
-    now_exp = None
-    if isinstance(expires_in, int):
-        now_exp = int(time.time()) + int(expires_in)
     if account:
         account.external_athlete_id = sub or account.external_athlete_id
-        account.access_token = access_token or account.access_token
-        if refresh_token:
-            account.refresh_token = refresh_token
-        if now_exp:
-            account.expires_at = now_exp
+        # Google is used only for authentication. Do not retain bearer or
+        # refresh tokens that Glycofy does not need after fetching userinfo.
+        account.access_token = None
+        account.refresh_token = None
+        account.expires_at = None
         if scope:
             account.scope = scope
     else:
@@ -322,9 +330,9 @@ async def google_callback(
             user_id=user.id,
             provider="google",
             external_athlete_id=sub,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_at=now_exp,
+            access_token=None,
+            refresh_token=None,
+            expires_at=None,
             scope=scope,
         )
         db.add(account)

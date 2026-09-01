@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,8 +14,8 @@ from app.config import Settings
 from app.db import Base, get_db
 from app.encrypted_types import EncryptedText
 from app.main import app
-from app.models import SecurityAuditEvent
-from app.routers import oauth_strava
+from app.models import OAuthAccount, SecurityAuditEvent, User
+from app.routers import oauth_google, oauth_strava
 
 
 @pytest.fixture()
@@ -116,6 +117,67 @@ def test_strava_state_rejects_tampering_and_expiry(monkeypatch):
     monkeypatch.setattr(oauth_strava, "_now_ts", lambda: int(time.time()) + 10_000)
     with pytest.raises(ValueError, match="expired_state"):
         oauth_strava._decode_state(state)
+
+
+def test_google_start_uses_login_scopes_without_offline_access(client: TestClient, monkeypatch):
+    monkeypatch.setattr(oauth_google, "GOOGLE_CLIENT_ID", "client-id")
+    monkeypatch.setattr(oauth_google, "GOOGLE_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(oauth_google, "GOOGLE_REDIRECT_URL", "https://app.glycofy.ai/oauth/google/callback")
+
+    response = client.get("/oauth/google/start?return=/ui/profile.html", follow_redirects=False)
+
+    assert response.status_code == 302
+    query = parse_qs(urlparse(response.headers["location"]).query)
+    assert query["scope"] == ["openid email profile"]
+    assert "access_type" not in query
+    assert "include_granted_scopes" not in query
+    assert client.cookies.get(oauth_google.RETURN_COOKIE_NAME).strip('"') == "/ui/profile.html"
+
+
+def test_google_callback_rejects_unverified_email(client: TestClient, monkeypatch):
+    monkeypatch.setattr(oauth_google, "GOOGLE_CLIENT_ID", "client-id")
+    monkeypatch.setattr(oauth_google, "GOOGLE_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(oauth_google, "GOOGLE_REDIRECT_URL", "https://app.glycofy.ai/oauth/google/callback")
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.status_code = 200
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse({"access_token": "temporary-token", "scope": "openid email profile"})
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse({"sub": "google-subject", "email": "person@example.com", "email_verified": False})
+
+    monkeypatch.setattr(oauth_google.httpx, "AsyncClient", FakeAsyncClient)
+    start = client.get("/oauth/google/start", follow_redirects=False)
+    state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+
+    response = client.get(f"/oauth/google/callback?code=test-code&state={state}")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Google email is not verified"
+    override = app.dependency_overrides[get_db]
+    db = next(override())
+    try:
+        assert db.query(User).count() == 0
+        assert db.query(OAuthAccount).count() == 0
+    finally:
+        db.close()
 
 
 def test_oauth_tokens_are_encrypted_at_rest():
