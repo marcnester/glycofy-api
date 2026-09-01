@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import base64
-import os
+import hashlib
+import hmac
+import json
 import secrets
+import time
 from urllib.parse import urlencode
 
 import httpx
@@ -15,6 +18,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import OAuthAccount, User
 from app.observability import record_security_event
+from app.rate_limit import AUTH_LIMITER, client_key
 from app.routers.auth import COOKIE_ACCESS, _cookie_kwargs, _create_access_token, hash_password
 
 router = APIRouter()
@@ -47,15 +51,56 @@ def _oauth_cookie_kwargs() -> dict:
         "httponly": True,
         "secure": settings.COOKIE_SECURE,
         "samesite": "lax",
-        "path": "/",
+        "path": "/oauth/google/callback",
         "max_age": settings.OAUTH_STATE_TTL_SECONDS,
     }
 
 
+def _now_ts() -> int:
+    return int(time.time())
+
+
+def _encode_state() -> str:
+    payload = {
+        "exp": _now_ts() + settings.OAUTH_STATE_TTL_SECONDS,
+        "nonce": secrets.token_urlsafe(24),
+    }
+    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
+    signature = hmac.new(settings.JWT_SECRET.encode(), body.encode(), hashlib.sha256).digest()
+    sig = base64.urlsafe_b64encode(signature).decode().rstrip("=")
+    return f"{body}.{sig}"
+
+
+def _decode_state(state: str) -> None:
+    try:
+        body, supplied_sig = state.split(".", 1)
+    except ValueError as exc:
+        raise ValueError("bad_state") from exc
+    expected = hmac.new(settings.JWT_SECRET.encode(), body.encode(), hashlib.sha256).digest()
+    expected_sig = base64.urlsafe_b64encode(expected).decode().rstrip("=")
+    if not hmac.compare_digest(supplied_sig, expected_sig):
+        raise ValueError("bad_state")
+    try:
+        pad = "=" * ((4 - len(body) % 4) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(body + pad))
+        expires = int(payload["exp"])
+        nonce = payload["nonce"]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("bad_state") from exc
+    if not isinstance(nonce, str) or len(nonce) < 24:
+        raise ValueError("bad_state")
+    if expires <= _now_ts():
+        raise ValueError("expired_state")
+
+
 def verify_state(request: Request, state_from_query: str) -> None:
     state_cookie = request.cookies.get(STATE_COOKIE_NAME, "")
-    if not state_cookie or not state_from_query or state_cookie != state_from_query:
+    if not state_cookie or not state_from_query or not hmac.compare_digest(state_cookie, state_from_query):
         raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    try:
+        _decode_state(state_from_query)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state") from exc
 
 
 def _units_from_locale(locale: str | None) -> str | None:
@@ -129,8 +174,14 @@ async def google_start(
     if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URL):
         raise HTTPException(status_code=500, detail="Google OAuth is not configured")
 
-    # random state for CSRF protection
-    nonce = base64.urlsafe_b64encode(os.urandom(24)).decode("ascii").rstrip("=")
+    AUTH_LIMITER.check(
+        f"oauth-google-start:ip:{client_key(request)}",
+        maximum=settings.OAUTH_RATE_LIMIT_PER_15_MINUTES,
+        window_seconds=900,
+    )
+
+    # Signed, expiring state for CSRF protection.
+    nonce = _encode_state()
 
     # Store state + return in cookies
     resp = RedirectResponse(url="/")  # will be replaced
@@ -141,7 +192,7 @@ async def google_start(
         httponly=True,
         secure=settings.COOKIE_SECURE,
         samesite="lax",
-        path="/",
+        path="/oauth/google/callback",
     )
     safe_return = _safe_return_path(return_ or DEFAULT_RETURN_PATH)
     resp.set_cookie(
@@ -190,6 +241,16 @@ async def google_callback(
         raise HTTPException(status_code=400, detail="Missing authorization code")
     if not state:
         raise HTTPException(status_code=400, detail="Missing state")
+
+    try:
+        AUTH_LIMITER.check(
+            f"oauth-google-callback:ip:{client_key(request)}",
+            maximum=settings.OAUTH_RATE_LIMIT_PER_15_MINUTES,
+            window_seconds=900,
+        )
+    except HTTPException:
+        record_security_event(db, request, "oauth_google_rate_limited", "denied", severity="alert")
+        raise
 
     try:
         verify_state(request, state)
@@ -340,7 +401,9 @@ async def google_callback(
     record_security_event(db, request, "oauth_google_login", "success", user_id=user.id)
 
     # Mint JWT and set cookies
-    app_jwt = _create_access_token(str(user.id), minutes=60, token_version=user.token_version)
+    app_jwt = _create_access_token(
+        str(user.id), minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES, token_version=user.token_version
+    )
 
     # Safe redirect path
     dest = _safe_return_path(request.cookies.get(RETURN_COOKIE_NAME))
@@ -352,7 +415,7 @@ async def google_callback(
         resp.delete_cookie(legacy_name, path="/", samesite="lax")
 
     # Clean up
-    resp.delete_cookie(STATE_COOKIE_NAME, path="/")
+    resp.delete_cookie(STATE_COOKIE_NAME, path="/oauth/google/callback")
     resp.delete_cookie(RETURN_COOKIE_NAME, path="/")
     from app.routers.oauth_strava import schedule_strava_sync_on_login
 

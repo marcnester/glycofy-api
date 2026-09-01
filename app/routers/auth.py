@@ -11,7 +11,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import User
 from app.observability import record_security_event
-from app.rate_limit import AUTH_LIMITER, client_key
+from app.rate_limit import AUTH_LIMITER, account_key, client_key
 
 # -----------------------------------------------------------------------------
 # Password hashing
@@ -50,6 +50,17 @@ def verify_and_maybe_upgrade(user: User, plain: str, db: Session) -> bool:
 # -----------------------------------------------------------------------------
 def _create_access_token(sub: str, minutes: int = 60, token_version: int = 0) -> str:
     return create_access_token(sub, expires_minutes=minutes, token_version=token_version)
+
+
+def _check_auth_limit(request: Request, action: str, identifier: str | None = None) -> None:
+    maximum = settings.AUTH_RATE_LIMIT_PER_15_MINUTES
+    AUTH_LIMITER.check(f"{action}:ip:{client_key(request)}", maximum=maximum, window_seconds=900)
+    if identifier:
+        AUTH_LIMITER.check(
+            f"{action}:account:{account_key(identifier)}",
+            maximum=maximum,
+            window_seconds=900,
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -115,11 +126,7 @@ def logout(request: Request, db: Session = Depends(get_db), user: User = Depends
 @router.post("/signup", response_model=SessionResponse, summary="Create account and start a session")
 def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db)):
     try:
-        AUTH_LIMITER.check(
-            f"signup:{client_key(request)}",
-            maximum=settings.AUTH_RATE_LIMIT_PER_15_MINUTES,
-            window_seconds=900,
-        )
+        _check_auth_limit(request, "signup", body.email)
     except HTTPException:
         record_security_event(db, request, "signup_rate_limited", "denied", severity="alert")
         raise
@@ -134,7 +141,9 @@ def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db))
     db.refresh(user)
     record_security_event(db, request, "account_signup", "success", user_id=user.id)
 
-    token = _create_access_token(str(user.id), minutes=60, token_version=user.token_version)
+    token = _create_access_token(
+        str(user.id), minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES, token_version=user.token_version
+    )
     resp = JSONResponse(SessionResponse().model_dump())
     _set_all_session_cookies(resp, token)
     return resp
@@ -143,11 +152,7 @@ def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db))
 @router.post("/login", response_model=SessionResponse, summary="Log in and start a session")
 def login(request: Request, body: LoginRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     try:
-        AUTH_LIMITER.check(
-            f"login:{client_key(request)}",
-            maximum=settings.AUTH_RATE_LIMIT_PER_15_MINUTES,
-            window_seconds=900,
-        )
+        _check_auth_limit(request, "login", body.email)
     except HTTPException:
         record_security_event(db, request, "authentication_rate_limited", "denied", severity="alert")
         raise
@@ -163,7 +168,9 @@ def login(request: Request, body: LoginRequest, background_tasks: BackgroundTask
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
 
-    token = _create_access_token(str(user.id), minutes=60, token_version=user.token_version)
+    token = _create_access_token(
+        str(user.id), minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES, token_version=user.token_version
+    )
     resp = JSONResponse(SessionResponse().model_dump())
     _set_all_session_cookies(resp, token)
     record_security_event(db, request, "authentication_login", "success", user_id=user.id)

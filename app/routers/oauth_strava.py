@@ -23,6 +23,7 @@ from app.config import settings
 from app.db import SessionLocal, get_db
 from app.models import Activity, OAuthAccount, User
 from app.observability import record_security_event
+from app.rate_limit import AUTH_LIMITER, client_key
 
 # Router for OAuth endpoints (mounted at /oauth/strava)
 router = APIRouter(tags=["oauth/strava"])
@@ -135,7 +136,7 @@ def _decode_state(state: str) -> tuple[int, str | None]:
         expires = int(payload["exp"])
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         raise ValueError("bad_state")
-    if expires < _now_ts():
+    if expires <= _now_ts():
         raise ValueError("expired_state")
     return user_id, _safe_return_path(payload.get("return"))
 
@@ -485,10 +486,17 @@ def strava_status(
 
 @router.get("/start-url")
 def strava_start_url(
-    return_path: str | None = Query(default=None, alias="return"), user: User = Depends(get_current_user)
+    request: Request,
+    return_path: str | None = Query(default=None, alias="return"),
+    user: User = Depends(get_current_user),
 ):
     if not _configured():
         raise HTTPException(status_code=400, detail="Strava is not configured on this server.")
+    AUTH_LIMITER.check(
+        f"oauth-strava-start:ip:{client_key(request)}",
+        maximum=settings.OAUTH_RATE_LIMIT_PER_15_MINUTES,
+        window_seconds=900,
+    )
     url = _authorize_url(user.id, _safe_return_path(return_path))
     state = url.rsplit("&state=", 1)[1]
     response = JSONResponse({"authorize_url": url})
@@ -499,15 +507,24 @@ def strava_start_url(
         httponly=True,
         secure=settings.COOKIE_SECURE,
         samesite="lax",
-        path="/",
+        path="/oauth/strava/callback",
     )
     return response
 
 
 @router.get("/start")
-def strava_start(return_path: str | None = Query(default=None, alias="return"), user: User = Depends(get_current_user)):
+def strava_start(
+    request: Request,
+    return_path: str | None = Query(default=None, alias="return"),
+    user: User = Depends(get_current_user),
+):
     if not _configured():
         raise HTTPException(status_code=400, detail="Strava is not configured on this server.")
+    AUTH_LIMITER.check(
+        f"oauth-strava-start:ip:{client_key(request)}",
+        maximum=settings.OAUTH_RATE_LIMIT_PER_15_MINUTES,
+        window_seconds=900,
+    )
     url = _authorize_url(user.id, _safe_return_path(return_path))
     state = url.rsplit("&state=", 1)[1]
     response = RedirectResponse(url=url, status_code=302)
@@ -518,7 +535,7 @@ def strava_start(return_path: str | None = Query(default=None, alias="return"), 
         httponly=True,
         secure=settings.COOKIE_SECURE,
         samesite="lax",
-        path="/",
+        path="/oauth/strava/callback",
     )
     return response
 
@@ -544,6 +561,16 @@ def strava_callback(
 
     if not code or not state:
         return RedirectResponse(url=f"{DEFAULT_PROFILE_URL}?linked_error=missing_code_or_state", status_code=302)
+
+    try:
+        AUTH_LIMITER.check(
+            f"oauth-strava-callback:ip:{client_key(request)}",
+            maximum=settings.OAUTH_RATE_LIMIT_PER_15_MINUTES,
+            window_seconds=900,
+        )
+    except HTTPException:
+        record_security_event(db, request, "oauth_strava_rate_limited", "denied", severity="alert")
+        raise
 
     state_cookie = request.cookies.get(STATE_COOKIE_NAME, "")
     if not state_cookie or not hmac.compare_digest(state_cookie, state):
@@ -640,7 +667,7 @@ def strava_callback(
     sep = "&" if "?" in dest else "?"
     response = RedirectResponse(url=f"{dest}{sep}linked=strava", status_code=302)
     record_security_event(db, request, "oauth_strava_link", "success", user_id=user.id)
-    response.delete_cookie(STATE_COOKIE_NAME, path="/", samesite="lax")
+    response.delete_cookie(STATE_COOKIE_NAME, path="/oauth/strava/callback", samesite="lax")
     return response
 
 

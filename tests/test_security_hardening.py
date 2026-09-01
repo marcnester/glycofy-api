@@ -4,17 +4,20 @@ import time
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import DateTime, create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.config import Settings
+from app.auth_utils import create_access_token, decode_jwt
+from app.config import Settings, settings
 from app.db import Base, get_db
 from app.encrypted_types import EncryptedText
 from app.main import app
 from app.models import OAuthAccount, SecurityAuditEvent, User
+from app.rate_limit import AUTH_LIMITER, account_key
 from app.routers import oauth_google, oauth_strava
 
 
@@ -33,6 +36,13 @@ def client():
             yield test_client
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_auth_limiter():
+    AUTH_LIMITER.clear()
+    yield
+    AUTH_LIMITER.clear()
 
 
 def test_dashboard_requires_authentication(client: TestClient):
@@ -84,6 +94,22 @@ def test_logout_revokes_the_issued_session(client: TestClient):
     assert client.get("/users/me").status_code == 401
 
 
+def test_session_expiry_is_enforced_and_cookie_matches_config(client: TestClient, monkeypatch):
+    monkeypatch.setattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 7)
+    response = client.post(
+        "/auth/signup",
+        json={"email": "expiry@example.com", "password": "a-secure-password-456"},
+    )
+    assert response.status_code == 200
+    assert "Max-Age=420" in response.headers["set-cookie"]
+    payload = decode_jwt(client.cookies.get(settings.SESSION_COOKIE_NAME))
+    assert payload["exp"] - payload["iat"] == 420
+
+    expired = create_access_token("1", expires_minutes=-1)
+    with pytest.raises(HTTPException, match="Session expired"):
+        decode_jwt(expired)
+
+
 def test_authentication_events_are_persisted_without_raw_email(client: TestClient):
     client.post(
         "/auth/signup",
@@ -117,6 +143,41 @@ def test_strava_state_rejects_tampering_and_expiry(monkeypatch):
     monkeypatch.setattr(oauth_strava, "_now_ts", lambda: int(time.time()) + 10_000)
     with pytest.raises(ValueError, match="expired_state"):
         oauth_strava._decode_state(state)
+
+
+def test_google_state_rejects_tampering_and_expiry(monkeypatch):
+    state = oauth_google._encode_state()
+    oauth_google._decode_state(state)
+    with pytest.raises(ValueError, match="bad_state"):
+        oauth_google._decode_state(state[:-1] + ("A" if state[-1] != "A" else "B"))
+
+    monkeypatch.setattr(oauth_google, "_now_ts", lambda: int(time.time()) + 10_000)
+    with pytest.raises(ValueError, match="expired_state"):
+        oauth_google._decode_state(state)
+
+
+def test_password_login_is_rate_limited_by_ip_and_account(client: TestClient, monkeypatch):
+    monkeypatch.setattr(settings, "AUTH_RATE_LIMIT_PER_15_MINUTES", 2)
+    payload = {"email": "target@example.com", "password": "incorrect-password"}
+
+    assert client.post("/auth/login", json=payload).status_code == 401
+    assert client.post("/auth/login", json=payload).status_code == 401
+    blocked = client.post("/auth/login", json=payload)
+
+    assert blocked.status_code == 429
+    assert int(blocked.headers["retry-after"]) > 0
+    assert "target@example.com" not in account_key(payload["email"])
+
+
+def test_google_oauth_start_is_rate_limited(client: TestClient, monkeypatch):
+    monkeypatch.setattr(oauth_google, "GOOGLE_CLIENT_ID", "client-id")
+    monkeypatch.setattr(oauth_google, "GOOGLE_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(oauth_google, "GOOGLE_REDIRECT_URL", "https://app.glycofy.ai/oauth/google/callback")
+    monkeypatch.setattr(settings, "OAUTH_RATE_LIMIT_PER_15_MINUTES", 1)
+
+    assert client.get("/oauth/google/start", follow_redirects=False).status_code == 302
+    blocked = client.get("/oauth/google/start", follow_redirects=False)
+    assert blocked.status_code == 429
 
 
 def test_google_start_uses_login_scopes_without_offline_access(client: TestClient, monkeypatch):

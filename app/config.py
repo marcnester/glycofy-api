@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     ENABLE_DEV_ROUTES: bool = False
     MAX_REQUEST_BODY_BYTES: int = 1_048_576
     AUTH_RATE_LIMIT_PER_15_MINUTES: int = 20
+    OAUTH_RATE_LIMIT_PER_15_MINUTES: int = 30
     SECURITY_AUDIT_RETENTION_DAYS: int = 365
     SECURITY_ALERT_EMAIL_TO: str = "marcnester@gmail.com"
     SECURITY_ALERT_EMAIL_ENABLED: bool = False
@@ -138,6 +139,8 @@ class Settings(BaseSettings):
             errors.append("ENABLE_DEV_ROUTES must be false")
         if self.AUTH_RATE_LIMIT_PER_15_MINUTES < 1:
             errors.append("AUTH_RATE_LIMIT_PER_15_MINUTES must be positive")
+        if self.OAUTH_RATE_LIMIT_PER_15_MINUTES < 1:
+            errors.append("OAUTH_RATE_LIMIT_PER_15_MINUTES must be positive")
         if not self.OAUTH_TOKEN_ENCRYPTION_KEY:
             errors.append("OAUTH_TOKEN_ENCRYPTION_KEY must be configured")
         if self.SECURITY_ALERT_EMAIL_ENABLED:
