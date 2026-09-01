@@ -18,6 +18,7 @@ ignore = [
   "PLR0915",  # too many statements
   "PLR0911",  # too many return statements
   "PLW0603",  # global statement
+  "PLC0415",  # intentional lazy imports avoid optional-dependency/circular import failures
   "B007",     # unused loop variables in legacy code
   "E741",     # ambiguous short variable names in legacy code
   "SIM102",   # nested ifs
