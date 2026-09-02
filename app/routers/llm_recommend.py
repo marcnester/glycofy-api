@@ -3187,8 +3187,9 @@ def _batch_week_recommendations(
         "You are Glycofy's elite sports-nutrition planner. Design the COMPLETE week as one coherent plan. "
         "Return exactly one breakfast, lunch, dinner, and snack for every requested date. "
         "Respect diet tags and ingredient exclusions as hard safety constraints. Keep every recipe practical, "
-        "single-serving, and cookable in about 30 minutes with measured ingredients. Keep calories and protein "
-        "within about 15% of each slot target. Never repeat a meal title during the week. Within each day, do not "
+        "single-serving, and cookable in about 30 minutes with measured ingredients. Keep calories, protein, "
+        "carbohydrates, and fat within 15% of each slot target; verify that the four macro values are internally "
+        "plausible before responding. Never repeat a meal title during the week. Within each day, do not "
         "repeat a protein_item or carb_item across breakfast, lunch, and dinner. Across adjacent days, vary main "
         "proteins. Use no protein_group more than twice for the same slot during the week when alternatives exist. "
         "Plan globally first so variety is intentional, then emit only the requested structured data."
@@ -3225,8 +3226,6 @@ def _batch_week_recommendations(
     valid_dates = {day["date"] for day in days}
     output: dict[str, dict[str, SlotRecommendation]] = {}
     week_titles: set[str] = set()
-    protein_group_counts: dict[tuple[str, str], int] = {}
-    previous_main_proteins: set[str] = set()
     rejected = 0
 
     for day in parsed.get("days", []):
@@ -3236,7 +3235,6 @@ def _batch_week_recommendations(
         slots: dict[str, SlotRecommendation] = {}
         day_proteins: set[str] = set()
         day_carbs: set[str] = set()
-        current_main_proteins: set[str] = set()
         for meal in day.get("meals", []):
             slot = _normalize_slot(str(meal.get("slot") or ""))
             target = targets.get((date_iso, slot))
@@ -3252,9 +3250,8 @@ def _batch_week_recommendations(
                 _safe_float(target.get(name)) <= 0
                 or abs(_safe_float(macros.get(name)) - _safe_float(target.get(name))) / _safe_float(target.get(name))
                 <= 0.25
-                for name in ("kcal", "protein_g")
+                for name in _MACROS
             )
-            group_key = (slot, protein_group)
             invalid = (
                 slot not in SLOTS
                 or slot in slots
@@ -3267,12 +3264,8 @@ def _batch_week_recommendations(
                 or not macro_ok
                 or _text_violates_exclusions(f"{title} {json.dumps(ingredients)}", exclusions)
             )
-            if protein_group != "unknown" and protein_group_counts.get(group_key, 0) >= 2:
-                invalid = True
             if slot in _DAY_UNIQUE_SLOTS:
                 invalid = invalid or not protein or not carb or protein in day_proteins or carb in day_carbs
-                if previous_main_proteins and protein in previous_main_proteins:
-                    invalid = True
             if invalid:
                 rejected += 1
                 continue
@@ -3303,14 +3296,10 @@ def _batch_week_recommendations(
                 ai_idea=ai_idea,
             )
             week_titles.add(title_key)
-            if protein_group != "unknown":
-                protein_group_counts[group_key] = protein_group_counts.get(group_key, 0) + 1
             if slot in _DAY_UNIQUE_SLOTS:
                 day_proteins.add(protein)
                 day_carbs.add(carb)
-                current_main_proteins.add(protein)
         output[date_iso] = slots
-        previous_main_proteins = current_main_proteins
 
     meta = {
         "mode": "batch",
