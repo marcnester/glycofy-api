@@ -54,6 +54,9 @@
   const trainingDate = $('training_date'), trainingTime = $('training_time'), trainingSport = $('training_sport');
   const trainingDuration = $('training_duration'), trainingIntensity = $('training_intensity');
   const trainingPriority = $('training_priority'), trainingDistance = $('training_distance'), trainingNotes = $('training_notes');
+  const trainingCsvFile = $('training_csv_file'), trainingCsvPreview = $('training_csv_preview');
+  const trainingCsvImport = $('training_csv_import'), trainingCsvStatus = $('training_csv_status');
+  const trainingCsvResults = $('training_csv_results');
 
   // state
   let page = 1, pageSize = 10, total = 0;
@@ -211,6 +214,13 @@
 
     elCsv?.addEventListener('click',(e)=>{ e.preventDefault?.(); void downloadCSV(); });
     trainingForm?.addEventListener('submit', (e)=>{ e.preventDefault(); void addTrainingEvent(); });
+    trainingCsvPreview?.addEventListener('click', ()=>void submitTrainingCsv(false));
+    trainingCsvImport?.addEventListener('click', ()=>void submitTrainingCsv(true));
+    trainingCsvFile?.addEventListener('change', ()=>{
+      if(trainingCsvImport) trainingCsvImport.hidden=true;
+      if(trainingCsvResults) trainingCsvResults.replaceChildren();
+      if(trainingCsvStatus) trainingCsvStatus.textContent='';
+    });
     trainingList?.addEventListener('click', (e)=>{
       const button=e.target.closest('[data-delete-training]');
       if(button) void deleteTrainingEvent(button.dataset.deleteTraining);
@@ -255,9 +265,10 @@
         when.textContent=`${item.workout_date} · ${localTime}`;
         const details=document.createElement('span');
         details.textContent=`${item.sport} · ${item.duration_min} min · ${item.intensity}${item.priority==='key'?' · Key':''}`;
-        const source=document.createElement('span'); source.className='training-source'; source.textContent=item.source;
+        const source=document.createElement('span'); source.className='training-source';
+        source.textContent=item.source==='trainingpeaks_csv'?'TrainingPeaks CSV':item.source;
         main.append(when,details,source); row.appendChild(main);
-        if(item.source==='manual'){
+        if(item.source==='manual'||item.source==='trainingpeaks_csv'){
           const remove=document.createElement('button'); remove.type='button'; remove.className='training-delete';
           remove.dataset.deleteTraining=String(item.id); remove.textContent='Remove'; row.appendChild(remove);
         }
@@ -277,6 +288,45 @@
         trainingNotes.value=''; trainingDistance.value='';
         await loadTrainingEvents();
       }catch(e){ if(trainingNotice) trainingNotice.textContent=e?.message||'Could not add workout.'; }
+    }
+
+    async function submitTrainingCsv(confirm){
+      const file=trainingCsvFile?.files?.[0];
+      if(!file){ if(trainingCsvStatus) trainingCsvStatus.textContent='Choose a TrainingPeaks CSV file first.'; return; }
+      const button=confirm?trainingCsvImport:trainingCsvPreview;
+      if(button) button.disabled=true;
+      if(trainingCsvStatus) trainingCsvStatus.textContent=confirm?'Importing workouts…':'Checking file…';
+      try{
+        const form=new FormData(); form.append('file',file);
+        const response=await fetch(`/v1/training-events/import/trainingpeaks?confirm=${confirm?'true':'false'}`,{
+          method:'POST',credentials:'include',body:form
+        });
+        const data=await response.json().catch(()=>({}));
+        if(!response.ok) throw new Error(data.detail||`Import failed (${response.status})`);
+        if(trainingCsvResults){
+          trainingCsvResults.replaceChildren();
+          (data.preview||[]).slice(0,8).forEach(item=>{
+            const row=document.createElement('div'); row.className='training-import__item';
+            row.textContent=`${item.workout_date} · ${item.sport} · ${item.duration_min} min · ${item.intensity}`;
+            trainingCsvResults.appendChild(row);
+          });
+          (data.errors||[]).slice(0,5).forEach(message=>{
+            const row=document.createElement('div'); row.className='training-import__item'; row.textContent=message;
+            trainingCsvResults.appendChild(row);
+          });
+        }
+        if(confirm){
+          if(trainingCsvStatus) trainingCsvStatus.textContent=`Imported ${data.imported||0}, updated ${data.updated||0}, unchanged ${data.unchanged||0}. ${data.skipped_past||0} completed rows skipped.`;
+          if(trainingCsvImport) trainingCsvImport.hidden=true;
+          await loadTrainingEvents();
+        }else{
+          if(trainingCsvStatus) trainingCsvStatus.textContent=`Ready: ${data.valid} workout${data.valid===1?'':'s'} · ${data.invalid} invalid · ${data.skipped_past} completed rows skipped.`;
+          if(trainingCsvImport) trainingCsvImport.hidden=!data.valid;
+        }
+      }catch(error){
+        if(trainingCsvStatus) trainingCsvStatus.textContent=error?.message||'Could not read this CSV.';
+        if(trainingCsvImport) trainingCsvImport.hidden=true;
+      }finally{ if(button) button.disabled=false; }
     }
 
     async function deleteTrainingEvent(id){

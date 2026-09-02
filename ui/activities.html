@@ -34,6 +34,11 @@
     .training-row__main{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
     .training-source{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#9fb0c9}
     .training-delete{border:0;background:transparent;color:#ff9b96;cursor:pointer;font-weight:700}
+    .training-import{margin-top:18px;padding:16px;border:1px solid rgba(80,200,138,.2);border-radius:14px;background:rgba(80,200,138,.055)}
+    .training-import__controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+    .training-import input[type=file]{max-width:100%;color:#c5d4e8}
+    .training-import__preview{display:grid;gap:7px;margin-top:12px}
+    .training-import__item{padding:9px 11px;border-radius:9px;background:rgba(255,255,255,.04);font-size:13px}
     @media(max-width:900px){.training-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media(max-width:560px){.training-form{grid-template-columns:1fr}.training-form label{grid-column:auto!important}.training-row{align-items:flex-start}}
   </style>
@@ -107,9 +112,20 @@
       <div style="display:flex;justify-content:space-between;gap:18px;align-items:flex-start;flex-wrap:wrap">
         <div>
           <h2 style="margin:0 0 6px">Upcoming training</h2>
-          <p class="muted" style="margin:0">Add only the key sessions Glycofy should fuel. TrainingPeaks and Garmin will plug into this same timeline when available.</p>
+          <p class="muted" style="margin:0">Add key sessions manually or import your TrainingPeaks calendar below. Garmin and future integrations will use this same timeline.</p>
         </div>
         <span class="pill" id="planned_count">0 planned</span>
+      </div>
+      <div class="training-import">
+        <strong>Import a TrainingPeaks workout summary</strong>
+        <p class="muted" style="margin:5px 0 0">Export a Workout Summary CSV from TrainingPeaks. Glycofy previews current and future workouts and skips completed rows, which remain covered by Strava.</p>
+        <div class="training-import__controls">
+          <input id="training_csv_file" type="file" accept=".csv,text/csv">
+          <button id="training_csv_preview" class="btn btn--pill" type="button">Preview CSV</button>
+          <button id="training_csv_import" class="btn btn--pill" type="button" hidden>Import workouts</button>
+        </div>
+        <div id="training_csv_status" class="muted" role="status" style="margin-top:10px"></div>
+        <div id="training_csv_results" class="training-import__preview"></div>
       </div>
       <form id="training_form" class="training-form" style="margin-top:18px">
         <label>Date<input id="training_date" type="date" required></label>
@@ -206,6 +222,6 @@
   </main>
 
   <script src="/ui/core.js?v=2025-11-04"></script>
-  <script src="/ui/activities.js?v=2026-09-02-planned-training"></script>
+  <script src="/ui/activities.js?v=2026-09-02-trainingpeaks-csv"></script>
 </body>
 </html>
