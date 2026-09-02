@@ -238,14 +238,29 @@
   // ---- Strava status + actions ----
   async function renderStravaStatus() {
     const pill = $("#strava_status");
+    const detail = $("#strava_detail");
     const btnManage = $("#strava_manage");
     const btnReconnect = $("#strava_reconnect");
     const btnDisconnect = $("#strava_disconnect");
+    const disconnectDialog = $("#strava_disconnect_dialog");
+    const disconnectCancel = $("#strava_disconnect_cancel");
+    const disconnectConfirm = $("#strava_disconnect_confirm");
 
     function setState(kind, text) {
       if (!pill) return;
       pill.textContent = text;
       pill.className = "pill " + (kind === "ok" ? "pill--ok" : "pill--warn");
+    }
+
+    function showConnected(connected) {
+      if (btnManage) btnManage.style.display = connected ? "" : "none";
+      if (btnDisconnect) btnDisconnect.style.display = connected ? "" : "none";
+      if (btnReconnect) btnReconnect.style.display = connected ? "none" : "inline-flex";
+      if (detail) {
+        detail.textContent = connected
+          ? "Your activities sync automatically"
+          : "Connect to automatically import your activities";
+      }
     }
 
     // Truthy helpers
@@ -285,6 +300,7 @@
         });
         if (!res.ok) {
           setState("warn", "Not connected");
+          showConnected(false);
           return false;
         }
         let data = {};
@@ -294,15 +310,16 @@
         const ok = looksConnected(data);
         if (ok) {
           setState("ok", "Connected");
-          if (btnManage) btnManage.style.display = "";
-          if (btnDisconnect) btnDisconnect.style.display = "";
+          showConnected(true);
         } else {
           setState("warn", "Not connected");
+          showConnected(false);
         }
         return ok;
       } catch (e) {
         console.warn("status check failed", e);
         setState("warn", "Not connected");
+        showConnected(false);
         return false;
       }
     }
@@ -326,18 +343,26 @@
       window.location.href = `/oauth/strava/start?return=${ret}`;
     });
 
-    btnManage?.addEventListener("click", () => {
-      window.open("https://www.strava.com/settings/apps", "_blank", "noopener,noreferrer");
+    btnDisconnect?.addEventListener("click", () => disconnectDialog?.showModal());
+    disconnectCancel?.addEventListener("click", () => disconnectDialog?.close());
+    disconnectDialog?.addEventListener("click", (event) => {
+      if (event.target === disconnectDialog) disconnectDialog.close();
     });
 
-    btnDisconnect?.addEventListener("click", async () => {
+    disconnectConfirm?.addEventListener("click", async () => {
+      disconnectConfirm.disabled = true;
+      disconnectConfirm.textContent = "Disconnecting…";
       try {
         const response = await fetch("/oauth/strava/disconnect", { method: "POST", credentials: "include" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        disconnectDialog?.close();
         flash("Disconnected Strava");
         setTimeout(() => renderStravaStatus(), 250);
       } catch {
         flash("Failed to disconnect Strava", "error");
+      } finally {
+        disconnectConfirm.disabled = false;
+        disconnectConfirm.textContent = "Disconnect";
       }
     });
   }

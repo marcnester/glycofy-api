@@ -68,6 +68,13 @@ def test_profile_uses_official_strava_connect_asset(client: TestClient):
     response = client.get("/ui/profile.html")
     assert response.status_code == 200
     assert 'alt="Connect with Strava"' in response.text
+    assert 'id="strava_reconnect"' in response.text
+    assert (
+        'id="strava_reconnect" class="strava-connect" aria-label="Connect with Strava" style="display:none"'
+        in response.text
+    )
+    assert "Manage on Strava" in response.text
+    assert 'id="strava_disconnect_dialog"' in response.text
     assert Path("ui/assets/connect-with-strava.png").read_bytes().startswith(b"\x89PNG")
 
 
