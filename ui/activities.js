@@ -52,6 +52,7 @@
   const elCsv = $('dl_csv') || pick('[data-download="csv"]','a[href="#csv"]','a[href="#CSV"]','a[href$="activities.csv"]');
   const trainingForm = $('training_form'), trainingList = $('training_list'), trainingNotice = $('training_notice');
   const trainingDate = $('training_date'), trainingTime = $('training_time'), trainingSport = $('training_sport');
+  const trainingDatePicker = $('training_date_picker');
   const trainingDuration = $('training_duration'), trainingIntensity = $('training_intensity');
   const trainingPriority = $('training_priority'), trainingDistance = $('training_distance'), trainingNotes = $('training_notes');
   const trainingCsvFile = $('training_csv_file'), trainingCsvPreview = $('training_csv_preview');
@@ -214,6 +215,12 @@
 
     elCsv?.addEventListener('click',(e)=>{ e.preventDefault?.(); void downloadCSV(); });
     trainingForm?.addEventListener('submit', (e)=>{ e.preventDefault(); void addTrainingEvent(); });
+    const openTrainingCalendar=()=>{
+      try{ if(typeof trainingDate?.showPicker==='function') trainingDate.showPicker(); else trainingDate?.focus(); }
+      catch{ trainingDate?.focus(); }
+    };
+    trainingDate?.addEventListener('click', openTrainingCalendar);
+    trainingDatePicker?.addEventListener('click', openTrainingCalendar);
     trainingCsvPreview?.addEventListener('click', ()=>void submitTrainingCsv(false));
     trainingCsvImport?.addEventListener('click', ()=>void submitTrainingCsv(true));
     trainingCsvFile?.addEventListener('change', ()=>{
