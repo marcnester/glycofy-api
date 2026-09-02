@@ -142,8 +142,20 @@
         <label>Start<input id="training_time" type="time"></label>
         <label>Sport
           <select id="training_sport" required>
-            <option value="Ride">Ride</option><option value="Run">Run</option><option value="Swim">Swim</option>
-            <option value="Strength">Strength</option><option value="Walk/Hike">Walk/Hike</option><option value="Other">Other</option>
+            <optgroup label="Endurance">
+              <option value="Run">Running</option><option value="Ride">Cycling</option><option value="Swim">Swimming</option>
+              <option value="Rowing">Rowing</option><option value="SkiErg">SkiErg</option>
+            </optgroup>
+            <optgroup label="HYROX &amp; hybrid">
+              <option value="HYROX">HYROX</option><option value="HIIT">HIIT</option>
+              <option value="Functional Fitness">Functional fitness</option><option value="CrossFit">CrossFit</option>
+              <option value="Strength">Strength training</option>
+            </optgroup>
+            <optgroup label="Cardio &amp; outdoor">
+              <option value="Walk">Walking</option><option value="Hike">Hiking</option>
+              <option value="Elliptical">Elliptical</option><option value="Stair Climber">Stair climber</option>
+              <option value="Other">Other</option>
+            </optgroup>
           </select>
         </label>
         <label>Minutes<input id="training_duration" type="number" min="10" max="1440" step="5" value="60" required></label>

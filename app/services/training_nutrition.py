@@ -88,11 +88,13 @@ def _activity_distance_m(activity: Activity) -> float:
 
 def _estimated_met(sport: str) -> float:
     normalized = (sport or "").strip().lower()
+    if any(token in normalized for token in ("hyrox", "hiit", "crossfit", "functional fitness")):
+        return 8.5
     if any(token in normalized for token in ("run", "ride", "cycling", "bike", "triathlon")):
         return 8.0
-    if "swim" in normalized:
+    if any(token in normalized for token in ("swim", "row", "ski erg", "skierg")):
         return 7.0
-    if any(token in normalized for token in ("walk", "hike")):
+    if any(token in normalized for token in ("walk", "hike", "elliptical", "stair")):
         return 5.0
     if any(token in normalized for token in ("weight", "strength", "crossfit")):
         return 6.0

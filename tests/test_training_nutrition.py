@@ -86,6 +86,22 @@ def test_duration_s_and_distance_support_estimate_when_strava_has_no_calories():
     assert result.adjustment.carbs_g > 0
 
 
+def test_hyrox_sports_receive_vigorous_fallback_energy_estimates():
+    workout = SimpleNamespace(
+        kcal=None,
+        duration_s=3600,
+        distance_m=0,
+        sport="HYROX",
+        source_provider="strava",
+        start_time=datetime(2026, 7, 24, 8),
+    )
+
+    result = calculate_from_activities(baseline=BASELINE, user=_user(), activities=[workout])
+
+    assert result.training.exercise_kcal == 595
+    assert result.training.confidence == "low"
+
+
 def test_database_window_ignores_activity_older_than_48_hours():
     engine = create_engine(
         "sqlite://",
