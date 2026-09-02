@@ -546,6 +546,7 @@ def _top_k_candidates(
     disallowed_protein_groups: set[str] | None = None,  # weekly cap
     disallowed_protein_items: set[str] | None = None,  # day-level variety
     disallowed_carb_items: set[str] | None = None,  # day-level variety
+    disallowed_meal_keys: set[str] | None = None,  # semantic weekly uniqueness
     ingredient_exclusions: list[str] | None = None,
 ) -> list[tuple[Recipe, dict[str, float], float]]:
     q = db.query(Recipe).filter(Recipe.meal_type == slot)
@@ -577,6 +578,17 @@ def _top_k_candidates(
         items = [r for r in items if int(getattr(r, "id", -1)) not in exclude_set]
         logger.info(
             "LLM top_k_candidates: slot=%s excluded_used_ids=%d remaining=%d",
+            slot,
+            before - len(items),
+            len(items),
+        )
+
+    banned_meals = {key for key in (disallowed_meal_keys or set()) if key}
+    if banned_meals:
+        before = len(items)
+        items = [r for r in items if _meal_similarity_key(getattr(r, "title", None)) not in banned_meals]
+        logger.info(
+            "LLM top_k_candidates: slot=%s excluded_used_meal_keys=%d remaining=%d",
             slot,
             before - len(items),
             len(items),
@@ -645,6 +657,19 @@ def _top_k_candidates(
             slot,
             diet_tags or [],
             primary_diet,
+        )
+
+    # Rank only recipes that can actually be cooked. Filtering after slicing
+    # the top K can otherwise hide valid measured recipes ranked just below a
+    # cluster of incomplete legacy rows and incorrectly force an AI call.
+    before_quantities = len(items)
+    items = [recipe for recipe in items if _recipe_has_quantified_ingredients(recipe)]
+    if before_quantities != len(items):
+        logger.info(
+            "LLM top_k_candidates: slot=%s removed_unquantified=%d remaining=%d",
+            slot,
+            before_quantities - len(items),
+            len(items),
         )
 
     scored: list[tuple[Recipe, dict[str, float], float]] = []
@@ -1456,6 +1481,209 @@ def _meal_similarity_key(title: str | None) -> str:
     return " ".join(sorted(core))
 
 
+_FALLBACK_PROTEINS: dict[str, tuple[str, ...]] = {
+    "vegan": (
+        "tofu",
+        "tempeh",
+        "lentils",
+        "chickpeas",
+        "black beans",
+        "kidney beans",
+        "white beans",
+        "split peas",
+        "pea protein",
+        "pumpkin seeds",
+        "hemp seeds",
+        "edamame",
+        "seitan",
+    ),
+    "vegetarian": (
+        "eggs",
+        "greek yogurt",
+        "cottage cheese",
+        "tofu",
+        "tempeh",
+        "lentils",
+        "chickpeas",
+        "black beans",
+        "kidney beans",
+        "white beans",
+        "split peas",
+        "pea protein",
+        "pumpkin seeds",
+        "hemp seeds",
+        "edamame",
+        "seitan",
+    ),
+    "pescatarian": (
+        "salmon",
+        "tuna",
+        "shrimp",
+        "cod",
+        "eggs",
+        "greek yogurt",
+        "cottage cheese",
+        "tofu",
+        "tempeh",
+        "lentils",
+        "chickpeas",
+        "black beans",
+        "kidney beans",
+        "white beans",
+        "split peas",
+        "pea protein",
+        "pumpkin seeds",
+        "hemp seeds",
+        "edamame",
+        "seitan",
+    ),
+    "omnivore": (
+        "chicken",
+        "turkey",
+        "salmon",
+        "tuna",
+        "shrimp",
+        "cod",
+        "eggs",
+        "greek yogurt",
+        "cottage cheese",
+        "tofu",
+        "tempeh",
+        "lentils",
+        "chickpeas",
+        "black beans",
+        "kidney beans",
+        "white beans",
+        "split peas",
+        "pea protein",
+        "pumpkin seeds",
+        "hemp seeds",
+        "edamame",
+        "seitan",
+        "beef",
+        "pork",
+    ),
+}
+_FALLBACK_CARBS: tuple[str, ...] = (
+    "oats",
+    "quinoa",
+    "rice",
+    "sweet potato",
+    "potato",
+    "corn",
+    "buckwheat",
+    "millet",
+    "plantain",
+    "pasta",
+    "bread",
+    "couscous",
+)
+
+
+def _fallback_protein_group(protein: str) -> str:
+    if protein in {"salmon", "tuna", "shrimp", "cod"}:
+        return "fish"
+    if protein in {"chicken", "turkey"}:
+        return "poultry"
+    if protein == "beef":
+        return "beef"
+    if protein == "pork":
+        return "pork"
+    if protein == "eggs":
+        return "eggs"
+    if protein in {"greek yogurt", "cottage cheese"}:
+        return "dairy"
+    return "plant"
+
+
+def _fallback_amount(protein: str) -> tuple[str, str]:
+    if protein == "eggs":
+        return "3", "items"
+    if protein == "pea protein":
+        return "1", "scoop"
+    if protein in {"pumpkin seeds", "hemp seeds"}:
+        return "1/2", "cup"
+    if protein in {
+        "greek yogurt",
+        "cottage cheese",
+        "lentils",
+        "chickpeas",
+        "black beans",
+        "kidney beans",
+        "white beans",
+        "split peas",
+        "edamame",
+    }:
+        return "1", "cup"
+    return "6", "oz"
+
+
+def _fallback_carb_amount(carb: str) -> tuple[str, str]:
+    if carb in {"sweet potato", "potato", "plantain"}:
+        return "8", "oz"
+    if carb == "bread":
+        return "2", "slices"
+    if carb == "oats":
+        return "3/4", "cup"
+    return "1", "cup"
+
+
+def _deterministic_fallback_idea(
+    *,
+    slot: str,
+    tgt: MealTarget,
+    primary_diet: str,
+    ingredient_exclusions: list[str],
+    used_protein_items: set[str],
+    used_carb_items: set[str],
+    used_meal_keys: set[str],
+    banned_protein_groups: set[str],
+) -> dict[str, Any] | None:
+    """Build a measured, preference-safe meal when the AI provider is unavailable."""
+    diet = primary_diet if primary_diet in _FALLBACK_PROTEINS else "omnivore"
+    for protein in _FALLBACK_PROTEINS[diet]:
+        protein_group = _fallback_protein_group(protein)
+        if protein in used_protein_items or protein_group in banned_protein_groups:
+            continue
+        for carb in _FALLBACK_CARBS:
+            if carb in used_carb_items:
+                continue
+            title = f"{protein.title()} and {carb.title()} {slot.title()}"
+            if _meal_similarity_key(title) in used_meal_keys:
+                continue
+            protein_amount, protein_unit = _fallback_amount(protein)
+            carb_amount, carb_unit = _fallback_carb_amount(carb)
+            ingredients = [
+                {"name": protein, "amount": protein_amount, "unit": protein_unit},
+                {"name": carb, "amount": carb_amount, "unit": carb_unit},
+                {"name": "spinach", "amount": "2", "unit": "cups"},
+                {"name": "cherry tomatoes", "amount": "1", "unit": "cup"},
+                {"name": "olive oil", "amount": "1", "unit": "tbsp"},
+            ]
+            searchable = f"{title} {json.dumps(ingredients)}"
+            if _text_violates_exclusions(searchable, ingredient_exclusions):
+                continue
+            return {
+                "title": title,
+                "description": "A reliable measured meal selected from Glycofy's offline fallback library.",
+                "ingredients": ingredients,
+                "instructions": [
+                    f"Cook the {carb} and prepare the {protein} until safely done.",
+                    "Combine with the vegetables and olive oil, then season to taste.",
+                ],
+                "protein_group": protein_group,
+                "protein_item": protein,
+                "carb_item": carb.replace(" ", "_"),
+                "approx_macros": {
+                    "kcal": round(tgt.kcal),
+                    "protein_g": round(tgt.protein_g),
+                    "carbs_g": round(tgt.carbs_g),
+                    "fat_g": round(tgt.fat_g),
+                },
+            }
+    return None
+
+
 def _llm_pick_or_create(
     client: ClientType,
     slot: str,
@@ -1487,14 +1715,10 @@ def _llm_pick_or_create(
     banned_groups = {pg.strip().lower() for pg in (banned_protein_groups or set()) if pg.strip()}
 
     # Ingredient exclusions from preferences
-    ingredient_exclusions: list[str] = []
-    if user_pref:
-        excl = getattr(user_pref, "ingredient_exclusions", None)
-        if excl:
-            if isinstance(excl, str):
-                ingredient_exclusions = [x.strip() for x in excl.split(",") if x.strip()]
-            elif isinstance(excl, list):
-                ingredient_exclusions = [str(x).strip() for x in excl if str(x).strip()]
+    # Use the same merged custom + structured allergy exclusions as catalog
+    # filtering. AI-created and deterministic fallback meals must never have a
+    # weaker safety policy than catalog picks.
+    ingredient_exclusions = _preference_exclusions(user_pref)
 
     model = _openai_model()
 
@@ -1621,6 +1845,26 @@ def _llm_pick_or_create(
         if best_r is not None:
             meta.setdefault("mode", "pick")
             return "pick", best_r, best_deltas, "default: lowest macro delta", meta, None
+        fallback_idea = _deterministic_fallback_idea(
+            slot=slot_norm,
+            tgt=tgt,
+            primary_diet=primary_diet,
+            ingredient_exclusions=ingredient_exclusions,
+            used_protein_items=used_protein_set,
+            used_carb_items=used_carb_set,
+            used_meal_keys=used_meal_keys or set(),
+            banned_protein_groups=banned_groups,
+        )
+        if fallback_idea is not None:
+            meta.update({"mode": "create", "fallback": "deterministic_library"})
+            return (
+                "create",
+                None,
+                None,
+                "Reliable offline meal selected while AI generation was unavailable.",
+                meta,
+                fallback_idea,
+            )
         meta.setdefault("mode", "empty")
         return "empty", None, None, "No recipes or AI ideas available.", meta, None
 
@@ -2195,6 +2439,7 @@ def _recommend_for_single_meal(
         disallowed_protein_groups=banned_groups_week or None,
         disallowed_protein_items=banned_protein_items_day or None,
         disallowed_carb_items=banned_carb_items_day or None,
+        disallowed_meal_keys=used_meal_keys,
         ingredient_exclusions=ingredient_exclusions,
     )
     # Legacy catalog rows may contain only bare ingredient names. Selecting
@@ -2226,6 +2471,7 @@ def _recommend_for_single_meal(
             disallowed_protein_groups=None,
             disallowed_protein_items=banned_protein_items_day or None,
             disallowed_carb_items=banned_carb_items_day or None,
+            disallowed_meal_keys=used_meal_keys,
             ingredient_exclusions=ingredient_exclusions,
         )
         candidates = [candidate for candidate in candidates if _recipe_has_quantified_ingredients(candidate[0])]
@@ -2398,6 +2644,22 @@ def _missing_recommendation_slots(items: list[SlotRecommendation]) -> list[str]:
 
 
 _LEADING_QUANTITY_RE = re.compile(r"^\s*(?:\d|[¼½¾⅓⅔⅛⅜⅝⅞])")
+_UNQUANTIFIED_PANTRY_MARKERS = {
+    "cooking oil",
+    "fresh herbs",
+    "herbs",
+    "oil",
+    "pepper",
+    "salt",
+    "water",
+}
+
+
+def _is_unquantified_pantry_item(name: str) -> bool:
+    """Allow conventional pantry-to-taste items without weakening core quantities."""
+    normalized = re.sub(r"[^a-z ]", " ", (name or "").lower())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return any(re.search(rf"\b{re.escape(marker)}\b", normalized) for marker in _UNQUANTIFIED_PANTRY_MARKERS)
 
 
 def _ingredients_have_quantities(ingredients: Any) -> bool:
@@ -2409,12 +2671,21 @@ def _ingredients_have_quantities(ingredients: Any) -> bool:
             name = str(ingredient.get("name") or ingredient.get("ingredient") or "").strip()
             amount = str(ingredient.get("amount") or ingredient.get("qty") or ingredient.get("quantity") or "").strip()
             unit = str(ingredient.get("unit") or "").strip()
-            if not name or not amount or not unit:
+            if not name:
                 return False
+            # Older catalog rows store the full measured ingredient in `name`
+            # (for example, "1 cup cooked quinoa"). Treat that as quantified.
+            if _LEADING_QUANTITY_RE.match(name):
+                continue
+            if amount and unit:
+                continue
+            if _is_unquantified_pantry_item(name):
+                continue
+            return False
         elif isinstance(ingredient, str):
             # Retain compatibility with catalog-style strings such as
             # "1 cup Greek yogurt", while rejecting bare names like "spinach".
-            if not _LEADING_QUANTITY_RE.match(ingredient):
+            if not _LEADING_QUANTITY_RE.match(ingredient) and not _is_unquantified_pantry_item(ingredient):
                 return False
         else:
             return False
@@ -2894,6 +3165,8 @@ def recommend_weekly_apply(
         used_protein_items: list[str] = list(dict.fromkeys(rolling_protein_items[-8:]))
 
         used_carb_items: list[str] = list(dict.fromkeys(rolling_carb_items[-8:]))
+        prior_protein_count = len(used_protein_items)
+        prior_carb_count = len(used_carb_items)
 
         day_items: list[SlotRecommendation] = []
 
@@ -2981,6 +3254,12 @@ def recommend_weekly_apply(
                 "items": [it.model_dump() for it in day_items],
             }
         )
+
+        # Carry this day's selected protein/carb identities into the next day.
+        # This makes the rolling history real rather than resetting it for
+        # every day, preventing adjacent-day repetition in main meals.
+        rolling_protein_items = list(dict.fromkeys(used_protein_items[prior_protein_count:]))
+        rolling_carb_items = list(dict.fromkeys(used_carb_items[prior_carb_count:]))
 
         # ✅ Persist this day into plans/plan_meals
         persist_summaries.append(

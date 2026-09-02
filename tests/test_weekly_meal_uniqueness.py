@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import MagicMock
 
 from sqlalchemy import create_engine
@@ -176,6 +176,17 @@ def test_generated_ingredients_require_amounts_and_units():
     assert not llm_recommend._ingredients_have_quantities([{"name": "spinach", "amount": "2", "unit": ""}])
 
 
+def test_catalog_quantities_embedded_in_names_and_pantry_items_are_cookable():
+    assert llm_recommend._ingredients_have_quantities(
+        [
+            {"name": "1 cup cooked quinoa"},
+            {"name": "6 oz salmon"},
+            {"name": "Salt and pepper to taste"},
+        ]
+    )
+    assert not llm_recommend._ingredients_have_quantities([{"name": "quinoa"}, {"name": "salmon"}])
+
+
 def test_weekly_fast_path_uses_complete_catalog_recipe_without_llm(monkeypatch):
     recipe = MagicMock()
     recipe.id = 9
@@ -253,6 +264,34 @@ def test_structured_allergens_are_merged_with_custom_exclusions():
     assert llm_recommend._text_violates_exclusions("2 tbsp tahini", exclusions)
     assert llm_recommend._text_violates_exclusions("1 oz almonds", exclusions)
     assert llm_recommend._text_violates_exclusions("1 cup mushrooms", exclusions)
+
+
+def test_offline_fallback_respects_structured_allergies():
+    pref = MagicMock()
+    pref.ingredient_exclusions = ""
+    pref.allergies = ["soy", "wheat", "sesame", "tree_nuts"]
+
+    mode, recipe, _deltas, _reason, meta, idea = llm_recommend._llm_pick_or_create(
+        client=None,
+        slot="dinner",
+        tgt=llm_recommend.MealTarget(slot="dinner", kcal=700, protein_g=50, carbs_g=75, fat_g=20),
+        candidates=[],
+        date="2026-09-09",
+        diet_tags=["vegan"],
+        primary_diet="vegan",
+        user_pref=pref,
+        used_protein_items=[],
+        used_carb_items=[],
+        used_recipe_ids=set(),
+        used_meal_keys=set(),
+        allow_new_recipe=True,
+    )
+
+    assert mode == "create"
+    assert recipe is None
+    assert idea is not None
+    assert meta["fallback"] == "deterministic_library"
+    assert not llm_recommend._text_violates_exclusions(str(idea), pref.allergies)
 
 
 def test_weekly_persistence_saves_ai_reason(monkeypatch):
@@ -407,3 +446,113 @@ def test_missing_slot_detection_covers_snacks_and_main_meals():
     ]
 
     assert llm_recommend._missing_recommendation_slots(items) == ["snack"]
+
+
+def test_weekly_generation_carries_protein_history_into_the_next_day(monkeypatch):
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    breakfast_history: list[tuple[str, list[str]]] = []
+    recommendation_number = 0
+
+    def fake_recommendation(**kwargs):
+        nonlocal recommendation_number
+        recommendation_number += 1
+        slot = kwargs["tgt"].slot
+        if slot == "breakfast":
+            breakfast_history.append((kwargs["date"], list(kwargs["used_protein_items"])))
+        protein = f"protein-{recommendation_number}"
+        carb = f"carb-{recommendation_number}"
+        kwargs["used_protein_items"].append(protein)
+        kwargs["used_carb_items"].append(carb)
+        return llm_recommend.SlotRecommendation(
+            slot=slot,
+            target={},
+            ai_idea={
+                "title": f"Unique meal {recommendation_number}",
+                "ingredients": [{"name": "food", "amount": "1", "unit": "cup"}],
+                "instructions": ["Cook."],
+                "approx_macros": {"kcal": 500, "protein_g": 40, "carbs_g": 50, "fat_g": 15},
+                "protein_group": "plant",
+                "protein_item": protein,
+                "carb_item": carb,
+            },
+            meta={"mode": "create", "protein_group": "plant", "protein_item": protein, "carb_item": carb},
+        )
+
+    monkeypatch.setattr(llm_recommend, "_recommend_for_single_meal", fake_recommendation)
+    monkeypatch.setattr(
+        llm_recommend,
+        "_persist_day_recommendations",
+        lambda **kwargs: {"date": kwargs["day_iso"], "skipped": False, "applied": 4, "created_recipes": 0},
+    )
+
+    with Session(engine) as db:
+        user = User(email="rolling@example.com", password_hash="test")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        meals = [
+            llm_recommend.MealTarget(slot=slot, kcal=500, protein_g=40, carbs_g=50, fat_g=15)
+            for slot in llm_recommend.SLOTS
+        ]
+        payload = llm_recommend.WeeklyRecommendRequest(
+            days=[
+                llm_recommend.WeeklyDayRequest(
+                    date=(date(2026, 9, 7) + timedelta(days=offset)).isoformat(),
+                    meals=meals,
+                )
+                for offset in range(3)
+            ]
+        )
+        request = MagicMock()
+        request.client.host = "127.0.0.1"
+        llm_recommend.recommend_weekly_apply(request, payload, db, user)
+
+    assert breakfast_history[0][1] == []
+    assert breakfast_history[1][1] == ["protein-1", "protein-2", "protein-3", "protein-4"]
+    assert breakfast_history[2][1] == ["protein-5", "protein-6", "protein-7", "protein-8"]
+
+
+def test_weekly_generation_is_complete_and_unique_without_ai(monkeypatch):
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(llm_recommend, "_get_openai_client", lambda: None)
+
+    with Session(engine) as db:
+        user = User(email="offline-week@example.com", password_hash="test")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        targets = [
+            llm_recommend.MealTarget(slot=slot, kcal=500, protein_g=40, carbs_g=50, fat_g=15)
+            for slot in llm_recommend.SLOTS
+        ]
+        payload = llm_recommend.WeeklyRecommendRequest(
+            days=[
+                llm_recommend.WeeklyDayRequest(
+                    date=(date(2026, 9, 7) + timedelta(days=offset)).isoformat(),
+                    meals=targets,
+                )
+                for offset in range(7)
+            ]
+        )
+        request = MagicMock()
+        request.client.host = "127.0.0.1"
+        response = llm_recommend.recommend_weekly_apply(request, payload, db, user)
+
+    assert len(response["days"]) == 7
+    assert all(len(day["items"]) == 4 for day in response["days"])
+    titles = [(item.get("recipe") or item.get("ai_idea"))["title"] for day in response["days"] for item in day["items"]]
+    assert len(set(titles)) == 28
+    for previous, current in zip(response["days"], response["days"][1:], strict=False):
+        previous_proteins = {item["meta"]["protein_item"] for item in previous["items"] if item["slot"] != "snack"}
+        current_proteins = {item["meta"]["protein_item"] for item in current["items"] if item["slot"] != "snack"}
+        assert previous_proteins.isdisjoint(current_proteins)
