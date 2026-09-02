@@ -56,6 +56,13 @@ def test_dev_recipe_routes_are_not_mounted(client: TestClient):
     assert response.status_code == 404
 
 
+def test_login_page_does_not_expose_demo_credentials(client: TestClient):
+    response = client.get("/ui/login.html")
+    assert response.status_code == 200
+    assert "demo credentials" not in response.text.lower()
+    assert "demo@glycofy.app" not in response.text.lower()
+
+
 def test_cross_origin_mutation_is_rejected(client: TestClient):
     response = client.post("/auth/logout", headers={"Origin": "https://attacker.example"})
     assert response.status_code == 403

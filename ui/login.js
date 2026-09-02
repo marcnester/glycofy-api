@@ -105,16 +105,6 @@
       }
     } catch {}
 
-    const demo = $("demo");
-    if (demo) {
-      demo.addEventListener("click", (e) => {
-        e.preventDefault();
-        $("email").value = "demo@glycofy.app";
-        $("password").value = "Demo1234!";
-        flash("Demo credentials filled. Click “Sign in”.");
-      });
-    }
-
     await wireGoogle();
 
     const form = $("login-form"); const submitBtn = $("submitBtn");
