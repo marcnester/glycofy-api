@@ -58,6 +58,11 @@
   const trainingCsvFile = $('training_csv_file'), trainingCsvPreview = $('training_csv_preview');
   const trainingCsvImport = $('training_csv_import'), trainingCsvStatus = $('training_csv_status');
   const trainingCsvResults = $('training_csv_results');
+  const coverageCard = $('coverage_card'), coverageTitle = $('coverage_title'), coverageDetails = $('coverage_details');
+  const coverageRecent = $('coverage_recent'), coverageUpcoming = $('coverage_upcoming');
+  const addTrainingToggle = $('add_training_toggle'), addTrainingPanel = $('add_training_panel');
+  const addTrainingChoices = $('add_training_choices'), manualTrainingPanel = $('manual_training_panel');
+  const importTrainingPanel = $('import_training_panel');
 
   // state
   let page = 1, pageSize = 10, total = 0;
@@ -201,6 +206,31 @@
     if (trainingDate && !trainingDate.value) trainingDate.value = todayISO(new Date(Date.now() + 86400000));
 
     // wire
+    function selectTrainingTab(name){
+      document.querySelectorAll('[data-training-tab]').forEach(tab=>{
+        const active=tab.dataset.trainingTab===name; tab.setAttribute('aria-selected',String(active));
+      });
+      document.querySelectorAll('.training-panel').forEach(panel=>{ panel.hidden=panel.id!==`panel-${name}`; });
+    }
+    function showAddTraining(mode){
+      if(!addTrainingPanel) return;
+      addTrainingPanel.hidden=false; addTrainingToggle?.setAttribute('aria-expanded','true');
+      if(addTrainingChoices) addTrainingChoices.hidden=!!mode;
+      if(manualTrainingPanel) manualTrainingPanel.hidden=mode!=='manual';
+      if(importTrainingPanel) importTrainingPanel.hidden=mode!=='import';
+      addTrainingPanel.scrollIntoView?.({behavior:'smooth',block:'nearest'});
+    }
+    function closeAddTraining(){
+      if(addTrainingPanel) addTrainingPanel.hidden=true;
+      addTrainingToggle?.setAttribute('aria-expanded','false');
+    }
+    document.querySelectorAll('[data-training-tab]').forEach(tab=>tab.addEventListener('click',()=>selectTrainingTab(tab.dataset.trainingTab)));
+    addTrainingToggle?.addEventListener('click',()=>addTrainingPanel?.hidden?showAddTraining():closeAddTraining());
+    $('add_training_close')?.addEventListener('click',closeAddTraining);
+    $('choose_manual')?.addEventListener('click',()=>showAddTraining('manual'));
+    $('choose_import')?.addEventListener('click',()=>showAddTraining('import'));
+    document.querySelectorAll('.add-choice-back').forEach(button=>button.addEventListener('click',()=>showAddTraining()));
+    $('open_import_from_connections')?.addEventListener('click',()=>{selectTrainingTab('upcoming');showAddTraining('import');});
     elPrev?.addEventListener('click', ()=>{ if(page>1){ page--; void loadPage(); } });
     elNext?.addEventListener('click', ()=>{ page++; void loadPage(); });
     elPs?.addEventListener('change', ()=>{ pageSize=Math.max(1,Math.min(API_MAX,Number(elPs.value)||10)); page=1; void loadPage(); });
@@ -236,7 +266,7 @@
       try{ core.setToken?.(null); document.cookie='glyco_auth=; Max-Age=0; path=/; SameSite=Lax;'; }catch{} window.location.href='/ui/login.html';
     });
 
-    await Promise.all([loadPage(), loadSummary(), refreshStravaBadge(), loadTrainingEvents()]);
+    await Promise.all([loadPage(), loadSummary(), refreshStravaBadge(), loadTrainingEvents(), loadCoverage()]);
     setTimeout(refreshStravaBadge, 300);
 
     async function loadPage(){
@@ -256,20 +286,42 @@
         const from=todayISO(), end=new Date(); end.setDate(end.getDate()+30);
         const data=await fetchJSON(`/v1/training-events?from=${from}&to=${todayISO(end)}`);
         renderTrainingEvents(data.items||[]);
-        if(trainingNotice) trainingNotice.textContent=(data.items||[]).length?'These sessions will shape AI fueling targets.':'No upcoming workouts yet.';
+        if(trainingNotice) trainingNotice.textContent='';
       }catch(e){ if(trainingNotice) trainingNotice.textContent=e?.message||'Could not load upcoming workouts.'; }
+    }
+
+    async function loadCoverage(){
+      try{
+        const data=await fetchJSON(`/v1/training-events/context/${todayISO()}?days=7`);
+        if(coverageTitle) coverageTitle.textContent=data.title;
+        if(coverageDetails) coverageDetails.textContent=data.message;
+        if(coverageRecent) coverageRecent.textContent=String(data.recent_completed||0);
+        if(coverageUpcoming) coverageUpcoming.textContent=String(data.upcoming_planned||0);
+        coverageCard?.classList.toggle('warning',data.state!=='complete');
+      }catch{
+        if(coverageTitle) coverageTitle.textContent='Training coverage unavailable';
+        if(coverageDetails) coverageDetails.textContent='Your training data could not be checked. Try refreshing this page.';
+      }
     }
 
     function renderTrainingEvents(items){
       if(!trainingList) return;
       trainingList.replaceChildren();
       const count=$('planned_count'); if(count) count.textContent=`${items.length} planned`;
+      if(!items.length){
+        const empty=document.createElement('div'); empty.className='empty-training';
+        const title=document.createElement('strong'); title.textContent='Your upcoming calendar is open';
+        const text=document.createElement('div'); text.textContent='Add a key workout or import TrainingPeaks so Glycofy can anticipate your fueling needs.'; text.style.marginTop='7px';
+        empty.append(title,text); trainingList.appendChild(empty); return;
+      }
       items.forEach(item=>{
         const row=document.createElement('div'); row.className='training-row';
         const main=document.createElement('div'); main.className='training-row__main';
         const when=document.createElement('strong');
         const localTime=item.start_time?new Date(item.start_time).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'Time flexible';
-        when.textContent=`${item.workout_date} · ${localTime}`;
+        const workoutDay=new Date(`${item.workout_date}T12:00:00`);
+        const friendly=workoutDay.toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'});
+        when.textContent=`${friendly} · ${localTime}`;
         const details=document.createElement('span');
         details.textContent=`${item.sport} · ${item.duration_min} min · ${item.intensity}${item.priority==='key'?' · Key':''}`;
         const source=document.createElement('span'); source.className='training-source';
@@ -293,7 +345,8 @@
         if(trainingNotice) trainingNotice.textContent='Adding workout…';
         await fetchJSON('/v1/training-events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
         trainingNotes.value=''; trainingDistance.value='';
-        await loadTrainingEvents();
+        closeAddTraining();
+        await Promise.all([loadTrainingEvents(),loadCoverage()]);
       }catch(e){ if(trainingNotice) trainingNotice.textContent=e?.message||'Could not add workout.'; }
     }
 
@@ -325,7 +378,7 @@
         if(confirm){
           if(trainingCsvStatus) trainingCsvStatus.textContent=`Imported ${data.imported||0}, updated ${data.updated||0}, unchanged ${data.unchanged||0}. ${data.skipped_past||0} completed rows skipped.`;
           if(trainingCsvImport) trainingCsvImport.hidden=true;
-          await loadTrainingEvents();
+          await Promise.all([loadTrainingEvents(),loadCoverage()]);
         }else{
           if(trainingCsvStatus) trainingCsvStatus.textContent=`Ready: ${data.valid} workout${data.valid===1?'':'s'} · ${data.invalid} invalid · ${data.skipped_past} completed rows skipped.`;
           if(trainingCsvImport) trainingCsvImport.hidden=!data.valid;
@@ -339,7 +392,7 @@
     async function deleteTrainingEvent(id){
       try{
         await fetchJSON(`/v1/training-events/${encodeURIComponent(id)}`,{method:'DELETE'});
-        await loadTrainingEvents();
+        await Promise.all([loadTrainingEvents(),loadCoverage()]);
       }catch(e){ if(trainingNotice) trainingNotice.textContent=e?.message||'Could not remove workout.'; }
     }
 
