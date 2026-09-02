@@ -2499,14 +2499,22 @@ def _recommend_for_single_meal(
     result = None
     if prefer_fast_catalog and candidates:
         picked, deltas, _score = candidates[0]
-        result = (
-            "pick",
-            picked,
-            deltas,
-            "Best complete recipe match for your meal targets, diet, and weekly variety.",
-            {"provider": "catalog", "mode": "pick", "fast_path": True},
-            None,
+        within_tolerance = all(
+            _safe_float(getattr(tgt, name, 0.0)) <= 0
+            or abs(_safe_float(getattr(picked, name, 0.0)) - _safe_float(getattr(tgt, name, 0.0)))
+            / _safe_float(getattr(tgt, name, 0.0))
+            <= 0.25
+            for name in _MACROS
         )
+        if within_tolerance:
+            result = (
+                "pick",
+                picked,
+                deltas,
+                "Best complete recipe match for your meal targets, diet, and weekly variety.",
+                {"provider": "catalog", "mode": "pick", "fast_path": True},
+                None,
+            )
 
     if result is None:
         for attempt in range(1, _SLOT_RECOMMENDATION_ATTEMPTS + 1):
