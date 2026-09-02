@@ -335,7 +335,8 @@
 
     btnDisconnect?.addEventListener("click", async () => {
       try {
-        await fetch("/oauth/strava/disconnect", { method: "POST", credentials: "include" });
+        const response = await fetch("/oauth/strava/disconnect", { method: "POST", credentials: "include" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         flash("Disconnected Strava");
         setTimeout(() => renderStravaStatus(), 250);
       } catch {

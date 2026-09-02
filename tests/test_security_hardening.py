@@ -152,6 +152,60 @@ def test_strava_state_rejects_tampering_and_expiry(monkeypatch):
         oauth_strava._decode_state(state)
 
 
+def test_strava_scope_parser_requires_private_activity_read():
+    assert oauth_strava._scope_values("read,activity:read_all") == {"read", "activity:read_all"}
+    assert "activity:read_all" not in oauth_strava._scope_values("read,activity:read")
+
+
+def test_strava_disconnect_revokes_provider_and_deletes_tokens(client: TestClient, monkeypatch):
+    assert (
+        client.post(
+            "/auth/signup",
+            json={"email": "strava-disconnect@example.com", "password": "a-secure-password-789"},
+        ).status_code
+        == 200
+    )
+    override = app.dependency_overrides[get_db]
+    db = next(override())
+    try:
+        user = db.query(User).filter(User.email == "strava-disconnect@example.com").one()
+        db.add(
+            OAuthAccount(
+                user_id=user.id,
+                provider="strava",
+                external_athlete_id="athlete-123",
+                access_token="provider-access-token",
+                refresh_token="provider-refresh-token",
+                expires_at=int(time.time()) + 3600,
+                scope="read,activity:read_all",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr(oauth_strava.requests, "post", fake_post)
+    response = client.post("/oauth/strava/disconnect")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "provider_revoked": True}
+    assert calls[0][0] == "https://www.strava.com/oauth/deauthorize"
+    db = next(override())
+    try:
+        assert db.query(OAuthAccount).filter(OAuthAccount.provider == "strava").count() == 0
+    finally:
+        db.close()
+
+
 def test_google_state_rejects_tampering_and_expiry(monkeypatch):
     state = oauth_google._encode_state()
     oauth_google._decode_state(state)

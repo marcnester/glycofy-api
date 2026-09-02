@@ -104,6 +104,12 @@ def _safe_return_path(raw: str | None) -> str | None:
     return None
 
 
+def _scope_values(raw: str | None) -> set[str]:
+    if not raw:
+        return set()
+    return {value.strip() for value in raw.replace(" ", ",").split(",") if value.strip()}
+
+
 def _encode_state(user_id: int, return_path: str | None) -> str:
     payload = {
         "uid": user_id,
@@ -176,8 +182,8 @@ def _upsert_strava_account(
             refresh_token=refresh_token,
             expires_at=expires_at,
             scope=scope,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         db.add(acct)
     else:
@@ -189,7 +195,7 @@ def _upsert_strava_account(
             acct.expires_at = int(expires_at)
         if scope:
             acct.scope = scope
-        acct.updated_at = datetime.utcnow()
+        acct.updated_at = datetime.now(UTC)
     db.commit()
 
 
@@ -296,18 +302,20 @@ def _refresh_if_needed(db: Session, acct: OAuthAccount) -> str:
             headers={"User-Agent": UA},
         )
         if resp.status_code != 200:
-            return acct.access_token
+            raise HTTPException(status_code=401, detail="Strava authorization expired; reconnect Strava")
         j = resp.json()
         acct.access_token = j.get("access_token") or acct.access_token
         if j.get("refresh_token"):
             acct.refresh_token = j["refresh_token"]
         if j.get("expires_at"):
             acct.expires_at = int(j["expires_at"])
-        acct.updated_at = datetime.utcnow()
+        acct.updated_at = datetime.now(UTC)
         db.commit()
         return acct.access_token
-    except Exception:
-        return acct.access_token
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Unable to refresh Strava authorization") from exc
 
 
 def _normalize_sport(act: dict[str, Any]) -> str:
@@ -619,6 +627,24 @@ def strava_callback(
     if not access_token:
         return RedirectResponse(url=f"{DEFAULT_PROFILE_URL}?linked_error=no_access_token", status_code=302)
 
+    granted_scope = scope or data.get("scope")
+    if "activity:read_all" not in _scope_values(granted_scope):
+        record_security_event(db, request, "oauth_strava_callback", "insufficient_scope", severity="warning")
+        return RedirectResponse(url=f"{DEFAULT_PROFILE_URL}?linked_error=insufficient_scope", status_code=302)
+
+    existing_owner = (
+        db.query(OAuthAccount)
+        .filter(
+            OAuthAccount.provider == "strava",
+            OAuthAccount.external_athlete_id == external_athlete_id,
+            OAuthAccount.user_id != user_id,
+        )
+        .first()
+    )
+    if external_athlete_id and existing_owner:
+        record_security_event(db, request, "oauth_strava_callback", "account_already_linked", severity="alert")
+        return RedirectResponse(url=f"{DEFAULT_PROFILE_URL}?linked_error=account_already_linked", status_code=302)
+
     # NEW: light enrichment from Strava athlete profile (defensive, optional)
     dirty = False
     try:
@@ -659,7 +685,7 @@ def strava_callback(
         access_token=access_token,
         refresh_token=refresh_token,
         expires_at=int(expires_at) if expires_at else None,
-        scope=scope or data.get("scope"),
+        scope=granted_scope,
         external_athlete_id=external_athlete_id,
     )
 
@@ -669,6 +695,44 @@ def strava_callback(
     record_security_event(db, request, "oauth_strava_link", "success", user_id=user.id)
     response.delete_cookie(STATE_COOKIE_NAME, path="/oauth/strava/callback", samesite="lax")
     return response
+
+
+@router.post("/disconnect")
+def strava_disconnect(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    acct = _load_strava_account(db, user.id)
+    if not acct:
+        return {"ok": True, "provider_revoked": False}
+
+    provider_revoked = False
+    if acct.access_token:
+        try:
+            response = requests.post(
+                "https://www.strava.com/oauth/deauthorize",
+                data={"access_token": acct.access_token},
+                timeout=15,
+                headers={"User-Agent": UA},
+            )
+            provider_revoked = response.status_code == 200
+        except requests.RequestException:
+            logger.warning("Strava deauthorization request failed user_id=%s", user.id)
+
+    # Always remove locally held credentials, even if the provider is
+    # temporarily unavailable. The user can also revoke Glycofy in Strava.
+    db.delete(acct)
+    db.commit()
+    record_security_event(
+        db,
+        request,
+        "oauth_strava_disconnect",
+        "success",
+        user_id=user.id,
+        details={"provider_revoked": provider_revoked},
+    )
+    return {"ok": True, "provider_revoked": provider_revoked}
 
 
 # ───────────────────────── Sync routes (require auth) ─────────────────────────
