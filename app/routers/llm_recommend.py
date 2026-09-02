@@ -166,6 +166,29 @@ class WeeklyJobStatusResponse(BaseModel):
 # ===========================
 
 _MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
+_MEAL_TARGET_SPLITS = {"breakfast": 0.25, "lunch": 0.30, "dinner": 0.30, "snack": 0.15}
+
+
+def _balanced_weekly_targets(day: WeeklyDayRequest) -> list[MealTarget]:
+    """Keep daily goals stable without inheriting a malformed prior meal split."""
+    existing = {meal.slot: meal for meal in day.meals}
+    totals = day.totals or {}
+    daily = {
+        name: _safe_float(totals.get(name), sum(_safe_float(getattr(meal, name, 0.0)) for meal in day.meals))
+        for name in _MACROS
+    }
+    if not all(value > 0 for value in daily.values()):
+        return day.meals
+    return [
+        MealTarget(
+            slot=slot,
+            **{name: round(daily[name] * fraction, 1) for name in _MACROS},
+        )
+        for slot, fraction in _MEAL_TARGET_SPLITS.items()
+        if slot in existing
+    ]
+
+
 _SLOT_RECOMMENDATION_ATTEMPTS = 3
 
 
@@ -3372,14 +3395,15 @@ def recommend_weekly_apply(
     for requested_day in payload.days:
         if not requested_day.meals:
             continue
+        balanced_meals = _balanced_weekly_targets(requested_day)
         requested_date = _parse_iso_date(requested_day.date)
         requested_nutrition = calculate_training_nutrition(
             db=db,
             user=user,
             plan_date=requested_date,
-            baseline=_baseline_from_meals(requested_day.meals),
+            baseline=_baseline_from_meals(balanced_meals),
         )
-        requested_targets = _apply_nutrition_targets(requested_day.meals, requested_nutrition)
+        requested_targets = _apply_nutrition_targets(balanced_meals, requested_nutrition)
         batch_days.append(
             {
                 "date": requested_day.date,
@@ -3430,13 +3454,14 @@ def recommend_weekly_apply(
         day_diet_tags = dedup or None
 
         plan_date = _parse_iso_date(date_iso)
+        balanced_meals = _balanced_weekly_targets(day)
         nutrition = calculate_training_nutrition(
             db=db,
             user=user,
             plan_date=plan_date,
-            baseline=_baseline_from_meals(day.meals),
+            baseline=_baseline_from_meals(balanced_meals),
         )
-        adjusted_meals = _apply_nutrition_targets(day.meals, nutrition)
+        adjusted_meals = _apply_nutrition_targets(balanced_meals, nutrition)
         factor = nutrition.final.kcal / nutrition.baseline.kcal if nutrition.baseline.kcal > 0 else 1.0
 
         # Carry forward recent protein/carb history across days

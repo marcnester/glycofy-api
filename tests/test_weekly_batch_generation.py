@@ -28,6 +28,31 @@ def _meal(slot: str, day: int) -> dict:
     }
 
 
+def test_weekly_targets_rebalance_a_malformed_prior_meal_split():
+    day = llm_recommend.WeeklyDayRequest(
+        date="2026-09-01",
+        totals={"kcal": 2400, "protein_g": 180, "carbs_g": 240, "fat_g": 80},
+        meals=[
+            llm_recommend.MealTarget(
+                slot=slot,
+                kcal=600,
+                protein_g=45,
+                carbs_g=2 if slot == "breakfast" else 79.33,
+                fat_g=20,
+            )
+            for slot in llm_recommend.SLOTS
+        ],
+    )
+
+    targets = {meal.slot: meal for meal in llm_recommend._balanced_weekly_targets(day)}
+
+    assert targets["breakfast"].carbs_g == 60
+    assert targets["lunch"].carbs_g == 72
+    assert targets["dinner"].carbs_g == 72
+    assert targets["snack"].carbs_g == 36
+    assert sum(meal.carbs_g for meal in targets.values()) == 240
+
+
 def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeypatch):
     dates = ["2026-09-01", "2026-09-02"]
     response_body = {
