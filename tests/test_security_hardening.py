@@ -16,7 +16,7 @@ from app.config import Settings, settings
 from app.db import Base, get_db
 from app.encrypted_types import EncryptedText
 from app.main import app
-from app.models import OAuthAccount, SecurityAuditEvent, User
+from app.models import Activity, OAuthAccount, SecurityAuditEvent, User
 from app.rate_limit import AUTH_LIMITER, account_key
 from app.routers import oauth_google, oauth_strava
 
@@ -326,6 +326,10 @@ def test_oauth_tokens_are_encrypted_at_rest():
     assert stored.startswith("gfy1:")
     assert "provider-secret" not in stored
     assert encrypted_type.process_result_value(stored, None) == "provider-secret"
+
+
+def test_activity_model_includes_created_at_column():
+    assert "created_at" in Activity.__table__.columns
 
 
 def test_production_configuration_rejects_insecure_defaults():
