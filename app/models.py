@@ -137,6 +137,33 @@ class Activity(Base):
         return f"<Activity id={self.id} user_id={self.user_id} sport={self.sport!r}>"
 
 
+class PlannedWorkout(Base):
+    """Provider-neutral future training session used for meal-fueling decisions."""
+
+    __tablename__ = "planned_workouts"
+    __table_args__ = (
+        Index("ix_planned_workouts_user_date", "user_id", "workout_date"),
+        UniqueConstraint("user_id", "source", "external_id", name="ux_planned_workout_source"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    workout_date: Mapped[date] = mapped_column(Date, nullable=False)
+    start_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sport: Mapped[str] = mapped_column(String(32), nullable=False)
+    duration_min: Mapped[int] = mapped_column(Integer, nullable=False)
+    intensity: Mapped[str] = mapped_column(String(16), nullable=False)
+    distance_km: Mapped[float | None] = mapped_column(Float, nullable=True)
+    priority: Mapped[str] = mapped_column(String(16), nullable=False, default="normal", server_default="normal")
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual", server_default="manual")
+    external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 # -------------------------
 # Recipes
 # -------------------------

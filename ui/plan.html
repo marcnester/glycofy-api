@@ -274,6 +274,10 @@
       background:rgba(231,76,60,.12);
       border:1px solid rgba(231,76,60,.25);
     }
+    .fueling-context{display:none;margin:14px 0;padding:14px 16px;border:1px solid rgba(96,165,250,.28);border-radius:14px;background:rgba(96,165,250,.08)}
+    .fueling-context__title{font-weight:800;margin-bottom:5px}
+    .fueling-context__details{color:#c5d4e8}
+    .fueling-context a{color:#78dba7;font-weight:700}
   </style>
 </head>
 <body class="ui-root">
@@ -324,6 +328,12 @@
       </div>
 
       <div id="plan-msg" class="plan-msg" style="display:none;"></div>
+
+      <div id="fueling-context" class="fueling-context" role="status">
+        <div class="fueling-context__title">Upcoming training shapes this plan</div>
+        <div id="fueling-context-details" class="fueling-context__details"></div>
+        <a href="/ui/activities.html">Manage upcoming training</a>
+      </div>
 
       <div id="totals" class="totals">
         <div><span class="k">kcal</span><span class="v" id="plan-total-kcal">—</span></div>
@@ -439,6 +449,6 @@
   </div>
 
   <script src="/ui/core.js?v=2025-11-04" defer></script>
-  <script src="/ui/plan.js?v=2026-09-01-weekly-batch" defer></script>
+  <script src="/ui/plan.js?v=2026-09-02-planned-fueling" defer></script>
 </body>
 </html>

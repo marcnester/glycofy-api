@@ -60,6 +60,8 @@
   const dlCsv = $('dl_csv');
   const groceryListLink = $('grocery-list-link');
   const flashBox = $('plan-msg') || $('flash');
+  const fuelingContext = $('fueling-context');
+  const fuelingContextDetails = $('fueling-context-details');
 
   const totalsEl =
     $('totals') || $('plan-totals') || document.getElementById('totals');
@@ -498,6 +500,29 @@
     );
     if (!r.ok) throw new Error(`Create failed: ${r.status}`);
     return r.json();
+  }
+
+  async function renderFuelingContext(d) {
+    if (!fuelingContext || !fuelingContextDetails) return;
+    try {
+      const data = await fetchJSON(`/v1/training-events?from=${encodeURIComponent(d)}&to=${encodeURIComponent(d)}`);
+      const events = Array.isArray(data?.items) ? data.items : [];
+      if (!events.length) {
+        fuelingContext.style.display = 'none';
+        return;
+      }
+      const details = events.map((event) => {
+        const time = event.start_time
+          ? new Date(event.start_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+          : 'time flexible';
+        return `${event.sport}, ${event.duration_min} min ${event.intensity}, ${time}`;
+      });
+      fuelingContextDetails.textContent = `${details.join(' · ')}. AI planning adds carbohydrate according to duration and intensity.`;
+      fuelingContext.style.display = 'block';
+    } catch (error) {
+      console.warn('Could not load planned training context', error);
+      fuelingContext.style.display = 'none';
+    }
   }
 
   async function ensurePlan(d) {
@@ -1373,6 +1398,7 @@
     AI_REASONS = {};
     AI_FREEFORM = {};
     renderPlan(plan);
+    await renderFuelingContext(d);
   }
 
   boot().catch((err) => {

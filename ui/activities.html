@@ -26,6 +26,16 @@
     .card{border:1px solid rgba(255,255,255,.08);border-radius:16px;background:rgba(255,255,255,.02)}
     .card--glass{background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,0)) , rgba(16,20,28,.6)}
     .muted{color:#9fb0c9}
+    .training-form{display:grid;grid-template-columns:1.1fr .8fr 1fr .8fr .9fr .8fr;gap:12px;align-items:end}
+    .training-form label{display:grid;gap:6px;font-size:12px;color:#9fb0c9}
+    .training-form input,.training-form select{height:40px;box-sizing:border-box;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:#171c24;color:#e7ecf3;padding:0 10px}
+    .training-list{display:grid;gap:10px;margin-top:16px}
+    .training-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 14px;border:1px solid rgba(255,255,255,.09);border-radius:12px;background:rgba(255,255,255,.02)}
+    .training-row__main{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .training-source{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#9fb0c9}
+    .training-delete{border:0;background:transparent;color:#ff9b96;cursor:pointer;font-weight:700}
+    @media(max-width:900px){.training-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:560px){.training-form{grid-template-columns:1fr}.training-form label{grid-column:auto!important}.training-row{align-items:flex-start}}
   </style>
 </head>
 <body class="ui-root">
@@ -91,6 +101,41 @@
           </div>
         </div>
       </div>
+    </section>
+
+    <section class="card" style="padding:20px;margin-top:18px">
+      <div style="display:flex;justify-content:space-between;gap:18px;align-items:flex-start;flex-wrap:wrap">
+        <div>
+          <h2 style="margin:0 0 6px">Upcoming training</h2>
+          <p class="muted" style="margin:0">Add only the key sessions Glycofy should fuel. TrainingPeaks and Garmin will plug into this same timeline when available.</p>
+        </div>
+        <span class="pill" id="planned_count">0 planned</span>
+      </div>
+      <form id="training_form" class="training-form" style="margin-top:18px">
+        <label>Date<input id="training_date" type="date" required></label>
+        <label>Start<input id="training_time" type="time"></label>
+        <label>Sport
+          <select id="training_sport" required>
+            <option value="Ride">Ride</option><option value="Run">Run</option><option value="Swim">Swim</option>
+            <option value="Strength">Strength</option><option value="Walk/Hike">Walk/Hike</option><option value="Other">Other</option>
+          </select>
+        </label>
+        <label>Minutes<input id="training_duration" type="number" min="10" max="1440" step="5" value="60" required></label>
+        <label>Intensity
+          <select id="training_intensity" required>
+            <option value="easy">Easy</option><option value="moderate" selected>Moderate</option>
+            <option value="hard">Hard</option><option value="race">Race</option>
+          </select>
+        </label>
+        <label>Importance
+          <select id="training_priority"><option value="normal">Normal</option><option value="key">Key session</option></select>
+        </label>
+        <label>Distance (km)<input id="training_distance" type="number" min="0" max="1000" step="0.1" placeholder="Optional"></label>
+        <label style="grid-column:span 3">Notes<input id="training_notes" maxlength="500" placeholder="Optional, e.g. intervals or long aerobic ride"></label>
+        <button id="training_add" class="btn btn--pill" type="submit" style="height:40px">Add workout</button>
+      </form>
+      <div id="training_notice" class="muted" role="status" style="margin-top:10px"></div>
+      <div id="training_list" class="training-list"></div>
     </section>
 
     <section class="grid grid--two" style="display:grid;grid-template-columns:420px 1fr;gap:18px;margin-top:18px">
@@ -161,6 +206,6 @@
   </main>
 
   <script src="/ui/core.js?v=2025-11-04"></script>
-  <script src="/ui/activities.js?v=2025-11-05h"></script>
+  <script src="/ui/activities.js?v=2026-09-02-planned-training"></script>
 </body>
 </html>

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models import Activity, User
+from app.models import Activity, PlannedWorkout, User
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,11 @@ class TrainingContext:
     distance_km: float
     sports: tuple[str, ...]
     latest_activity_at: str | None
+    planned_workout_count: int = 0
+    planned_duration_min: float = 0.0
+    planned_sports: tuple[str, ...] = ()
+    planned_intensity: str | None = None
+    next_workout_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -148,6 +153,77 @@ def _carb_recovery_g_per_kg(duration_min: float, kcal_per_hour: float) -> float:
     if kcal_per_hour >= 600:
         base *= 1.2
     return min(2.5, base)
+
+
+def _planned_carb_g_per_kg(duration_min: float, intensity: str) -> float:
+    """Conservative daily carbohydrate uplift for an upcoming session."""
+    duration_band = 0 if duration_min < 45 else 1 if duration_min < 90 else 2 if duration_min < 150 else 3
+    table = {
+        "easy": (0.0, 0.25, 0.5, 0.75),
+        "moderate": (0.25, 0.5, 1.0, 1.5),
+        "hard": (0.5, 1.0, 1.5, 2.0),
+        "race": (0.75, 1.5, 2.0, 2.5),
+    }
+    return table.get(intensity, table["moderate"])[duration_band]
+
+
+def _apply_planned_fueling(
+    result: TrainingNutritionResult,
+    user: User,
+    workouts: list[PlannedWorkout],
+) -> TrainingNutritionResult:
+    if not workouts:
+        return result
+    weight_kg = _safe_float(getattr(user, "weight_kg", None))
+    if weight_kg <= 0:
+        return replace(
+            result,
+            training=replace(result.training, planned_workout_count=len(workouts)),
+            rationale=result.rationale + ("Upcoming training found; add body weight to personalize fueling.",),
+        )
+
+    intensity_rank = {"easy": 0, "moderate": 1, "hard": 2, "race": 3}
+    carb_g = min(
+        weight_kg * 3.0,
+        sum(weight_kg * _planned_carb_g_per_kg(workout.duration_min, workout.intensity) for workout in workouts),
+    )
+    duration_min = sum(workout.duration_min for workout in workouts)
+    intensity = max(workouts, key=lambda row: intensity_rank.get(row.intensity, 1)).intensity
+    starts = sorted(workout.start_time for workout in workouts if workout.start_time)
+    planned_adjustment = NutritionAdjustment(
+        kcal=round(carb_g * 4.0, 1), protein_g=0.0, carbs_g=round(carb_g, 1), fat_g=0.0
+    )
+    adjustment = NutritionAdjustment(
+        kcal=round(result.adjustment.kcal + planned_adjustment.kcal, 1),
+        protein_g=result.adjustment.protein_g,
+        carbs_g=round(result.adjustment.carbs_g + planned_adjustment.carbs_g, 1),
+        fat_g=result.adjustment.fat_g,
+    )
+    final = MacroTargets(
+        kcal=round(result.final.kcal + planned_adjustment.kcal, 1),
+        protein_g=result.final.protein_g,
+        carbs_g=round(result.final.carbs_g + planned_adjustment.carbs_g, 1),
+        fat_g=result.final.fat_g,
+    )
+    context = replace(
+        result.training,
+        planned_workout_count=len(workouts),
+        planned_duration_min=float(duration_min),
+        planned_sports=tuple(sorted({workout.sport for workout in workouts})),
+        planned_intensity=intensity,
+        next_workout_at=starts[0].isoformat() if starts else None,
+    )
+    rationale = result.rationale + (
+        f"Fueling {len(workouts)} upcoming {intensity} session(s), totaling {duration_min} minutes.",
+        f"Added {planned_adjustment.carbs_g:.0f} g carbohydrate for planned training demand.",
+    )
+    return TrainingNutritionResult(
+        baseline=result.baseline,
+        training=context,
+        adjustment=adjustment,
+        final=final,
+        rationale=rationale,
+    )
 
 
 def calculate_from_activities(
@@ -279,9 +355,19 @@ def calculate_training_nutrition(
             .order_by(Activity.start_time.asc())
             .all()
         )
-    return calculate_from_activities(
+    recovery_result = calculate_from_activities(
         baseline=baseline,
         user=user,
         activities=activities,
         window_hours=window_hours,
     )
+    planned_query = db.query(PlannedWorkout).filter(
+        PlannedWorkout.user_id == user.id,
+        PlannedWorkout.workout_date == plan_date,
+    )
+    if plan_date == now_naive.date():
+        planned_query = planned_query.filter(
+            (PlannedWorkout.start_time.is_(None)) | (PlannedWorkout.start_time >= now_naive)
+        )
+    planned = planned_query.order_by(PlannedWorkout.start_time, PlannedWorkout.id).all()
+    return _apply_planned_fueling(recovery_result, user, planned)

@@ -72,6 +72,7 @@ from app.routers import recipes_admin as recipes_admin_router  # ← existing de
 from app.routers import (
     summary as summary_router,
 )
+from app.routers import training_events as training_events_router
 from app.routers import (
     users as users_router,
 )
@@ -202,6 +203,7 @@ app.include_router(imports_router.router, prefix="/imports", tags=["imports"])
 app.include_router(energy_router.router, prefix="/v1/energy", tags=["energy"])
 app.include_router(llm_recommend_router.router, prefix="/v1/llm", tags=["llm"])
 app.include_router(preferences_router.router, prefix="/v1/preferences", tags=["preferences"])  # ← NEW
+app.include_router(training_events_router.router)
 app.include_router(user_profile.router)
 app.include_router(weekly_plans.router)
 

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.models import Activity, User
+from app.models import Activity, PlannedWorkout, User
 from app.services.training_nutrition import (
     MacroTargets,
     calculate_from_activities,
@@ -98,6 +98,7 @@ def test_database_window_ignores_activity_older_than_48_hours():
     with Session(engine) as db:
         user = _user()
         db.add(user)
+        db.flush()
         db.add(
             Activity(
                 user_id=1,
@@ -135,6 +136,7 @@ def test_recent_activity_is_not_applied_to_a_plan_many_days_in_the_future():
     with Session(engine) as db:
         user = _user()
         db.add(user)
+        db.flush()
         db.add(
             Activity(
                 user_id=1,
@@ -157,4 +159,87 @@ def test_recent_activity_is_not_applied_to_a_plan_many_days_in_the_future():
         )
 
     assert result.training.activity_count == 0
+    assert result.final == BASELINE
+
+
+def test_future_hard_workout_adds_planned_fueling_without_completed_activity():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 7, 24, 12, tzinfo=UTC)
+
+    with Session(engine) as db:
+        user = _user()
+        db.add(user)
+        db.flush()
+        db.add(
+            PlannedWorkout(
+                user_id=1,
+                workout_date=date(2026, 7, 26),
+                start_time=datetime(2026, 7, 26, 15),
+                sport="Ride",
+                duration_min=120,
+                intensity="hard",
+                priority="key",
+                source="manual",
+            )
+        )
+        db.commit()
+
+        result = calculate_training_nutrition(
+            db=db,
+            user=user,
+            plan_date=date(2026, 7, 26),
+            baseline=BASELINE,
+            now=now,
+        )
+
+    assert result.training.activity_count == 0
+    assert result.training.planned_workout_count == 1
+    assert result.training.planned_duration_min == 120
+    assert result.training.planned_intensity == "hard"
+    assert result.adjustment.carbs_g == 105
+    assert result.adjustment.kcal == 420
+    assert result.final.carbs_g == BASELINE.carbs_g + 105
+
+
+def test_completed_time_on_today_planned_workout_is_not_double_counted():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 7, 24, 12, tzinfo=UTC)
+
+    with Session(engine) as db:
+        user = _user()
+        db.add(user)
+        db.flush()
+        db.add(
+            PlannedWorkout(
+                user_id=1,
+                workout_date=now.date(),
+                start_time=datetime(2026, 7, 24, 8),
+                sport="Run",
+                duration_min=60,
+                intensity="hard",
+                priority="normal",
+                source="manual",
+            )
+        )
+        db.commit()
+
+        result = calculate_training_nutrition(
+            db=db,
+            user=user,
+            plan_date=now.date(),
+            baseline=BASELINE,
+            now=now,
+        )
+
+    assert result.training.planned_workout_count == 0
     assert result.final == BASELINE

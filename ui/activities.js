@@ -50,6 +50,10 @@
   const elSumRows = $('sum_rows'), elSumPrev = $('sum_prev'), elSumNext = $('sum_next'), elSumPage = $('sum_page'), elSumPs = $('sum_ps');
   const elLogout = $('logout_btn');
   const elCsv = $('dl_csv') || pick('[data-download="csv"]','a[href="#csv"]','a[href="#CSV"]','a[href$="activities.csv"]');
+  const trainingForm = $('training_form'), trainingList = $('training_list'), trainingNotice = $('training_notice');
+  const trainingDate = $('training_date'), trainingTime = $('training_time'), trainingSport = $('training_sport');
+  const trainingDuration = $('training_duration'), trainingIntensity = $('training_intensity');
+  const trainingPriority = $('training_priority'), trainingDistance = $('training_distance'), trainingNotes = $('training_notes');
 
   // state
   let page = 1, pageSize = 10, total = 0;
@@ -190,6 +194,7 @@
     sumPageSize = Number(elSumPs?.value||10)||10;
     if (elFrom && !elFrom.value) elFrom.value = daysAgoISO(30);
     if (elTo && !elTo.value) elTo.value = todayISO();
+    if (trainingDate && !trainingDate.value) trainingDate.value = todayISO(new Date(Date.now() + 86400000));
 
     // wire
     elPrev?.addEventListener('click', ()=>{ if(page>1){ page--; void loadPage(); } });
@@ -205,11 +210,16 @@
     elFullSyncBtn?.addEventListener('click', ()=> doSync(true));
 
     elCsv?.addEventListener('click',(e)=>{ e.preventDefault?.(); void downloadCSV(); });
+    trainingForm?.addEventListener('submit', (e)=>{ e.preventDefault(); void addTrainingEvent(); });
+    trainingList?.addEventListener('click', (e)=>{
+      const button=e.target.closest('[data-delete-training]');
+      if(button) void deleteTrainingEvent(button.dataset.deleteTraining);
+    });
     (elLogout || document.querySelector('[data-nav="logout"]'))?.addEventListener('click', ()=>{
       try{ core.setToken?.(null); document.cookie='glyco_auth=; Max-Age=0; path=/; SameSite=Lax;'; }catch{} window.location.href='/ui/login.html';
     });
 
-    await Promise.all([loadPage(), loadSummary(), refreshStravaBadge()]);
+    await Promise.all([loadPage(), loadSummary(), refreshStravaBadge(), loadTrainingEvents()]);
     setTimeout(refreshStravaBadge, 300);
 
     async function loadPage(){
@@ -222,6 +232,58 @@
         total = typeof data.total==='number'?data.total:items.length;
         renderActivityTable(items); updatePaging();
       }catch(e){ setErr(e?.message||'Failed to load activities.'); }
+    }
+
+    async function loadTrainingEvents(){
+      try{
+        const from=todayISO(), end=new Date(); end.setDate(end.getDate()+30);
+        const data=await fetchJSON(`/v1/training-events?from=${from}&to=${todayISO(end)}`);
+        renderTrainingEvents(data.items||[]);
+        if(trainingNotice) trainingNotice.textContent=(data.items||[]).length?'These sessions will shape AI fueling targets.':'No upcoming workouts yet.';
+      }catch(e){ if(trainingNotice) trainingNotice.textContent=e?.message||'Could not load upcoming workouts.'; }
+    }
+
+    function renderTrainingEvents(items){
+      if(!trainingList) return;
+      trainingList.replaceChildren();
+      const count=$('planned_count'); if(count) count.textContent=`${items.length} planned`;
+      items.forEach(item=>{
+        const row=document.createElement('div'); row.className='training-row';
+        const main=document.createElement('div'); main.className='training-row__main';
+        const when=document.createElement('strong');
+        const localTime=item.start_time?new Date(item.start_time).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'Time flexible';
+        when.textContent=`${item.workout_date} · ${localTime}`;
+        const details=document.createElement('span');
+        details.textContent=`${item.sport} · ${item.duration_min} min · ${item.intensity}${item.priority==='key'?' · Key':''}`;
+        const source=document.createElement('span'); source.className='training-source'; source.textContent=item.source;
+        main.append(when,details,source); row.appendChild(main);
+        if(item.source==='manual'){
+          const remove=document.createElement('button'); remove.type='button'; remove.className='training-delete';
+          remove.dataset.deleteTraining=String(item.id); remove.textContent='Remove'; row.appendChild(remove);
+        }
+        trainingList.appendChild(row);
+      });
+    }
+
+    async function addTrainingEvent(){
+      if(!trainingForm?.checkValidity()){ trainingForm.reportValidity(); return; }
+      const start=trainingTime.value?new Date(`${trainingDate.value}T${trainingTime.value}:00`).toISOString():null;
+      const payload={workout_date:trainingDate.value,start_time:start,sport:trainingSport.value,
+        duration_min:Number(trainingDuration.value),intensity:trainingIntensity.value,priority:trainingPriority.value,
+        distance_km:trainingDistance.value?Number(trainingDistance.value):null,notes:trainingNotes.value.trim()||null};
+      try{
+        if(trainingNotice) trainingNotice.textContent='Adding workout…';
+        await fetchJSON('/v1/training-events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        trainingNotes.value=''; trainingDistance.value='';
+        await loadTrainingEvents();
+      }catch(e){ if(trainingNotice) trainingNotice.textContent=e?.message||'Could not add workout.'; }
+    }
+
+    async function deleteTrainingEvent(id){
+      try{
+        await fetchJSON(`/v1/training-events/${encodeURIComponent(id)}`,{method:'DELETE'});
+        await loadTrainingEvents();
+      }catch(e){ if(trainingNotice) trainingNotice.textContent=e?.message||'Could not remove workout.'; }
     }
 
     async function fetchAll(fromISO,toISO){
