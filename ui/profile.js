@@ -265,6 +265,7 @@
       if (
         d.strava &&
         (truthy(d.strava.connected) ||
+          truthy(d.strava.linked) ||
           d.strava.status === "connected" ||
           (d.strava.athlete && d.strava.athlete.id))
       )
@@ -272,10 +273,6 @@
       if (d.athlete && (typeof d.athlete === "object" ? !!d.athlete.id : truthy(d.athlete)))
         return true;
       if (d.account && typeof d.account === "object") return true;
-      // presence of token-ish fields (without exposing them)
-      if (d.access_token || d.refresh_token || d.token || d.expires_at) return true;
-      // final fallback: any 200 JSON with at least one key often means "ok"
-      if (Object.keys(d).length > 0) return true;
       return false;
     }
 
