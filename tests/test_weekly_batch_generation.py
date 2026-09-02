@@ -20,6 +20,7 @@ def _meal(slot: str, day: int) -> dict:
             {"name": "olive oil", "amount": "1", "unit": "tbsp"},
         ],
         "instructions": ["Cook the protein and carbohydrate.", "Combine and serve."],
+        "total_time_min": 25,
         "protein_group": "plant" if day == 1 else "poultry",
         "protein_item": protein,
         "carb_item": carb,
@@ -104,6 +105,7 @@ def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeyp
     assert meta["rejected"] == 0
     assert all(set(recommendations[date]) == set(llm_recommend.SLOTS) for date in dates)
     assert all(item.meta["batch"] is True for slots in recommendations.values() for item in slots.values())
+    assert all(item.ai_idea["total_time_min"] == 25 for slots in recommendations.values() for item in slots.values())
 
 
 def test_weekly_job_status_is_scoped_to_owner():

@@ -278,6 +278,7 @@ class AIIdeaPayload(BaseModel):
     ingredients: list[Any] = Field(default_factory=list)
     # Optional step-wise instructions from the LLM (list of short steps)
     instructions: list[str] | None = None
+    total_time_min: int | None = Field(default=None, ge=1, le=240)
     # Optional protein group ("fish", "plant", etc.) if we ever need it
     protein_group: str | None = None
 
@@ -298,6 +299,7 @@ class LLMNewRecipe(BaseModel):
     title: str
     ingredients: list[Any] = Field(default_factory=list)
     instructions: list[str] = Field(default_factory=list)
+    total_time_min: int | None = Field(default=None, ge=1, le=240)
     protein_group: str | None = None
     macro_estimate: dict[str, float] | None = None
 
@@ -404,16 +406,15 @@ def _apply_ai_idea_to_meal(meal: PlanMeal, ai: AIIdeaPayload, slot: str) -> None
     title = (ai.title or "").strip() or (ai.description or "").strip().split("\n")[0] or slot_norm.title()
 
     instructions_text: str | None = None
-    if ai.description and ai.description.strip():
-        instructions_text = ai.description.strip()
-    else:
-        try:
-            inst_list = getattr(ai, "instructions", None) or []
-            parts = [str(p).strip() for p in inst_list if p and str(p).strip()]
-            if parts:
-                instructions_text = "\n".join(parts)
-        except Exception:
-            instructions_text = None
+    try:
+        inst_list = getattr(ai, "instructions", None) or []
+        parts = [str(p).strip() for p in inst_list if p and str(p).strip()]
+        if parts:
+            instructions_text = "\n".join(parts)
+        elif ai.description and ai.description.strip():
+            instructions_text = ai.description.strip()
+    except Exception:
+        instructions_text = ai.description.strip() if ai.description and ai.description.strip() else None
 
     macros = ai.approx_macros or {}
     kcal = macros.get("kcal")
@@ -424,6 +425,8 @@ def _apply_ai_idea_to_meal(meal: PlanMeal, ai: AIIdeaPayload, slot: str) -> None
     meal.meal_type = slot_norm
     meal.title = title
     meal.instructions = instructions_text
+    if ai.total_time_min:
+        meal.meta = {**(meal.meta or {}), "total_time_min": ai.total_time_min}
 
     if kcal is not None:
         meal.kcal = float(kcal)
@@ -1019,6 +1022,7 @@ def apply_recommendations(
                 approx_macros=nr.macro_estimate or {},
                 ingredients=nr.ingredients or [],
                 instructions=nr.instructions or [],
+                total_time_min=nr.total_time_min,
                 protein_group=nr.protein_group,
             )
             _apply_ai_idea_to_meal(meal, ai_from_new, slot)

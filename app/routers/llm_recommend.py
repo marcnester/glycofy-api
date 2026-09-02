@@ -1714,6 +1714,7 @@ def _deterministic_fallback_idea(
                     f"Cook the {carb} and prepare the {protein} until safely done.",
                     "Combine with the vegetables and olive oil, then season to taste.",
                 ],
+                "total_time_min": 25,
                 "protein_group": protein_group,
                 "protein_item": protein,
                 "carb_item": carb.replace(" ", "_"),
@@ -1800,6 +1801,10 @@ def _llm_pick_or_create(
         "- Prefer grams or ounces for proteins/starches and cups, tablespoons, teaspoons, or item counts where natural.\n"
         "- Never return a bare ingredient name such as 'spinach' or 'olive oil'.\n"
         "- Total active cooking time ~20–30 minutes.\n"
+        "- Include total_time_min as a realistic integer estimate.\n"
+        "- Write 3–6 concise, coordinated steps for the COMPLETE meal, including parallel preparation where useful.\n"
+        "- For cooked meat, poultry, seafood, or eggs, include heat level or oven temperature, approximate cooking "
+        "time, and a clear safe-doneness cue.\n"
         "- Respect diet_tags + ingredient_exclusions strictly.\n"
         "- NEVER use a protein_group that appears in banned_protein_groups_slot_week for this slot.\n\n"
         "- NEVER create a recipe equivalent to an identity in used_meal_keys_week.\n\n"
@@ -1812,6 +1817,7 @@ def _llm_pick_or_create(
         '    "title": "<string>",\n'
         '    "ingredients": [{"name": "<ingredient>", "amount": "<number or fraction>", "unit": "<g|oz|cup|tbsp|tsp|can|item>"}],\n'
         '    "instructions": ["<step 1>", "<step 2>", "..."],\n'
+        '    "total_time_min": <integer minutes>,\n'
         '    "protein_group": "fish" | "poultry" | "beef" | "pork" | "eggs" | "dairy" | "plant" | "unknown",\n'
         '    "protein_item": "<specific protein like salmon, tuna, shrimp, chicken, tofu, eggs>",\n'
         '    "carb_item": "<specific carb like rice, quinoa, pasta, oats, potato, bread>",\n'
@@ -2168,6 +2174,7 @@ def _llm_pick_or_create(
             "description": None,
             "ingredients": ingredients,
             "instructions": instructions,
+            "total_time_min": max(1, min(240, int(_safe_float(new_recipe.get("total_time_min"), 25)))),
             "approx_macros": {
                 "kcal": float(macro_est.get("kcal", getattr(tgt, "kcal", 0.0))),
                 "protein_g": float(macro_est.get("protein_g", getattr(tgt, "protein_g", 0.0))),
@@ -2983,6 +2990,8 @@ def _persist_day_recommendations(
             created_recipe = _create_recipe_from_ai_idea(db, slot, ai, day_diet_tags, primary_diet)
             created += 1
             _apply_ai_idea_to_planmeal(pm, ai, created_recipe)
+            if _safe_float(ai.get("total_time_min")) > 0:
+                pm.meta = {**(pm.meta or {}), "total_time_min": int(_safe_float(ai.get("total_time_min")))}
             applied += 1
             continue
 
@@ -3154,6 +3163,7 @@ def _weekly_batch_schema() -> dict[str, Any]:
             "title",
             "ingredients",
             "instructions",
+            "total_time_min",
             "protein_group",
             "protein_item",
             "carb_item",
@@ -3165,6 +3175,7 @@ def _weekly_batch_schema() -> dict[str, Any]:
             "title": {"type": "string"},
             "ingredients": {"type": "array", "minItems": 4, "maxItems": 8, "items": ingredient},
             "instructions": {"type": "array", "minItems": 2, "maxItems": 6, "items": {"type": "string"}},
+            "total_time_min": {"type": "integer", "minimum": 1, "maximum": 240},
             "protein_group": {
                 "type": "string",
                 "enum": ["fish", "poultry", "beef", "pork", "eggs", "dairy", "plant", "unknown"],
@@ -3226,6 +3237,8 @@ def _batch_week_recommendations(
         "during the week. Within each day, do not "
         "repeat a protein_item or carb_item across breakfast, lunch, and dinner. Across adjacent days, vary main "
         "proteins. Use no protein_group more than twice for the same slot during the week when alternatives exist. "
+        "Every cooked meal needs 3–6 coordinated steps for the complete plate, a realistic total_time_min, and "
+        "heat or oven temperature, timing, and a safe-doneness cue for meat, poultry, seafood, or eggs. "
         "Plan globally first so variety is intentional, then emit only the requested structured data."
     )
     payload = {
@@ -3277,6 +3290,7 @@ def _batch_week_recommendations(
             carb = str(meal.get("carb_item") or "").strip().lower()
             ingredients = meal.get("ingredients") or []
             instructions = meal.get("instructions") or []
+            total_time_min = int(_safe_float(meal.get("total_time_min"), 0))
             macros = meal.get("macros") or {}
             protein_group = str(meal.get("protein_group") or "unknown").strip().lower()
             title_key = _meal_similarity_key(title)
@@ -3295,6 +3309,7 @@ def _batch_week_recommendations(
                 or not _ingredients_have_quantities(ingredients)
                 or not isinstance(instructions, list)
                 or len(instructions) < 2
+                or not 1 <= total_time_min <= 240
                 or not macro_ok
                 or _text_violates_exclusions(f"{title} {json.dumps(ingredients)}", exclusions)
             )
@@ -3307,6 +3322,7 @@ def _batch_week_recommendations(
                 "title": title,
                 "ingredients": ingredients,
                 "instructions": instructions,
+                "total_time_min": total_time_min,
                 "protein_group": protein_group,
                 "protein_item": protein,
                 "carb_item": carb,

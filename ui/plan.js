@@ -145,7 +145,7 @@
   let CURRENT_PLAN = null;
   let CURRENT_DATE = null;
   let AI_REASONS = {}; // slot -> reason string
-  let AI_FREEFORM = {}; // slot -> { idea, description, approx_macros, ingredients[], instructions[] }
+  let AI_FREEFORM = {}; // slot -> { idea, description, approx_macros, ingredients[], instructions[], total_time_min }
 
   // ----- utils -----
   function flash(msg, type = 'ok') {
@@ -595,6 +595,7 @@
     let approx = null;
     let ing = null;
     let instr = null;
+    let totalTime = null;
 
     if (ai) {
       idea = ai.title || ai.idea || ai.name || null;
@@ -602,6 +603,7 @@
       approx = ai.approx_macros || ai.macros || null;
       ing = ai.ingredients || ai.items || null;
       instr = ai.instructions || ai.steps || null;
+      totalTime = ai.total_time_min || ai.total_minutes || null;
     }
 
     // Fallbacks in case future responses move fields up a level
@@ -616,6 +618,7 @@
     if (!instr && (source.instructions || source.steps)) {
       instr = source.instructions || source.steps;
     }
+    if (!totalTime) totalTime = source.total_time_min || source.total_minutes || null;
 
     const normIngredients = normalizeIngredients(ing);
     const normInstructions = normalizeInstructions(instr);
@@ -628,6 +631,7 @@
       approx_macros: approx,
       ingredients: normIngredients,
       instructions: normInstructions,
+      total_time_min: Number(totalTime) > 0 ? Math.round(Number(totalTime)) : null,
     };
   }
 
@@ -664,6 +668,7 @@
     if (Array.isArray(ff.instructions) && ff.instructions.length) {
       payload.instructions = ff.instructions.slice();
     }
+    if (Number(ff.total_time_min) > 0) payload.total_time_min = Math.round(Number(ff.total_time_min));
 
     return payload;
   }
@@ -939,14 +944,9 @@
 
           // Instructions block (from AI or base)
           const instrSrc =
-            (ff &&
-              Array.isArray(ff.instructions) &&
-              ff.instructions.length &&
-              ff.instructions) ||
-            (base &&
-              Array.isArray(base.instructions) &&
-              base.instructions.length &&
-              base.instructions) ||
+            (ff && ff.instructions && ff.instructions.length && ff.instructions) ||
+            (base && base.instructions) ||
+            (base && base.meta && base.meta.ai_idea && base.meta.ai_idea.instructions) ||
             null;
 
           const instrList = normalizeInstructions(instrSrc);
@@ -955,7 +955,13 @@
             details.className = 'meal-instructions';
 
             const summary = document.createElement('summary');
-            summary.textContent = 'Instructions';
+            const totalTime = Number(
+              (ff && ff.total_time_min) ||
+              (base && base.meta && base.meta.total_time_min) ||
+              (base && base.meta && base.meta.ai_idea && base.meta.ai_idea.total_time_min) ||
+              0
+            );
+            summary.textContent = `How to make it${totalTime > 0 ? ` · ${Math.round(totalTime)} min` : ''}`;
             details.appendChild(summary);
 
             const ol = document.createElement('ol');
@@ -1029,7 +1035,7 @@
           ${
             instrList.length
               ? `<details class="meal-instructions">
-                   <summary>Instructions</summary>
+                   <summary>How to make it${Number(view?.meta?.total_time_min) > 0 ? ` · ${Math.round(Number(view.meta.total_time_min))} min` : ''}</summary>
                    <ol>
                      ${instrList
                        .map((step) => `<li>${escapeHtml(step)}</li>`)

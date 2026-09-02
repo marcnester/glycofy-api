@@ -214,6 +214,29 @@
       font-style:italic;
     }
 
+    .meal-instructions{
+      margin-top:16px;
+      border:1px solid rgba(80,200,138,.2);
+      border-radius:12px;
+      background:rgba(80,200,138,.045);
+      overflow:hidden;
+    }
+
+    .meal-instructions summary{
+      cursor:pointer;
+      list-style:none;
+      padding:13px 15px;
+      color:#9fe3c0;
+      font-weight:750;
+      user-select:none;
+    }
+
+    .meal-instructions summary::-webkit-details-marker{display:none}
+    .meal-instructions summary::after{content:"＋";float:right;color:#79cf9f}
+    .meal-instructions[open] summary::after{content:"−"}
+    .meal-instructions ol{margin:0;padding:4px 20px 16px 38px;color:#d5deed;line-height:1.55}
+    .meal-instructions li{padding:4px 0 4px 4px}
+
     .meal-card-actions{
       margin-top:12px;
       display:flex;
@@ -450,6 +473,6 @@
   </div>
 
   <script src="/ui/core.js?v=2025-11-04" defer></script>
-  <script src="/ui/plan.js?v=2026-09-02-training-context" defer></script>
+  <script src="/ui/plan.js?v=2026-09-02-cooking-guidance" defer></script>
 </body>
 </html>
