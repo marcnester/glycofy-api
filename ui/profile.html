@@ -83,6 +83,11 @@
       border-color:rgba(248,131,37,.35)
     }
     .strava-icon svg{width:16px;height:16px;display:block}
+    .strava-connect{
+      display:inline-flex;border:0;background:transparent;padding:0;cursor:pointer;border-radius:6px
+    }
+    .strava-connect:focus-visible{outline:3px solid #78dba7;outline-offset:3px}
+    .strava-connect img{display:block;width:237px;height:48px}
 
     /* Meal Preferences */
     .section-title{margin:0 0 8px 0;font-size:clamp(22px,3vw,28px)}
@@ -217,7 +222,9 @@
         <span id="strava_status" class="pill pill--warn">Checking…</span>
 
         <button id="strava_manage" class="btn btn--pill" style="display:none">Manage in Strava</button>
-        <button id="strava_reconnect" class="btn btn--pill">Reconnect Strava</button>
+        <button id="strava_reconnect" class="strava-connect" aria-label="Connect with Strava">
+          <img src="/ui/assets/connect-with-strava.png" alt="Connect with Strava" width="237" height="48">
+        </button>
         <button id="strava_disconnect" class="btn btn--pill" style="display:none">Disconnect</button>
       </div>
     </section>

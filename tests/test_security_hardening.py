@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -61,6 +62,13 @@ def test_login_page_does_not_expose_demo_credentials(client: TestClient):
     assert response.status_code == 200
     assert "demo credentials" not in response.text.lower()
     assert "demo@glycofy.app" not in response.text.lower()
+
+
+def test_profile_uses_official_strava_connect_asset(client: TestClient):
+    response = client.get("/ui/profile.html")
+    assert response.status_code == 200
+    assert 'alt="Connect with Strava"' in response.text
+    assert Path("ui/assets/connect-with-strava.png").read_bytes().startswith(b"\x89PNG")
 
 
 def test_cross_origin_mutation_is_rejected(client: TestClient):
@@ -155,6 +163,38 @@ def test_strava_state_rejects_tampering_and_expiry(monkeypatch):
 def test_strava_scope_parser_requires_private_activity_read():
     assert oauth_strava._scope_values("read,activity:read_all") == {"read", "activity:read_all"}
     assert "activity:read_all" not in oauth_strava._scope_values("read,activity:read")
+
+
+def test_strava_webhook_verification_and_fast_ack(client: TestClient, monkeypatch):
+    monkeypatch.setattr(settings, "STRAVA_WEBHOOK_VERIFY_TOKEN", "v" * 40)
+    rejected = client.get(
+        "/oauth/strava/webhook",
+        params={"hub.mode": "subscribe", "hub.challenge": "challenge", "hub.verify_token": "wrong"},
+    )
+    assert rejected.status_code == 403
+
+    verified = client.get(
+        "/oauth/strava/webhook",
+        params={"hub.mode": "subscribe", "hub.challenge": "challenge", "hub.verify_token": "v" * 40},
+    )
+    assert verified.status_code == 200
+    assert verified.json() == {"hub.challenge": "challenge"}
+
+    processed = []
+    monkeypatch.setattr(oauth_strava, "_process_strava_webhook", processed.append)
+    event = {
+        "object_type": "activity",
+        "object_id": 123,
+        "aspect_type": "create",
+        "owner_id": 456,
+        "subscription_id": 789,
+        "event_time": int(time.time()),
+        "updates": {},
+    }
+    acknowledged = client.post("/oauth/strava/webhook", json=event)
+    assert acknowledged.status_code == 200
+    assert acknowledged.json() == {"received": True}
+    assert processed[0].object_id == 123
 
 
 def test_strava_disconnect_revokes_provider_and_deletes_tokens(client: TestClient, monkeypatch):

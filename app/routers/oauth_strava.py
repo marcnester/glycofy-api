@@ -16,6 +16,7 @@ from typing import Any
 import requests
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth_utils import get_current_user
@@ -60,6 +61,17 @@ _LOGIN_SYNCS_IN_FLIGHT: set[int] = set()
 
 # ---- sport labels we normalize to "cycling-like"
 CYCLING_LIKE = {"Cycling", "Cycling (Virtual)"}
+
+
+class StravaWebhookEvent(BaseModel):
+    object_type: str = Field(pattern="^(activity|athlete)$")
+    object_id: int = Field(gt=0)
+    aspect_type: str = Field(pattern="^(create|update|delete)$")
+    owner_id: int = Field(gt=0)
+    subscription_id: int = Field(gt=0)
+    event_time: int = Field(gt=0)
+    updates: dict[str, Any] = Field(default_factory=dict)
+
 
 # ---- MET fallback (only used when feed+detail have no calories) -------------
 # Conservative values to avoid overestimation.
@@ -238,6 +250,48 @@ def _background_incremental_sync(user_id: int) -> None:
     finally:
         with _LOGIN_SYNC_LOCK:
             _LOGIN_SYNCS_IN_FLIGHT.discard(user_id)
+
+
+def _process_strava_webhook(event: StravaWebhookEvent) -> None:
+    """Process a validated event after the webhook response has been sent."""
+    with SessionLocal() as db:
+        acct = (
+            db.query(OAuthAccount)
+            .filter(
+                OAuthAccount.provider == "strava",
+                OAuthAccount.external_athlete_id == str(event.owner_id),
+            )
+            .first()
+        )
+        if not acct:
+            return
+
+        if event.object_type == "athlete" and event.updates.get("authorized") == "false":
+            user_id = acct.user_id
+            db.delete(acct)
+            db.commit()
+            logger.info("Processed Strava deauthorization user_id=%s", user_id)
+            return
+
+        if event.object_type != "activity":
+            return
+
+        if event.aspect_type == "delete":
+            db.query(Activity).filter(
+                Activity.user_id == acct.user_id,
+                Activity.source_provider == "strava",
+                Activity.source_id == str(event.object_id),
+            ).delete(synchronize_session=False)
+            db.commit()
+            return
+
+        user_id = acct.user_id
+
+    with _LOGIN_SYNC_LOCK:
+        if user_id in _LOGIN_SYNCS_IN_FLIGHT:
+            return
+        _LOGIN_SYNCS_IN_FLIGHT.add(user_id)
+    _background_incremental_sync(user_id)
 
 
 def schedule_strava_sync_on_login(
@@ -490,6 +544,27 @@ def strava_status(
             "expires_at": acct.expires_at if acct else None,
         }
     }
+
+
+@router.get("/webhook")
+def verify_strava_webhook(
+    mode: str = Query(alias="hub.mode"),
+    challenge: str = Query(alias="hub.challenge", min_length=1, max_length=256),
+    verify_token: str = Query(alias="hub.verify_token", min_length=1, max_length=256),
+):
+    configured_token = settings.STRAVA_WEBHOOK_VERIFY_TOKEN or ""
+    if mode != "subscribe" or not configured_token or not hmac.compare_digest(verify_token, configured_token):
+        raise HTTPException(status_code=403, detail="Invalid webhook verification")
+    return JSONResponse({"hub.challenge": challenge})
+
+
+@router.post("/webhook")
+def receive_strava_webhook(event: StravaWebhookEvent, background_tasks: BackgroundTasks):
+    expected_subscription = settings.STRAVA_WEBHOOK_SUBSCRIPTION_ID
+    if expected_subscription is not None and event.subscription_id != expected_subscription:
+        raise HTTPException(status_code=403, detail="Unknown webhook subscription")
+    background_tasks.add_task(_process_strava_webhook, event)
+    return {"received": True}
 
 
 @router.get("/start-url")

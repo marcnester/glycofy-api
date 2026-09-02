@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     STRAVA_CLIENT_ID: str | None = None
     STRAVA_CLIENT_SECRET: str | None = None
     STRAVA_REDIRECT_URI: str | None = None
+    STRAVA_WEBHOOK_VERIFY_TOKEN: str | None = None
+    STRAVA_WEBHOOK_SUBSCRIPTION_ID: int | None = None
 
     def strava_ready(self) -> bool:
         """Check whether Strava OAuth is fully configured."""
@@ -143,6 +145,8 @@ class Settings(BaseSettings):
             errors.append("OAUTH_RATE_LIMIT_PER_15_MINUTES must be positive")
         if not self.OAUTH_TOKEN_ENCRYPTION_KEY:
             errors.append("OAUTH_TOKEN_ENCRYPTION_KEY must be configured")
+        if self.strava_ready() and len(self.STRAVA_WEBHOOK_VERIFY_TOKEN or "") < 32:
+            errors.append("STRAVA_WEBHOOK_VERIFY_TOKEN must contain at least 32 characters")
         if self.SECURITY_ALERT_EMAIL_ENABLED:
             if not self.SMTP_HOST:
                 errors.append("SMTP_HOST is required when alert email is enabled")
