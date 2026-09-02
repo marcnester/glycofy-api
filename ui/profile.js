@@ -41,6 +41,7 @@
     if (!authed) return redirectToReturn("/ui/login.html");
     bindLogout();
     bindNameEditing();
+    bindAthleteSetup();
     await renderUser();
     await loadPreferences();
     await renderStravaStatus();
@@ -68,9 +69,124 @@
 
       const unitsEl = $("#user_units");
       if (unitsEl) unitsEl.textContent = (me?.units || "US").toUpperCase();
+
+      populateAthleteSetup(me);
     } catch (e) {
       console.warn("getUser failed", e);
     }
+  }
+
+  // ---- athlete setup ----
+  const athleteForm = $("#athlete_form");
+  const athleteUnits = $("#athlete_units");
+  const athleteSex = $("#athlete_sex");
+  const athleteDob = $("#athlete_dob");
+  const athleteHeight = $("#athlete_height");
+  const athleteWeight = $("#athlete_weight");
+  const athleteGoal = $("#athlete_goal");
+  const athleteStatus = $("#athlete_status");
+  let displayedUnits = "US";
+
+  const round1 = (value) => Math.round(value * 10) / 10;
+
+  function updateAthleteCompletion() {
+    const fields = [athleteUnits, athleteSex, athleteDob, athleteHeight, athleteWeight, athleteGoal];
+    const complete = fields.filter((field) => String(field?.value || "").trim()).length;
+    const percent = Math.round((complete / fields.length) * 100);
+    const label = $("#athlete_completion");
+    const fill = $("#athlete_completion_fill");
+    if (label) label.textContent = `${percent}% complete`;
+    if (fill) fill.style.width = `${percent}%`;
+  }
+
+  function configureMeasurementFields(units, convert = false) {
+    const metric = units === "Metric";
+    if (convert && athleteHeight?.value && athleteWeight?.value) {
+      const height = Number(athleteHeight.value);
+      const weight = Number(athleteWeight.value);
+      athleteHeight.value = round1(metric ? height * 2.54 : height / 2.54);
+      athleteWeight.value = round1(metric ? weight / 2.2046226218 : weight * 2.2046226218);
+    }
+    $("#height_label").textContent = metric ? "Height (cm)" : "Height (in)";
+    $("#weight_label").textContent = metric ? "Weight (kg)" : "Weight (lb)";
+    athleteHeight.min = metric ? "100" : "39";
+    athleteHeight.max = metric ? "250" : "98";
+    athleteWeight.min = metric ? "30" : "66";
+    athleteWeight.max = metric ? "400" : "882";
+    displayedUnits = units;
+  }
+
+  function populateAthleteSetup(me) {
+    const units = me?.units === "Metric" ? "Metric" : "US";
+    athleteUnits.value = units;
+    athleteSex.value = me?.sex || "";
+    athleteDob.value = me?.dob || "";
+    athleteGoal.value = me?.goal || "";
+    configureMeasurementFields(units);
+    if (me?.height_cm) athleteHeight.value = round1(units === "Metric" ? me.height_cm : me.height_cm / 2.54);
+    if (me?.weight_kg) athleteWeight.value = round1(units === "Metric" ? me.weight_kg : me.weight_kg * 2.2046226218);
+    updateAthleteCompletion();
+  }
+
+  function bindAthleteSetup() {
+    if (!athleteForm) return;
+    const oldest = new Date();
+    oldest.setFullYear(oldest.getFullYear() - 120);
+    const youngest = new Date();
+    youngest.setFullYear(youngest.getFullYear() - 13);
+    athleteDob.min = oldest.toISOString().slice(0, 10);
+    athleteDob.max = youngest.toISOString().slice(0, 10);
+
+    [athleteSex, athleteDob, athleteHeight, athleteWeight, athleteGoal].forEach((field) => {
+      field?.addEventListener("input", updateAthleteCompletion);
+    });
+    athleteUnits?.addEventListener("change", () => {
+      const next = athleteUnits.value === "Metric" ? "Metric" : "US";
+      configureMeasurementFields(next, next !== displayedUnits);
+      updateAthleteCompletion();
+    });
+
+    athleteForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!athleteForm.checkValidity()) {
+        athleteForm.reportValidity();
+        athleteStatus.textContent = "Please complete every field with a valid value.";
+        return;
+      }
+      const metric = athleteUnits.value === "Metric";
+      const height = Number(athleteHeight.value);
+      const weight = Number(athleteWeight.value);
+      const payload = {
+        units: athleteUnits.value,
+        sex: athleteSex.value,
+        dob: athleteDob.value,
+        height_cm: round1(metric ? height : height * 2.54),
+        weight_kg: round1(metric ? weight : weight / 2.2046226218),
+        goal: athleteGoal.value,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      };
+      const saveButton = $("#athlete_save");
+      saveButton.disabled = true;
+      athleteStatus.textContent = "Saving…";
+      try {
+        const updated = await fetchJSON("/users/me", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const unitsEl = $("#user_units");
+        if (unitsEl) unitsEl.textContent = updated.units.toUpperCase();
+        athleteStatus.textContent = "Saved. Your next plan will use these athlete details.";
+        flash("Athlete setup saved");
+        updateAthleteCompletion();
+      } catch (error) {
+        console.error("athlete setup update failed", error);
+        athleteStatus.textContent = "Could not save athlete setup.";
+        flash("Could not save athlete setup", "error");
+      } finally {
+        saveButton.disabled = false;
+      }
+    });
   }
 
   function bindLogout() {

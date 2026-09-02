@@ -150,6 +150,13 @@
       color:#071b14
     }
     .save-hint{font-size:.85rem}
+    .athlete-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+    .athlete-grid .input{width:100%;box-sizing:border-box}
+    .athlete-actions{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+    .completion-track{height:8px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.08)}
+    .completion-fill{height:100%;width:0;background:#50c88a;transition:width .2s ease}
+    .btn--primary{background:#50c88a!important;border-color:#50c88a!important;color:#071b14!important}
+    @media (max-width:640px){.athlete-grid{grid-template-columns:1fr}}
 
     /* Inline editable profile name */
     .editable-field{
@@ -202,6 +209,65 @@
         <div class="field"><label>Email</label><div id="user_email">—</div></div>
         <div class="field"><label>Units</label><div id="user_units">—</div></div>
       </div>
+    </section>
+
+    <section class="card" style="margin-top:18px;padding:22px;">
+      <div class="athlete-actions">
+        <div>
+          <h2 class="section-title">Athlete setup</h2>
+          <p class="muted" style="margin:0">These details power your energy, recovery, and macro targets.</p>
+        </div>
+        <strong id="athlete_completion" class="pill" role="status">0% complete</strong>
+      </div>
+      <div class="completion-track" aria-hidden="true" style="margin-top:16px"><div id="athlete_completion_fill" class="completion-fill"></div></div>
+
+      <form id="athlete_form" style="margin-top:20px" novalidate>
+        <div class="athlete-grid">
+          <div class="field">
+            <label for="athlete_units">Units</label>
+            <select id="athlete_units" class="input" required>
+              <option value="US">US</option>
+              <option value="Metric">Metric</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="athlete_sex">Sex used for energy estimate</label>
+            <select id="athlete_sex" class="input" required>
+              <option value="">Select</option>
+              <option value="female">Female</option>
+              <option value="male">Male</option>
+              <option value="unspecified">Prefer not to say</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="athlete_dob">Date of birth</label>
+            <input id="athlete_dob" class="input" type="date" required />
+          </div>
+          <div class="field">
+            <label id="height_label" for="athlete_height">Height (in)</label>
+            <input id="athlete_height" class="input" type="number" min="39" max="98" step="0.1" inputmode="decimal" required />
+          </div>
+          <div class="field">
+            <label id="weight_label" for="athlete_weight">Weight (lb)</label>
+            <input id="athlete_weight" class="input" type="number" min="66" max="882" step="0.1" inputmode="decimal" required />
+          </div>
+          <div class="field">
+            <label for="athlete_goal">Primary goal</label>
+            <select id="athlete_goal" class="input" required>
+              <option value="">Select</option>
+              <option value="performance">Fuel performance</option>
+              <option value="maintain">Maintain weight</option>
+              <option value="lose">Lose body fat gradually</option>
+              <option value="gain">Gain muscle or weight</option>
+            </select>
+          </div>
+        </div>
+        <p class="muted" style="margin:14px 0 0">Glycofy uses standard energy equations as a starting point and adjusts recommendations using your training. It is not medical advice.</p>
+        <div class="athlete-actions" style="margin-top:16px">
+          <span id="athlete_status" class="muted save-hint">Complete all fields for personalized targets.</span>
+          <button id="athlete_save" class="btn btn--pill btn--primary" type="submit">Save athlete setup</button>
+        </div>
+      </form>
     </section>
 
     <!-- Meal Preferences -->
@@ -279,6 +345,6 @@
   </main>
 
   <script src="/ui/core.js?v=2025-11-04"></script>
-  <script src="/ui/profile.js?v=2026-09-01-strava-polish"></script>
+  <script src="/ui/profile.js?v=2026-09-02-athlete-onboarding"></script>
 </body>
 </html>

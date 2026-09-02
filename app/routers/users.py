@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -76,13 +77,25 @@ class UserUpdate(BaseModel):
     display_name: str | None = Field(None, max_length=128)
     name: str | None = Field(None, max_length=128)
 
-    sex: str | None = Field(None, max_length=16)
+    sex: Literal["male", "female", "unspecified"] | None = None
     dob: date | None = None
-    height_cm: float | None = Field(None, ge=0, le=300)  # 0–300 cm guard
-    weight_kg: float | None = Field(None, ge=0, le=400)  # 0–400 kg guard
+    height_cm: float | None = Field(None, ge=100, le=250)
+    weight_kg: float | None = Field(None, ge=30, le=400)
     diet_pref: str | None = Field(None, max_length=32)
-    goal: str | None = Field(None, max_length=32)
+    goal: Literal["performance", "maintain", "lose", "gain"] | None = None
     timezone: str | None = Field(None, max_length=64)
+    units: Literal["US", "Metric"] | None = None
+
+    @field_validator("dob")
+    @classmethod
+    def validate_dob(cls, value: date | None) -> date | None:
+        if value is None:
+            return value
+        today = date.today()
+        age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+        if age < 13 or age > 120:
+            raise ValueError("Age must be between 13 and 120")
+        return value
 
 
 # ---------- Routes ----------
@@ -170,6 +183,9 @@ def update_me(
         changed = True
     if body.timezone is not None and body.timezone != user.timezone:
         user.timezone = body.timezone
+        changed = True
+    if body.units is not None and body.units != user.units:
+        user.units = body.units
         changed = True
 
     if changed:

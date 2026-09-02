@@ -78,6 +78,55 @@ def test_profile_uses_official_strava_connect_asset(client: TestClient):
     assert Path("ui/assets/connect-with-strava.png").read_bytes().startswith(b"\x89PNG")
 
 
+def test_profile_exposes_complete_athlete_setup(client: TestClient):
+    response = client.get("/ui/profile.html")
+    assert response.status_code == 200
+    for field_id in (
+        "athlete_units",
+        "athlete_sex",
+        "athlete_dob",
+        "athlete_height",
+        "athlete_weight",
+        "athlete_goal",
+    ):
+        assert f'id="{field_id}"' in response.text
+    assert "These details power your energy, recovery, and macro targets." in response.text
+
+
+def test_athlete_setup_round_trips_through_user_profile(client: TestClient):
+    signup = client.post(
+        "/auth/signup",
+        json={"email": "athlete@example.com", "password": "a-secure-password-123"},
+    )
+    assert signup.status_code == 200
+
+    payload = {
+        "units": "Metric",
+        "sex": "female",
+        "dob": "1990-05-12",
+        "height_cm": 168.5,
+        "weight_kg": 61.2,
+        "goal": "performance",
+        "timezone": "America/Los_Angeles",
+    }
+    updated = client.put("/users/me", json=payload)
+
+    assert updated.status_code == 200
+    assert {key: updated.json()[key] for key in payload} == payload
+    assert client.get("/users/me").json()["goal"] == "performance"
+
+
+def test_athlete_setup_rejects_invalid_measurements(client: TestClient):
+    client.post(
+        "/auth/signup",
+        json={"email": "invalid-athlete@example.com", "password": "a-secure-password-123"},
+    )
+
+    assert client.put("/users/me", json={"weight_kg": 5}).status_code == 422
+    assert client.put("/users/me", json={"height_cm": 400}).status_code == 422
+    assert client.put("/users/me", json={"goal": "crash-diet"}).status_code == 422
+
+
 def test_cross_origin_mutation_is_rejected(client: TestClient):
     response = client.post("/auth/logout", headers={"Origin": "https://attacker.example"})
     assert response.status_code == 403
