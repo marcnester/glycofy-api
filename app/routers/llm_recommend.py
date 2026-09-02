@@ -10,7 +10,10 @@ import logging
 import math
 import os
 import re
+import threading
 import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -19,7 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth_utils import get_current_user
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.models import (
     Plan,
     PlanItem,
@@ -139,6 +142,23 @@ class WeeklyDayRequest(BaseModel):
 
 class WeeklyRecommendRequest(BaseModel):
     days: list[WeeklyDayRequest] = Field(default_factory=list, max_length=14)
+
+
+class WeeklyJobStartResponse(BaseModel):
+    job_id: str
+    status: str
+
+
+class WeeklyJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    stage: str
+    message: str
+    completed_days: int = 0
+    total_days: int = 7
+    elapsed_seconds: float = 0.0
+    result: dict[str, Any] | None = None
+    error: str | None = None
 
 
 # ===========================
@@ -3078,6 +3098,232 @@ def recommend_recipes(
 # ---------- Weekly, training-aware API (persists) ----------
 
 
+def _weekly_batch_schema() -> dict[str, Any]:
+    ingredient = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["name", "amount", "unit"],
+        "properties": {
+            "name": {"type": "string"},
+            "amount": {"type": "string"},
+            "unit": {"type": "string"},
+        },
+    }
+    macros = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["kcal", "protein_g", "carbs_g", "fat_g"],
+        "properties": {name: {"type": "number"} for name in _MACROS},
+    }
+    meal = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "slot",
+            "title",
+            "ingredients",
+            "instructions",
+            "protein_group",
+            "protein_item",
+            "carb_item",
+            "macros",
+            "reason",
+        ],
+        "properties": {
+            "slot": {"type": "string", "enum": list(SLOTS)},
+            "title": {"type": "string"},
+            "ingredients": {"type": "array", "minItems": 4, "maxItems": 8, "items": ingredient},
+            "instructions": {"type": "array", "minItems": 2, "maxItems": 6, "items": {"type": "string"}},
+            "protein_group": {
+                "type": "string",
+                "enum": ["fish", "poultry", "beef", "pork", "eggs", "dairy", "plant", "unknown"],
+            },
+            "protein_item": {"type": "string"},
+            "carb_item": {"type": "string"},
+            "macros": macros,
+            "reason": {"type": "string"},
+        },
+    }
+    return {
+        "name": "glycofy_week_plan",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["days"],
+            "properties": {
+                "days": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 14,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["date", "meals"],
+                        "properties": {
+                            "date": {"type": "string"},
+                            "meals": {"type": "array", "minItems": 4, "maxItems": 4, "items": meal},
+                        },
+                    },
+                }
+            },
+        },
+    }
+
+
+def _batch_week_recommendations(
+    client: ClientType,
+    *,
+    days: list[dict[str, Any]],
+    primary_diet: str,
+    diet_tags: list[str],
+    exclusions: list[str],
+) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
+    """Generate the whole week in one model round-trip and discard unsafe cells."""
+    if not client or not days or _circuit_open() or _BUDGET.spent_usd >= _daily_budget_usd():
+        return {}, {"mode": "unavailable"}
+
+    system = (
+        "You are Glycofy's elite sports-nutrition planner. Design the COMPLETE week as one coherent plan. "
+        "Return exactly one breakfast, lunch, dinner, and snack for every requested date. "
+        "Respect diet tags and ingredient exclusions as hard safety constraints. Keep every recipe practical, "
+        "single-serving, and cookable in about 30 minutes with measured ingredients. Keep calories and protein "
+        "within about 15% of each slot target. Never repeat a meal title during the week. Within each day, do not "
+        "repeat a protein_item or carb_item across breakfast, lunch, and dinner. Across adjacent days, vary main "
+        "proteins. Use no protein_group more than twice for the same slot during the week when alternatives exist. "
+        "Plan globally first so variety is intentional, then emit only the requested structured data."
+    )
+    payload = {
+        "primary_diet": primary_diet,
+        "diet_tags": diet_tags,
+        "ingredient_exclusions": exclusions,
+        "days": days,
+    }
+    started = time.perf_counter()
+    try:
+        response = client.chat.completions.create(
+            model=_openai_model(),
+            temperature=0.2,
+            max_tokens=int(os.environ.get("OPENAI_WEEKLY_MAX_TOKENS", "12000")),
+            response_format={"type": "json_schema", "json_schema": _weekly_batch_schema()},
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+        )
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        usage, cost = _extract_usage_meta(response)
+        _record_success(cost)
+        raw = response.choices[0].message.content if response.choices else None
+        parsed = json.loads(raw) if raw else {}
+    except Exception as exc:
+        _record_failure()
+        logger.exception("LLM weekly batch failed: %s", exc)
+        return {}, {"mode": "error", "error": type(exc).__name__}
+
+    targets = {(day["date"], meal["slot"]): meal["target_macros"] for day in days for meal in day.get("meals", [])}
+    valid_dates = {day["date"] for day in days}
+    output: dict[str, dict[str, SlotRecommendation]] = {}
+    week_titles: set[str] = set()
+    protein_group_counts: dict[tuple[str, str], int] = {}
+    previous_main_proteins: set[str] = set()
+    rejected = 0
+
+    for day in parsed.get("days", []):
+        date_iso = str(day.get("date") or "")
+        if date_iso not in valid_dates:
+            continue
+        slots: dict[str, SlotRecommendation] = {}
+        day_proteins: set[str] = set()
+        day_carbs: set[str] = set()
+        current_main_proteins: set[str] = set()
+        for meal in day.get("meals", []):
+            slot = _normalize_slot(str(meal.get("slot") or ""))
+            target = targets.get((date_iso, slot))
+            title = str(meal.get("title") or "").strip()
+            protein = str(meal.get("protein_item") or "").strip().lower()
+            carb = str(meal.get("carb_item") or "").strip().lower()
+            ingredients = meal.get("ingredients") or []
+            instructions = meal.get("instructions") or []
+            macros = meal.get("macros") or {}
+            protein_group = str(meal.get("protein_group") or "unknown").strip().lower()
+            title_key = _meal_similarity_key(title)
+            macro_ok = bool(target) and all(
+                _safe_float(target.get(name)) <= 0
+                or abs(_safe_float(macros.get(name)) - _safe_float(target.get(name))) / _safe_float(target.get(name))
+                <= 0.25
+                for name in ("kcal", "protein_g")
+            )
+            group_key = (slot, protein_group)
+            invalid = (
+                slot not in SLOTS
+                or slot in slots
+                or not target
+                or not title_key
+                or title_key in week_titles
+                or not _ingredients_have_quantities(ingredients)
+                or not isinstance(instructions, list)
+                or len(instructions) < 2
+                or not macro_ok
+                or _text_violates_exclusions(f"{title} {json.dumps(ingredients)}", exclusions)
+            )
+            if protein_group != "unknown" and protein_group_counts.get(group_key, 0) >= 2:
+                invalid = True
+            if slot in _DAY_UNIQUE_SLOTS:
+                invalid = invalid or not protein or not carb or protein in day_proteins or carb in day_carbs
+                if previous_main_proteins and protein in previous_main_proteins:
+                    invalid = True
+            if invalid:
+                rejected += 1
+                continue
+            ai_idea = {
+                "title": title,
+                "ingredients": ingredients,
+                "instructions": instructions,
+                "protein_group": protein_group,
+                "protein_item": protein,
+                "carb_item": carb,
+                "approx_macros": {
+                    name: _safe_float(macros.get(name), _safe_float(target.get(name))) for name in _MACROS
+                },
+            }
+            slots[slot] = SlotRecommendation(
+                slot=slot,
+                target={name: _safe_float(target.get(name)) for name in _MACROS},
+                reason=str(meal.get("reason") or "Balanced for your weekly goals."),
+                meta={
+                    "provider": "openai",
+                    "mode": "create",
+                    "batch": True,
+                    "protein_group": ai_idea["protein_group"],
+                    "protein_item": protein,
+                    "carb_item": carb,
+                    "ai_idea": ai_idea,
+                },
+                ai_idea=ai_idea,
+            )
+            week_titles.add(title_key)
+            if protein_group != "unknown":
+                protein_group_counts[group_key] = protein_group_counts.get(group_key, 0) + 1
+            if slot in _DAY_UNIQUE_SLOTS:
+                day_proteins.add(protein)
+                day_carbs.add(carb)
+                current_main_proteins.add(protein)
+        output[date_iso] = slots
+        previous_main_proteins = current_main_proteins
+
+    meta = {
+        "mode": "batch",
+        "latency_ms": latency_ms,
+        "usage": usage,
+        "cost_usd": round(cost, 6),
+        "accepted": sum(len(slots) for slots in output.values()),
+        "rejected": rejected,
+    }
+    logger.info("LLM weekly batch completed: %s", meta)
+    return output, meta
+
+
 @router.post("/recommend/weekly/apply_payload", tags=["llm"])
 def recommend_weekly_apply(
     request: Request,
@@ -3121,6 +3367,41 @@ def recommend_weekly_apply(
     # Cross-day rolling diversity tracking
     rolling_protein_items: list[str] = []
     rolling_carb_items: list[str] = []
+
+    # Build all training-adjusted targets up front and ask the model to design
+    # the week globally. Missing/invalid cells fall through to the proven
+    # per-slot recommender below as targeted repairs.
+    batch_days: list[dict[str, Any]] = []
+    for requested_day in payload.days:
+        if not requested_day.meals:
+            continue
+        requested_date = _parse_iso_date(requested_day.date)
+        requested_nutrition = calculate_training_nutrition(
+            db=db,
+            user=user,
+            plan_date=requested_date,
+            baseline=_baseline_from_meals(requested_day.meals),
+        )
+        requested_targets = _apply_nutrition_targets(requested_day.meals, requested_nutrition)
+        batch_days.append(
+            {
+                "date": requested_day.date,
+                "training": requested_nutrition.to_dict()["training"],
+                "diet_tags": requested_day.diet_tags or [],
+                "meals": [
+                    {"slot": meal.slot, "target_macros": meal.model_dump(exclude={"slot"})}
+                    for meal in requested_targets
+                ],
+            }
+        )
+
+    batch_items, batch_meta = _batch_week_recommendations(
+        client,
+        days=batch_days,
+        primary_diet=primary_diet,
+        diet_tags=pref_tags,
+        exclusions=_preference_exclusions(pref),
+    )
 
     for day in payload.days:
         date_iso = day.date
@@ -3171,24 +3452,43 @@ def recommend_weekly_apply(
         day_items: list[SlotRecommendation] = []
 
         for scaled in adjusted_meals:
-            rec = _recommend_for_single_meal(
-                client=client,
-                db=db,
-                date=date_iso,
-                tgt=scaled,
-                diet_tags=day_diet_tags,
-                primary_diet=primary_diet,
-                pref=pref,
-                provider=provider,
-                used_protein_items=used_protein_items,
-                used_carb_items=used_carb_items,
-                used_recipe_ids=used_recipe_ids,
-                used_meal_keys=used_meal_keys,
-                allow_new_recipe=allow_new,
-                week_protein_counts=week_protein_counts,
-                protein_cap_per_slot=2,
-                prefer_fast_catalog=True,
-            )
+            slot = _normalize_slot(scaled.slot)
+            rec = batch_items.get(date_iso, {}).get(slot)
+            if rec is None:
+                rec = _recommend_for_single_meal(
+                    client=client,
+                    db=db,
+                    date=date_iso,
+                    tgt=scaled,
+                    diet_tags=day_diet_tags,
+                    primary_diet=primary_diet,
+                    pref=pref,
+                    provider=provider,
+                    used_protein_items=used_protein_items,
+                    used_carb_items=used_carb_items,
+                    used_recipe_ids=used_recipe_ids,
+                    used_meal_keys=used_meal_keys,
+                    allow_new_recipe=allow_new,
+                    week_protein_counts=week_protein_counts,
+                    protein_cap_per_slot=2,
+                    prefer_fast_catalog=True,
+                )
+            else:
+                meta = rec.meta or {}
+                protein_item = str(meta.get("protein_item") or "").strip().lower()
+                carb_item = str(meta.get("carb_item") or "").strip().lower()
+                protein_group = str(meta.get("protein_group") or "").strip().lower()
+                meal_key = _meal_similarity_key((rec.ai_idea or {}).get("title"))
+                if meal_key:
+                    used_meal_keys.add(meal_key)
+                if slot in _DAY_UNIQUE_SLOTS:
+                    if protein_item:
+                        used_protein_items.append(protein_item)
+                    if carb_item:
+                        used_carb_items.append(carb_item)
+                if protein_group and protein_group != "unknown":
+                    key = (slot, protein_group)
+                    week_protein_counts[key] = week_protein_counts.get(key, 0) + 1
             day_items.append(rec)
 
         slots_present = sorted({it.slot for it in day_items})
@@ -3284,12 +3584,152 @@ def recommend_weekly_apply(
     resp = {
         "provider": provider,
         "days": out_days,
+        "generation": batch_meta,
         "persist": {
             "applied": persist_summaries,
         },
     }
     logger.info("LLM weekly: user_id=%s completed provider=%s days=%d", user.id, provider, len(out_days))
     return resp
+
+
+_WEEKLY_JOBS: dict[str, dict[str, Any]] = {}
+_WEEKLY_JOBS_LOCK = threading.Lock()
+_WEEKLY_JOB_TTL_SECONDS = 60 * 60
+_WEEKLY_JOB_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="weekly-plan")
+
+
+def _update_weekly_job(job_id: str, **updates: Any) -> None:
+    with _WEEKLY_JOBS_LOCK:
+        if job_id in _WEEKLY_JOBS:
+            _WEEKLY_JOBS[job_id].update(updates)
+
+
+def _run_weekly_job(job_id: str, payload_data: dict[str, Any], user_id: int, ip: str) -> None:
+    started = time.perf_counter()
+    _update_weekly_job(
+        job_id,
+        status="running",
+        stage="generating",
+        message="Designing 28 meals with AI…",
+        started_monotonic=started,
+    )
+    with SessionLocal() as db:
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user is None:
+                raise RuntimeError("User no longer exists")
+
+            class JobRequest:
+                pass
+
+            job_request = JobRequest()
+            job_request.client = type("JobClient", (), {"host": ip})()
+
+            result = recommend_weekly_apply(
+                job_request,  # type: ignore[arg-type]
+                WeeklyRecommendRequest.model_validate(payload_data),
+                db,
+                user,
+            )
+            elapsed = round(time.perf_counter() - started, 2)
+            _update_weekly_job(
+                job_id,
+                status="completed",
+                stage="completed",
+                message="Your AI week is ready.",
+                completed_days=len(result.get("days", [])),
+                elapsed_seconds=elapsed,
+                result=result,
+                completed_at=time.time(),
+            )
+        except Exception as exc:
+            db.rollback()
+            logger.exception("LLM weekly job failed job_id=%s", job_id)
+            _update_weekly_job(
+                job_id,
+                status="failed",
+                stage="failed",
+                message="We couldn't finish this week plan.",
+                error=str(getattr(exc, "detail", None) or exc),
+                elapsed_seconds=round(time.perf_counter() - started, 2),
+                completed_at=time.time(),
+            )
+
+
+def _prune_weekly_jobs() -> None:
+    cutoff = time.time() - _WEEKLY_JOB_TTL_SECONDS
+    with _WEEKLY_JOBS_LOCK:
+        expired = [
+            job_id
+            for job_id, job in _WEEKLY_JOBS.items()
+            if job.get("completed_at", job.get("created_at", time.time())) < cutoff
+        ]
+        for job_id in expired:
+            _WEEKLY_JOBS.pop(job_id, None)
+
+
+@router.post("/recommend/weekly/jobs", response_model=WeeklyJobStartResponse, tags=["llm"])
+def start_weekly_job(
+    request: Request,
+    payload: WeeklyRecommendRequest = Body(...),
+    user: User = Depends(get_current_user),
+):
+    if not payload.days:
+        raise HTTPException(status_code=400, detail="No days provided")
+    _prune_weekly_jobs()
+    ip = request.client.host if request and request.client else "unknown"
+    with _WEEKLY_JOBS_LOCK:
+        existing = next(
+            (
+                job
+                for job in _WEEKLY_JOBS.values()
+                if job.get("user_id") == user.id and job.get("status") in {"queued", "running"}
+            ),
+            None,
+        )
+        if existing:
+            return {"job_id": existing["job_id"], "status": existing["status"]}
+        job_id = uuid.uuid4().hex
+        _WEEKLY_JOBS[job_id] = {
+            "job_id": job_id,
+            "user_id": user.id,
+            "status": "queued",
+            "stage": "queued",
+            "message": "Starting your AI week…",
+            "completed_days": 0,
+            "total_days": len(payload.days),
+            "elapsed_seconds": 0.0,
+            "result": None,
+            "error": None,
+            "created_at": time.time(),
+        }
+    _WEEKLY_JOB_EXECUTOR.submit(_run_weekly_job, job_id, payload.model_dump(), user.id, ip)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@router.get("/recommend/weekly/jobs/{job_id}", response_model=WeeklyJobStatusResponse, tags=["llm"])
+def weekly_job_status(job_id: str, user: User = Depends(get_current_user)):
+    with _WEEKLY_JOBS_LOCK:
+        job = dict(_WEEKLY_JOBS.get(job_id) or {})
+    if not job or job.get("user_id") != user.id:
+        raise HTTPException(status_code=404, detail="Weekly plan job not found")
+    if job.get("status") in {"queued", "running"}:
+        started = job.get("started_monotonic")
+        elapsed = round(time.perf_counter() - started, 1) if started else 0.0
+        job["elapsed_seconds"] = elapsed
+        phases = (
+            (45, "saving", "Saving your personalized week…"),
+            (32, "instructions", "Adding quantities and cooking instructions…"),
+            (22, "safety", "Checking diet and ingredient exclusions…"),
+            (12, "balancing", "Balancing macros and weekly variety…"),
+            (0, "generating", "Designing 28 meals as one balanced week…"),
+        )
+        for threshold, stage, message in phases:
+            if elapsed >= threshold:
+                job.update({"stage": stage, "message": message})
+                break
+    return WeeklyJobStatusResponse.model_validate(job)
 
 
 # ---------- Training curve API (for graphs in UI) ----------

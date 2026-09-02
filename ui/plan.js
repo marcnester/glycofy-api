@@ -78,11 +78,45 @@
   // Busy overlay
   const busyEl = $('plan-busy');
   const busyMsg = $('plan-busy-msg');
+  const busyMeta = $('plan-busy-meta');
+  let busyStartedAt = 0;
+  let busyTimer = null;
+
+  const WEEKLY_PROGRESS_STAGES = [
+    [0, 'Reviewing your goals and training…'],
+    [5, 'Designing 28 meals as one balanced week…'],
+    [14, 'Balancing macros and weekly variety…'],
+    [24, 'Checking diet and ingredient exclusions…'],
+    [34, 'Adding quantities and cooking instructions…'],
+    [45, 'Saving your personalized week…'],
+  ];
+
+  function updateBusyProgress(serverMessage) {
+    if (!busyStartedAt) return;
+    const elapsed = Math.max(0, Math.floor((Date.now() - busyStartedAt) / 1000));
+    const localStage = WEEKLY_PROGRESS_STAGES.reduce(
+      (current, stage) => (elapsed >= stage[0] ? stage : current),
+      WEEKLY_PROGRESS_STAGES[0]
+    );
+    if (busyMsg) busyMsg.textContent = serverMessage || localStage[1];
+    if (busyMeta) {
+      busyMeta.textContent = `${elapsed}s elapsed · You can safely leave this page; planning will continue.`;
+    }
+  }
 
   function setBusy(on, msg) {
     if (!busyEl) return;
     busyEl.style.display = on ? 'flex' : 'none';
-    if (busyMsg && msg) busyMsg.textContent = msg;
+    if (on) {
+      busyStartedAt = Date.now();
+      updateBusyProgress(msg);
+      clearInterval(busyTimer);
+      busyTimer = setInterval(() => updateBusyProgress(), 1000);
+    } else {
+      clearInterval(busyTimer);
+      busyTimer = null;
+      busyStartedAt = 0;
+    }
   }
 
   // Logout wiring for this page
@@ -401,6 +435,47 @@
       out.push(`${y}-${m}-${day}`);
     }
     return out;
+  }
+
+  const WEEKLY_JOB_STORAGE_KEY = 'glycofy.weeklyPlanningJob';
+
+  async function pollWeeklyJob(jobId) {
+    while (true) {
+      const response = await fetch(`/v1/llm/recommend/weekly/jobs/${jobId}`, {
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error(`Weekly planning status failed: ${response.status}`);
+      }
+      const job = await response.json();
+      if (job.status === 'completed') return job.result;
+      if (job.status === 'failed') {
+        throw new Error(job.error || 'Weekly AI planning failed.');
+      }
+      updateBusyProgress(job.message || null);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  }
+
+  async function startWeeklyJob(payload, context) {
+    const response = await fetch('/v1/llm/recommend/weekly/jobs', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.detail || `Weekly AI planning failed: ${response.status}`);
+    }
+    const job = await response.json();
+    sessionStorage.setItem(
+      WEEKLY_JOB_STORAGE_KEY,
+      JSON.stringify({ jobId: job.job_id, ...context })
+    );
+    const result = await pollWeeklyJob(job.job_id);
+    sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
+    return result;
   }
 
   // ----- API calls -----
@@ -1127,34 +1202,11 @@
           throw new Error('No meals found to plan for the week.');
         }
 
-        // 2) Call weekly LLM endpoint once — backend both recommends and applies
-        const r = await fetch('/v1/llm/recommend/weekly/apply_payload', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ days: weeklyDaysPayload }),
-        });
-        if (!r.ok) {
-          let detail = null;
-          try {
-            const errorBody = await r.json();
-            detail = errorBody?.detail || errorBody;
-          } catch (_) {
-            // Keep the status-based fallback when the server did not return JSON.
-          }
-          const message =
-            (typeof detail === 'string' && detail) ||
-            detail?.message ||
-            `Weekly AI recommend failed: ${r.status}`;
-          const context = [
-            detail?.date ? `Date: ${detail.date}` : '',
-            Array.isArray(detail?.missing_slots) && detail.missing_slots.length
-              ? `Missing: ${detail.missing_slots.join(', ')}`
-              : '',
-          ].filter(Boolean).join(' · ');
-          throw new Error(context ? `${message} (${context})` : message);
-        }
-        const data = await r.json();
+        // 2) Start a resumable background job and poll lightweight status.
+        const data = await startWeeklyJob(
+          { days: weeklyDaysPayload },
+          { startIso: start, prettyStart, prettyEnd }
+        );
         console.log('LLM weekly response', data);
 
         const outDays = Array.isArray(data.days) ? data.days : [];
@@ -1196,6 +1248,33 @@
       }
     });
   }
+
+  // A weekly job continues on the server if the page is refreshed or the user
+  // navigates away. Reconnect to it when this planner is opened again.
+  (async function resumeWeeklyJob() {
+    let saved = null;
+    try {
+      saved = JSON.parse(sessionStorage.getItem(WEEKLY_JOB_STORAGE_KEY) || 'null');
+    } catch (_) {
+      sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
+    }
+    if (!saved?.jobId) return;
+    setBusy(true, 'Reconnecting to your AI week…');
+    try {
+      await pollWeeklyJob(saved.jobId);
+      sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
+      const refreshed = await loadPlan(saved.startIso || getCurrentDate());
+      if (refreshed) renderPlan(refreshed);
+      flash(
+        `AI suggestions applied for this week (${saved.prettyStart || 'start'} – ${saved.prettyEnd || 'end'}).`
+      );
+    } catch (err) {
+      sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
+      flash(String(err.message || 'Failed to resume weekly planning.'), 'error');
+    } finally {
+      setBusy(false);
+    }
+  })();
 
   // ----- per-meal Swap / Why -----
   if (mealsRoot) {

@@ -238,8 +238,8 @@
     }
 
     .plan-busy__box{
-      min-width:220px;
-      padding:16px 20px;
+      width:min(420px,calc(100vw - 32px));
+      padding:22px 24px;
       border-radius:14px;
       background:#151b24;
       border:1px solid rgba(255,255,255,.12);
@@ -247,6 +247,13 @@
       font-size:14px;
       text-align:center;
     }
+
+    .plan-busy__title{font-size:17px;font-weight:700;margin-bottom:8px}
+    .plan-busy__message{color:rgba(255,255,255,.78);min-height:22px}
+    .plan-busy__bar{height:6px;margin:18px 0 12px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.1)}
+    .plan-busy__bar::after{content:"";display:block;width:42%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#6ee7b7,#60a5fa);animation:plan-progress 1.35s ease-in-out infinite}
+    .plan-busy__meta{font-size:12px;color:rgba(255,255,255,.55)}
+    @keyframes plan-progress{0%{transform:translateX(-110%)}100%{transform:translateX(340%)}}
 
     .plan-msg{
       margin:12px 0;
@@ -424,11 +431,14 @@
 
   <div id="plan-busy" class="plan-busy" style="display:none;">
     <div class="plan-busy__box">
-      <span id="plan-busy-msg">Working…</span>
+      <div class="plan-busy__title">Building your week</div>
+      <div id="plan-busy-msg" class="plan-busy__message" aria-live="polite">Working…</div>
+      <div class="plan-busy__bar" aria-hidden="true"></div>
+      <div id="plan-busy-meta" class="plan-busy__meta">Usually 20–40 seconds</div>
     </div>
   </div>
 
   <script src="/ui/core.js?v=2025-11-04" defer></script>
-  <script src="/ui/plan.js?v=2026-08-06-quantities-speed" defer></script>
+  <script src="/ui/plan.js?v=2026-09-01-weekly-batch" defer></script>
 </body>
 </html>
