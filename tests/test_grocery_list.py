@@ -5,13 +5,21 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
 from app.main import app
-from app.routers.plans import _grocery_category, _grocery_name, _grocery_unit
+from app.routers.plans import (
+    _format_grocery_measurements,
+    _grocery_category,
+    _grocery_measurement,
+    _grocery_name,
+    _grocery_unit,
+)
 
 
 def test_grocery_name_normalizes_aliases_and_whitespace():
     assert _grocery_name("  Mixed   Berries  ") == ("mixed berries", "Mixed berries")
     assert _grocery_name("berries") == ("mixed berries", "Mixed berries")
     assert _grocery_name("eggs") == ("egg", "Eggs")
+    assert _grocery_name("fresh spinach") == ("spinach", "Spinach")
+    assert _grocery_name("salmon fillet") == ("salmon", "Salmon")
 
 
 def test_grocery_unit_normalizes_common_plural_units():
@@ -25,6 +33,18 @@ def test_grocery_category_uses_whole_words_and_explicit_metadata():
     assert _grocery_category("Chicken breast") == "Meat & Seafood"
     assert _grocery_category("Veggie mix") == "Other"
     assert _grocery_category("Anything", {"category": "Frozen"}) == "Frozen"
+
+
+def test_grocery_measurements_parse_fractions_and_convert_compatible_units():
+    assert _grocery_measurement(None, "1/2 cup") == ("volume_tbsp", 8)
+    assert _grocery_measurement(8, "oz") == ("mass_g", 226.796)
+    combined = _format_grocery_measurements("shrimp", {"mass_g": 483.9415}, "US")
+    assert combined == {"quantity": 17.1, "unit": "oz", "measurement_summary": None}
+
+
+def test_piece_weight_bridge_collapses_avocado_grams_and_counts():
+    combined = _format_grocery_measurements("avocado", {"mass_g": 150, "count": 1.5}, "US")
+    assert combined == {"quantity": 3, "unit": "item", "measurement_summary": None}
 
 
 def test_weekly_grocery_approval_is_persisted_and_detects_plan_changes():
@@ -51,7 +71,7 @@ def test_weekly_grocery_approval_is_persisted_and_detects_plan_changes():
                 "/v1/plan/grocery-list/approval?start=2026-09-03&end=2026-09-04",
                 json={
                     "servings": 2,
-                    "items": [{"id": "salmon:oz", "quantity": 24, "unit": "oz", "pantry": False}],
+                    "items": [{"id": "salmon", "quantity": 24, "unit": "oz", "pantry": False}],
                 },
             )
             assert approval.status_code == 200

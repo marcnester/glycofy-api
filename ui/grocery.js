@@ -2,7 +2,7 @@
   const glyco=window.__glyco||{};
   if(!glyco.fetchJSON)return;
   const $=id=>document.getElementById(id);
-  const CATEGORIES=["Produce","Meat & Seafood","Dairy & Eggs","Grains & Bakery","Pantry","Other"];
+  const CATEGORIES=["Produce","Meat & Seafood","Dairy & Eggs","Grains & Bakery","Other","Pantry"];
   let data=null;
   let edits={};
   let approval=null;
@@ -60,14 +60,14 @@
     data.items.forEach(item=>{(byCategory[item.category]||(byCategory[item.category]=[])).push(item)});
     CATEGORIES.concat(Object.keys(byCategory).filter(c=>!CATEGORIES.includes(c))).forEach(category=>{
       const items=byCategory[category];if(!items?.length)return;
-      const section=document.createElement("section");section.className="category";
-      const heading=document.createElement("h2");heading.textContent=`${category} · ${items.filter(i=>!stateFor(i).pantry).length}`;section.appendChild(heading);
+      const section=document.createElement(category==="Pantry"?"details":"section");section.className=`category${category==="Pantry"?" category--pantry":""}`;
+      const heading=document.createElement(category==="Pantry"?"summary":"h2");heading.textContent=`${category} · ${items.filter(i=>!stateFor(i).pantry).length}${category==="Pantry"?" likely on hand":""}`;section.appendChild(heading);
       items.forEach(item=>{
         const state=stateFor(item);const row=document.createElement("div");row.className=`grocery-item${state.done?" is-done":""}`;row.hidden=state.pantry;
         const check=document.createElement("input");check.type="checkbox";check.checked=state.done;check.setAttribute("aria-label",`Collected ${item.name}`);
         check.addEventListener("change",()=>{state.done=check.checked;saveEdits(false);row.classList.toggle("is-done",state.done);updateProgress()});
         const name=document.createElement("div");name.className="item-name";name.textContent=item.name;
-        const use=document.createElement("span");use.className="item-use";use.textContent=`Used in ${item.uses.length} meal${item.uses.length===1?"":"s"}`;name.appendChild(use);
+        const use=document.createElement("span");use.className="item-use";use.textContent=item.measurement_summary?`${item.measurement_summary} · Used in ${item.uses.length} meal${item.uses.length===1?"":"s"}`:`Used in ${item.uses.length} meal${item.uses.length===1?"":"s"}`;name.appendChild(use);
         const qty=document.createElement("input");qty.className="quantity";qty.type="number";qty.min="0";qty.step="any";qty.value=scaledQuantity(item);qty.setAttribute("aria-label",`${item.name} quantity`);
         qty.addEventListener("change",()=>{state.quantity=Number(qty.value)/Number($("servings").value||1);saveEdits()});
         const unit=document.createElement("input");unit.className="unit";unit.value=state.unit||"";unit.placeholder="unit";unit.setAttribute("aria-label",`${item.name} unit`);

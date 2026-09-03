@@ -3239,6 +3239,9 @@ def _batch_week_recommendations(
         "proteins. Use no protein_group more than twice for the same slot during the week when alternatives exist. "
         "Every cooked meal needs 3–6 coordinated steps for the complete plate, a realistic total_time_min, and "
         "heat or oven temperature, timing, and a safe-doneness cue for meat, poultry, seafood, or eggs. "
+        "Keep the week practical to shop: intentionally reuse produce, grains, sauces, and seasonings across meals; "
+        "avoid one-off ingredients; and target no more than about 40 unique non-pantry grocery products for the week. "
+        "Create variety through preparation and seasoning rather than a completely different ingredient set every day. "
         "Plan globally first so variety is intentional, then emit only the requested structured data."
     )
     payload = {

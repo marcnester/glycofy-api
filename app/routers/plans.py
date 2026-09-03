@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 from datetime import date as date_cls
 from datetime import datetime, timedelta
+from math import ceil
 from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
@@ -1120,12 +1121,18 @@ def _iter_items(plan: Plan):
 _GROCERY_CATEGORY_KEYWORDS = {
     "Produce": {
         "apple",
+        "asparagus",
         "avocado",
         "banana",
         "berries",
         "berry",
+        "blueberry",
         "broccoli",
+        "cabbage",
         "carrot",
+        "celery",
+        "cilantro",
+        "corn",
         "cucumber",
         "garlic",
         "greens",
@@ -1135,7 +1142,9 @@ _GROCERY_CATEGORY_KEYWORDS = {
         "lime",
         "mushroom",
         "onion",
+        "parsley",
         "pepper",
+        "pineapple",
         "spinach",
         "sweet potato",
         "tomato",
@@ -1172,12 +1181,16 @@ _GROCERY_CATEGORY_KEYWORDS = {
         "tortilla",
     },
     "Pantry": {
+        "almond",
         "beans",
         "chickpea",
+        "chia",
         "flour",
         "honey",
         "lentil",
+        "nut butter",
         "oil",
+        "seed",
         "seasoning",
         "spice",
         "vinegar",
@@ -1187,7 +1200,72 @@ _GROCERY_CATEGORY_KEYWORDS = {
 _GROCERY_NAME_ALIASES = {
     "berries": "mixed berries",
     "berry": "mixed berries",
+    "carrot sticks": "carrot",
+    "canned chickpeas": "chickpeas",
+    "cucumber slices": "cucumber",
     "eggs": "egg",
+    "fresh spinach": "spinach",
+    "firm tofu": "tofu",
+    "rolled oats": "oats",
+    "salmon fillet": "salmon",
+    "scrambled eggs": "egg",
+}
+
+_GROCERY_DISPLAY_NAMES = {
+    "egg": "Eggs",
+    "mixed berries": "Mixed berries",
+}
+
+_MASS_TO_GRAMS = {"g": 1.0, "kg": 1000.0, "oz": 28.3495, "lb": 453.592}
+_VOLUME_TO_TBSP = {"tsp": 1 / 3, "tbsp": 1.0, "cup": 16.0}
+_COUNT_UNITS = {
+    "item",
+    "piece",
+    "slice",
+    "medium",
+    "large",
+    "small",
+    "clove",
+    "leaf",
+    "can",
+    "scoop",
+    "serving",
+}
+_PIECE_GRAMS = {
+    "apple": 180,
+    "avocado": 150,
+    "banana": 120,
+    "bell pepper": 150,
+    "carrot": 60,
+    "cucumber": 300,
+    "sweet potato": 200,
+    "tomato": 120,
+}
+_CUP_GRAMS = {
+    "almonds": 143,
+    "black beans": 172,
+    "blueberries": 148,
+    "brown rice": 195,
+    "canned chickpeas": 164,
+    "chickpeas": 164,
+    "cottage cheese": 226,
+    "greek yogurt": 245,
+    "hummus": 246,
+    "mixed berries": 150,
+    "quinoa": 185,
+    "oats": 80,
+    "spinach": 30,
+}
+_DEFAULT_PANTRY = {
+    "cinnamon",
+    "garlic powder",
+    "olive oil",
+    "paprika",
+    "pepper",
+    "salt",
+    "sesame oil",
+    "soy sauce",
+    "spices cumin paprika chili powder",
 }
 
 
@@ -1195,10 +1273,7 @@ def _grocery_name(value: str | None) -> tuple[str, str]:
     display = re.sub(r"\s+", " ", (value or "").strip())
     key = re.sub(r"[^a-z0-9]+", " ", display.lower()).strip()
     key = _GROCERY_NAME_ALIASES.get(key, key)
-    if key == "egg":
-        display = "Eggs"
-    elif key == "mixed berries":
-        display = "Mixed berries"
+    display = _GROCERY_DISPLAY_NAMES.get(key, key.capitalize())
     return key, display
 
 
@@ -1219,8 +1294,90 @@ def _grocery_unit(value: str | None) -> str:
         "teaspoon": "tsp",
         "cups": "cup",
         "servings": "serving",
+        "pieces": "piece",
+        "slices": "slice",
+        "items": "item",
+        "cloves": "clove",
+        "leaves": "leaf",
+        "cans": "can",
+        "scoops": "scoop",
     }
     return aliases.get(unit, unit)
+
+
+def _parse_grocery_number(value: str) -> float | None:
+    value = value.strip()
+    try:
+        if " " in value and "/" in value:
+            whole, fraction = value.split(None, 1)
+            numerator, denominator = fraction.split("/", 1)
+            return float(whole) + float(numerator) / float(denominator)
+        if "/" in value:
+            numerator, denominator = value.split("/", 1)
+            return float(numerator) / float(denominator)
+        return float(value)
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def _grocery_measurement(qty: float | None, unit_value: str | None) -> tuple[str, float] | None:
+    unit = _grocery_unit(unit_value)
+    quantity = float(qty) if qty is not None else None
+    if quantity is None:
+        match = re.match(r"^(\d+(?:\.\d+)?(?:\s+\d+/\d+)?|\d+/\d+)\s+(.+)$", unit)
+        if match:
+            quantity = _parse_grocery_number(match.group(1))
+            unit = _grocery_unit(match.group(2))
+    if quantity is None:
+        return None
+    if unit in _MASS_TO_GRAMS:
+        return "mass_g", quantity * _MASS_TO_GRAMS[unit]
+    if unit in _VOLUME_TO_TBSP:
+        return "volume_tbsp", quantity * _VOLUME_TO_TBSP[unit]
+    if unit in _COUNT_UNITS or not unit:
+        return "count", quantity
+    return f"unit:{unit}", quantity
+
+
+def _round_grocery(value: float) -> float:
+    return round(value, 2) if value < 10 else round(value, 1)
+
+
+def _format_grocery_measurements(name_key: str, measurements: dict[str, float], units: str | None) -> dict[str, Any]:
+    values = dict(measurements)
+    if "mass_g" in values and "count" in values and name_key in _PIECE_GRAMS:
+        values["count"] += values.pop("mass_g") / _PIECE_GRAMS[name_key]
+    if "mass_g" in values and "volume_tbsp" in values and name_key in _CUP_GRAMS:
+        values["mass_g"] += values.pop("volume_tbsp") / 16 * _CUP_GRAMS[name_key]
+
+    if len(values) != 1:
+        summaries = []
+        for dimension, value in sorted(values.items()):
+            label = dimension.removeprefix("unit:").replace("mass_g", "g").replace("volume_tbsp", "tbsp")
+            summaries.append(f"{_round_grocery(value):g} {label}")
+        return {"quantity": None, "unit": "", "measurement_summary": " + ".join(summaries)}
+
+    dimension, value = next(iter(values.items()))
+    prefers_metric = str(units or "").strip().lower() == "metric"
+    if dimension == "mass_g":
+        if prefers_metric:
+            if value >= 1000:
+                return {"quantity": _round_grocery(value / 1000), "unit": "kg", "measurement_summary": None}
+            return {"quantity": _round_grocery(value), "unit": "g", "measurement_summary": None}
+        return {"quantity": _round_grocery(value / 28.3495), "unit": "oz", "measurement_summary": None}
+    if dimension == "volume_tbsp":
+        if value >= 8:
+            return {"quantity": _round_grocery(value / 16), "unit": "cup", "measurement_summary": None}
+        if value < 1:
+            return {"quantity": _round_grocery(value * 3), "unit": "tsp", "measurement_summary": None}
+        return {"quantity": _round_grocery(value), "unit": "tbsp", "measurement_summary": None}
+    if dimension == "count":
+        return {"quantity": ceil(value), "unit": "item", "measurement_summary": None}
+    return {
+        "quantity": _round_grocery(value),
+        "unit": dimension.removeprefix("unit:"),
+        "measurement_summary": None,
+    }
 
 
 def _grocery_category(name: str, meta: dict[str, Any] | None = None) -> str:
@@ -1228,6 +1385,9 @@ def _grocery_category(name: str, meta: dict[str, Any] | None = None) -> str:
     if explicit:
         return explicit
     lowered = name.lower()
+    key = re.sub(r"[^a-z0-9]+", " ", lowered).strip()
+    if key in _DEFAULT_PANTRY or "nut butter" in key or key in {"almond butter", "peanut butter"}:
+        return "Pantry"
     for category, words in _GROCERY_CATEGORY_KEYWORDS.items():
         if any(re.search(rf"\b{re.escape(word)}\b", lowered) for word in words):
             return category
@@ -1247,7 +1407,7 @@ class GroceryApprovalIn(BaseModel):
 
 
 def _grocery_plan_fingerprint(plans: list[Plan]) -> list[dict[str, Any]]:
-    return [
+    return [{"grocery_schema": 2}] + [
         {
             "id": plan.id,
             "date": plan.date.isoformat(),
@@ -1289,29 +1449,27 @@ def grocery_list_week(
         .order_by(Plan.date.asc())
         .all()
     )
-    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    grouped: dict[str, dict[str, Any]] = {}
     for plan in plans:
         for meal, item in _iter_items(plan):
             name_key, display_name = _grocery_name(item.name)
-            if not name_key:
+            if not name_key or name_key == "water":
                 continue
-            unit = _grocery_unit(item.unit)
-            group_key = (name_key, unit)
             entry = grouped.setdefault(
-                group_key,
+                name_key,
                 {
-                    "id": f"{name_key}:{unit}",
+                    "id": name_key,
                     "name": display_name,
-                    "quantity": 0.0 if item.qty is not None else None,
-                    "unit": unit,
                     "category": _grocery_category(display_name, item.meta),
+                    "default_pantry": name_key in _DEFAULT_PANTRY,
+                    "measurements": {},
                     "uses": [],
                 },
             )
-            if item.qty is not None:
-                if entry["quantity"] is None:
-                    entry["quantity"] = 0.0
-                entry["quantity"] += float(item.qty)
+            measurement = _grocery_measurement(item.qty, item.unit)
+            if measurement is not None:
+                dimension, value = measurement
+                entry["measurements"][dimension] = entry["measurements"].get(dimension, 0.0) + value
             use = {
                 "date": plan.date.isoformat(),
                 "meal_type": meal.meal_type,
@@ -1320,11 +1478,12 @@ def grocery_list_week(
             if use not in entry["uses"]:
                 entry["uses"].append(use)
 
-    items = sorted(grouped.values(), key=lambda value: (value["category"], value["name"].lower()))
-    for item in items:
-        quantity = item["quantity"]
-        if quantity is not None:
-            item["quantity"] = round(quantity, 2)
+    items = []
+    for name_key, entry in grouped.items():
+        measurements = entry.pop("measurements")
+        entry.update(_format_grocery_measurements(name_key, measurements, user.units))
+        items.append(entry)
+    items.sort(key=lambda value: (value["category"], value["name"].lower()))
 
     expected_dates = [start + timedelta(days=offset) for offset in range((final_day - start).days + 1)]
     planned_dates = {plan.date for plan in plans}
