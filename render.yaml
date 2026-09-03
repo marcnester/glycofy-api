@@ -45,6 +45,12 @@ services:
         sync: false
       - key: INSTACART_API_BASE
         value: https://connect.instacart.com
+      - key: TRAININGPEAKS_CLIENT_ID
+        sync: false
+      - key: TRAININGPEAKS_CLIENT_SECRET
+        sync: false
+      - key: TRAININGPEAKS_REDIRECT_URI
+        value: https://app.glycofy.ai/oauth/trainingpeaks/callback
       - key: SECURITY_ALERT_EMAIL_TO
         sync: false
       - key: SECURITY_ALERT_EMAIL_ENABLED

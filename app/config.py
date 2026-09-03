@@ -82,6 +82,17 @@ class Settings(BaseSettings):
     INSTACART_API_BASE: str = "https://connect.instacart.com"
     INSTACART_LINK_EXPIRES_DAYS: int = 30
 
+    # TrainingPeaks is approved-partner only. These remain unset until Glycofy
+    # receives its assigned OAuth endpoints and credentials.
+    TRAININGPEAKS_CLIENT_ID: str | None = None
+    TRAININGPEAKS_CLIENT_SECRET: str | None = None
+    TRAININGPEAKS_REDIRECT_URI: str | None = None
+
+    def trainingpeaks_ready(self) -> bool:
+        return bool(
+            self.TRAININGPEAKS_CLIENT_ID and self.TRAININGPEAKS_CLIENT_SECRET and self.TRAININGPEAKS_REDIRECT_URI
+        )
+
     def strava_ready(self) -> bool:
         """Check whether Strava OAuth is fully configured."""
         return bool(self.STRAVA_CLIENT_ID and self.STRAVA_CLIENT_SECRET and self.STRAVA_REDIRECT_URI)

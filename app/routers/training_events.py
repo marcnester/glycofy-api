@@ -11,12 +11,25 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, Up
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import get_db
 from app.models import Activity, PlannedWorkout, User
 from app.routers.auth import get_current_user
 
 router = APIRouter(prefix="/v1/training-events", tags=["training-events"])
 _CSV_MAX_BYTES = 1_000_000
+
+
+@router.get("/providers")
+def training_providers(user: User = Depends(get_current_user)):
+    """Expose capabilities without advertising an unavailable connection."""
+    return {
+        "trainingpeaks": {
+            "direct_connection": settings.trainingpeaks_ready(),
+            "csv_import": True,
+            "status": "available" if settings.trainingpeaks_ready() else "access_pending",
+        }
+    }
 
 
 class TrainingEventCreate(BaseModel):
