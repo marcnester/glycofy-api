@@ -6,13 +6,13 @@
   <title>Grocery List • Glycofy</title>
   <link rel="icon" href="/ui/favicon.svg" />
   <link rel="stylesheet" href="/ui/styles.css" />
-  <link rel="stylesheet" href="/ui/grocery.css?v=2026-09-02-normalized-v2" />
+  <link rel="stylesheet" href="/ui/grocery.css?v=2026-09-02-packages" />
   <script src="/ui/app.js" defer></script>
-  <script src="/ui/grocery.js?v=2026-09-02-normalized-v2" defer></script>
+  <script src="/ui/grocery.js?v=2026-09-02-packages" defer></script>
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/ui/index.html">GLYCOFY</a>
+    <a class="brand" href="/ui/index.html" aria-label="Glycofy home"><img src="/ui/assets/glycofy-logo-lockup.png" alt="Glycofy" /></a>
     <nav class="nav-links" aria-label="Primary">
       <a href="/ui/index.html">Home</a>
       <a href="/ui/plan.html">Plan</a>
@@ -28,7 +28,7 @@
       <div>
         <p class="eyebrow">Meal plan shopping</p>
         <h1>Grocery List</h1>
-        <p class="muted">Everything you need, combined across your selected meal plans.</p>
+        <p class="muted">See what you need, what to buy, and what will likely be left for another meal.</p>
       </div>
       <div class="grocery-actions">
         <button id="copy_btn" class="btn">Copy list</button>
@@ -70,5 +70,20 @@
       <p class="muted">Loading your grocery list…</p>
     </section>
   </main>
+  <dialog id="grocery-options-dialog" class="grocery-dialog">
+    <form id="grocery-options-form" class="grocery-dialog__form">
+      <p class="eyebrow">Shopping preference</p>
+      <h2 id="grocery-options-title">Ingredient</h2>
+      <p class="muted">Saved to your account and reused for future grocery lists.</p>
+      <label>Preferred brand<input id="grocery-brand" maxlength="120" placeholder="Optional" /></label>
+      <div class="package-fields">
+        <label>Package size<input id="grocery-package-quantity" type="number" min="0.01" step="any" /></label>
+        <label>Unit<input id="grocery-package-unit" maxlength="32" placeholder="oz, g, cup…" /></label>
+      </div>
+      <label class="pantry-check"><input id="grocery-in-pantry" type="checkbox" /> I already have this</label>
+      <p id="grocery-options-error" class="dialog-error" role="alert"></p>
+      <div class="dialog-actions"><button id="grocery-options-cancel" class="btn" type="button">Cancel</button><button class="btn btn-primary" type="submit">Save preference</button></div>
+    </form>
+  </dialog>
 </body>
 </html>

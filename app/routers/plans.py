@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.auth_utils import get_current_user
 from app.db import get_db
-from app.models import GroceryApproval, Plan, PlanItem, PlanMeal, Recipe, User
+from app.models import GroceryApproval, GroceryPreference, Plan, PlanItem, PlanMeal, Recipe, User
 from app.routers.plan_models import EnergyTarget, UserPreference
 
 router = APIRouter()
@@ -1292,6 +1292,18 @@ _DEFAULT_PANTRY = {
     "spices cumin paprika chili powder",
 }
 
+_PACKAGE_CUPS = {
+    "black beans": 1.75,
+    "brown rice": 5.0,
+    "chickpeas": 1.75,
+    "cottage cheese": 2.0,
+    "greek yogurt": 4.0,
+    "mixed berries": 3.0,
+    "oats": 5.0,
+    "quinoa": 5.0,
+    "spinach": 5.0,
+}
+
 
 def _grocery_name(value: str | None) -> tuple[str, str]:
     display = re.sub(r"\s+", " ", (value or "").strip())
@@ -1418,16 +1430,87 @@ def _grocery_category(name: str, meta: dict[str, Any] | None = None) -> str:
     return "Other"
 
 
+def _package_suggestion(
+    name_key: str,
+    category: str,
+    quantity: float | None,
+    unit: str,
+    preference: GroceryPreference | None = None,
+) -> dict[str, Any] | None:
+    """Suggest a realistic purchasable multiple in the list's display unit."""
+    if quantity is None or quantity <= 0 or not unit or name_key in _DEFAULT_PANTRY:
+        return None
+
+    package_size: float | None = None
+    package_unit = unit
+    source = "estimated"
+    if preference and preference.package_quantity and _grocery_unit(preference.package_unit) == _grocery_unit(unit):
+        package_size = float(preference.package_quantity)
+        source = "preferred"
+    elif unit == "item":
+        package_size = 12.0 if name_key == "egg" else 1.0
+    elif unit == "cup":
+        package_size = _PACKAGE_CUPS.get(name_key, 2.0 if category == "Produce" else 4.0)
+    elif unit == "tbsp":
+        package_size = 16.0
+    elif unit == "tsp":
+        package_size = 12.0
+    elif unit == "oz":
+        package_size = 16.0 if category == "Meat & Seafood" else 8.0
+    elif unit == "lb":
+        package_size = 1.0
+    elif unit == "g":
+        package_size = 500.0 if category == "Meat & Seafood" else 250.0
+    elif unit == "kg":
+        package_size = 0.5
+
+    if not package_size or package_size <= 0:
+        return None
+    package_count = ceil(quantity / package_size)
+    purchase_quantity = package_count * package_size
+    return {
+        "package_size": _round_grocery(package_size),
+        "package_unit": package_unit,
+        "package_count": package_count,
+        "purchase_quantity": _round_grocery(purchase_quantity),
+        "remainder": _round_grocery(max(0.0, purchase_quantity - quantity)),
+        "source": source,
+    }
+
+
 class GroceryApprovalItemIn(BaseModel):
     id: str = Field(min_length=1, max_length=260)
     quantity: float | None = Field(default=None, ge=0)
     unit: str = Field(default="", max_length=32)
     pantry: bool = False
+    preferred_brand: str | None = Field(default=None, max_length=120)
+    package_quantity: float | None = Field(default=None, gt=0)
+    package_unit: str | None = Field(default=None, max_length=32)
+    purchase_count: int | None = Field(default=None, ge=1, le=100)
 
 
 class GroceryApprovalIn(BaseModel):
     servings: int = Field(default=1, ge=1, le=12)
     items: list[GroceryApprovalItemIn] = Field(default_factory=list, max_length=300)
+
+
+class GroceryPreferenceIn(BaseModel):
+    ingredient_key: str = Field(min_length=1, max_length=200)
+    in_pantry: bool = False
+    preferred_brand: str | None = Field(default=None, max_length=120)
+    package_quantity: float | None = Field(default=None, gt=0)
+    package_unit: str | None = Field(default=None, max_length=32)
+
+
+def _grocery_preference_to_dict(preference: GroceryPreference) -> dict[str, Any]:
+    return {
+        "ingredient_key": preference.ingredient_key,
+        "in_pantry": preference.in_pantry,
+        "preferred_brand": preference.preferred_brand,
+        "package_quantity": preference.package_quantity,
+        "package_unit": preference.package_unit,
+        "updated_at": preference.updated_at.isoformat(),
+    }
 
 
 def _grocery_plan_fingerprint(plans: list[Plan]) -> list[dict[str, Any]]:
@@ -1473,6 +1556,10 @@ def grocery_list_week(
         .order_by(Plan.date.asc())
         .all()
     )
+    preferences = {
+        row.ingredient_key: row
+        for row in db.query(GroceryPreference).filter(GroceryPreference.user_id == user.id).all()
+    }
     grouped: dict[str, dict[str, Any]] = {}
     for plan in plans:
         for meal, item in _iter_items(plan):
@@ -1506,6 +1593,25 @@ def grocery_list_week(
     for name_key, entry in grouped.items():
         measurements = entry.pop("measurements")
         entry.update(_format_grocery_measurements(name_key, measurements, user.units))
+        preference = preferences.get(name_key)
+        entry["preference"] = (
+            _grocery_preference_to_dict(preference)
+            if preference
+            else {
+                "ingredient_key": name_key,
+                "in_pantry": False,
+                "preferred_brand": None,
+                "package_quantity": None,
+                "package_unit": None,
+            }
+        )
+        entry["package"] = _package_suggestion(
+            name_key,
+            entry["category"],
+            entry.get("quantity"),
+            entry.get("unit") or "",
+            preference,
+        )
         items.append(entry)
     items.sort(key=lambda value: (value["category"], value["name"].lower()))
 
@@ -1518,6 +1624,45 @@ def grocery_list_week(
         "missing_dates": [day.isoformat() for day in expected_dates if day not in planned_dates],
         "items": items,
     }
+
+
+@router.get("/grocery-list/preferences", response_model=dict[str, Any])
+def grocery_preferences(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    rows = (
+        db.query(GroceryPreference)
+        .filter(GroceryPreference.user_id == user.id)
+        .order_by(GroceryPreference.ingredient_key.asc())
+        .all()
+    )
+    return {"preferences": [_grocery_preference_to_dict(row) for row in rows]}
+
+
+@router.put("/grocery-list/preferences", response_model=dict[str, Any])
+def save_grocery_preference(
+    payload: GroceryPreferenceIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    ingredient_key, _ = _grocery_name(payload.ingredient_key)
+    if not ingredient_key:
+        raise HTTPException(status_code=400, detail="Ingredient is required")
+    row = (
+        db.query(GroceryPreference)
+        .filter(GroceryPreference.user_id == user.id, GroceryPreference.ingredient_key == ingredient_key)
+        .first()
+    )
+    now = datetime.utcnow()
+    if row is None:
+        row = GroceryPreference(user_id=user.id, ingredient_key=ingredient_key, created_at=now, updated_at=now)
+        db.add(row)
+    row.in_pantry = payload.in_pantry
+    row.preferred_brand = (payload.preferred_brand or "").strip() or None
+    row.package_quantity = payload.package_quantity
+    row.package_unit = _grocery_unit(payload.package_unit) or None
+    row.updated_at = now
+    db.commit()
+    db.refresh(row)
+    return {"preference": _grocery_preference_to_dict(row)}
 
 
 @router.get("/grocery-list/approval", response_model=dict[str, Any])
@@ -1583,6 +1728,10 @@ def approve_grocery_list(
                 "quantity": quantity,
                 "unit": _grocery_unit(supplied.unit) if supplied is not None else base["unit"],
                 "pantry": supplied.pantry if supplied is not None else False,
+                "preferred_brand": supplied.preferred_brand if supplied is not None else None,
+                "package_quantity": supplied.package_quantity if supplied is not None else None,
+                "package_unit": (_grocery_unit(supplied.package_unit) if supplied is not None else None),
+                "purchase_count": supplied.purchase_count if supplied is not None else None,
             }
         )
 

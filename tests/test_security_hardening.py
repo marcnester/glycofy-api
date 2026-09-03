@@ -114,6 +114,17 @@ def test_plan_exposes_private_adaptive_meal_feedback(client: TestClient):
     assert "Glycofy will use it in future plans" in script.text
 
 
+def test_grocery_page_exposes_package_and_pantry_preferences(client: TestClient):
+    page = client.get("/ui/grocery.html")
+    script = client.get("/ui/grocery.js")
+
+    assert page.status_code == 200
+    assert 'id="grocery-options-dialog"' in page.text
+    assert "what will likely be left" in page.text
+    assert "/v1/plan/grocery-list/preferences" in script.text
+    assert "packages_to_buy" in script.text
+
+
 def test_profile_uses_official_strava_connect_asset(client: TestClient):
     response = client.get("/ui/profile.html")
     assert response.status_code == 200

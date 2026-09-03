@@ -11,6 +11,7 @@ from app.routers.plans import (
     _grocery_measurement,
     _grocery_name,
     _grocery_unit,
+    _package_suggestion,
 )
 
 
@@ -48,6 +49,19 @@ def test_piece_weight_bridge_collapses_avocado_grams_and_counts():
     assert combined == {"quantity": 3, "unit": "item", "measurement_summary": None}
 
 
+def test_package_suggestion_rounds_up_to_purchasable_amounts():
+    package = _package_suggestion("salmon", "Meat & Seafood", 18, "oz")
+    assert package == {
+        "package_size": 16,
+        "package_unit": "oz",
+        "package_count": 2,
+        "purchase_quantity": 32,
+        "remainder": 14,
+        "source": "estimated",
+    }
+    assert _package_suggestion("olive oil", "Pantry", 2, "tbsp") is None
+
+
 def test_weekly_grocery_approval_is_persisted_and_detects_plan_changes():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
@@ -68,16 +82,52 @@ def test_weekly_grocery_approval_is_persisted_and_detects_plan_changes():
             for day in ("2026-09-03", "2026-09-04"):
                 assert client.post(f"/v1/plan/{day}", json={"meals": [meal], "source": "llm"}).status_code == 200
 
+            grocery = client.get("/v1/plan/grocery-list/week?start=2026-09-03&end=2026-09-04")
+            salmon = grocery.json()["items"][0]
+            assert salmon["quantity"] == 12
+            assert salmon["package"]["package_count"] == 1
+            assert salmon["package"]["remainder"] == 4
+
+            preference = client.put(
+                "/v1/plan/grocery-list/preferences",
+                json={
+                    "ingredient_key": "salmon",
+                    "preferred_brand": "Harbor Test",
+                    "package_quantity": 20,
+                    "package_unit": "oz",
+                    "in_pantry": False,
+                },
+            )
+            assert preference.status_code == 200
+            assert preference.json()["preference"]["preferred_brand"] == "Harbor Test"
+            preferred_grocery = client.get("/v1/plan/grocery-list/week?start=2026-09-03&end=2026-09-04")
+            preferred_salmon = preferred_grocery.json()["items"][0]
+            assert preferred_salmon["package"]["source"] == "preferred"
+            assert preferred_salmon["package"]["package_size"] == 20
+            assert preferred_salmon["preference"]["preferred_brand"] == "Harbor Test"
+
             approval = client.post(
                 "/v1/plan/grocery-list/approval?start=2026-09-03&end=2026-09-04",
                 json={
                     "servings": 2,
-                    "items": [{"id": "salmon", "quantity": 24, "unit": "oz", "pantry": False}],
+                    "items": [
+                        {
+                            "id": "salmon",
+                            "quantity": 24,
+                            "unit": "oz",
+                            "pantry": False,
+                            "preferred_brand": "Harbor Test",
+                            "package_quantity": 20,
+                            "package_unit": "oz",
+                            "purchase_count": 2,
+                        }
+                    ],
                 },
             )
             assert approval.status_code == 200
             assert approval.json()["approval"]["servings"] == 2
             assert approval.json()["approval"]["items"][0]["quantity"] == 24
+            assert approval.json()["approval"]["items"][0]["purchase_count"] == 2
             assert approval.json()["approval"]["stale"] is False
 
             status = client.get("/v1/plan/grocery-list/approval?start=2026-09-03&end=2026-09-04")

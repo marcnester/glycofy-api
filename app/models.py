@@ -11,6 +11,7 @@ Tables:
 - plan_meals            (tags JSON, updated_at)
 - plan_items
 - meal_feedback
+- grocery_preferences
 - user_preferences
 - energy_targets
 - plan_lock
@@ -399,6 +400,26 @@ class GroceryApproval(Base):
     items: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     plan_fingerprint: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     approved_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class GroceryPreference(Base):
+    """Account-level shopping preference for a normalized ingredient."""
+
+    __tablename__ = "grocery_preferences"
+    __table_args__ = (
+        UniqueConstraint("user_id", "ingredient_key", name="ux_grocery_preference_user_ingredient"),
+        Index("ix_grocery_preference_user", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    ingredient_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    in_pantry: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    preferred_brand: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    package_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    package_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 

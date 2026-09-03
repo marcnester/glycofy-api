@@ -38,17 +38,16 @@ Athlete profile + training context
 - **Practical recipes** — meal ingredients, estimated cooking time, coordinated directions, and protein doneness guidance.
 - **Meal control** — individual AI swaps, full-day planning, explanations, locking, and grocery exports.
 - **Adaptive meal feedback** — athletes can record meal completion, substitutions, portions, ratings, hunger, energy, digestion, and preparation practicality; bounded preference signals improve future AI plans.
-- **Smart grocery preparation** — ingredients are consolidated across the week, compatible measurements are converted, pantry items are separated, household servings can be scaled, and reviewed lists can be approved as stable shopping snapshots.
+- **Package-aware grocery preparation** — ingredients are consolidated across the week, compatible measurements are converted, household servings can be scaled, likely package counts and leftovers are shown, brand/package/pantry preferences persist, and reviewed lists can be approved as stable shopping snapshots.
 - **Secure authentication** — email/password and Google account creation, server-side HTTP-only sessions, OAuth state validation, encrypted provider credentials, rate limiting, and security audit events.
 
 ## Product direction
 
 The next major product layers are:
 
-1. Package-aware grocery quantities and lower-waste ingredient reuse.
-2. Grocery-delivery cart integrations after a weekly list is approved.
-3. Direct TrainingPeaks integration if API access becomes available.
-4. Shared job infrastructure for scalable, cancellable weekly AI generation.
+1. Grocery-delivery cart integrations after a weekly list is approved.
+2. Direct TrainingPeaks integration if API access becomes available.
+3. Shared job infrastructure for scalable, cancellable weekly AI generation.
 
 The long-term goal is a closed loop in which training informs nutrition, the plan becomes easy to shop and cook, and real-world athlete feedback improves the next plan.
 

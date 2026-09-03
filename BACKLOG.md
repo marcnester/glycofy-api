@@ -1,14 +1,6 @@
 # Product backlog
 
-## Next: package-aware grocery intelligence
-
-- Map normalized ingredients to common purchasable package sizes.
-- Show needed quantity, suggested purchase quantity, and likely remainder.
-- Let athletes mark pantry inventory and preferred brands or package sizes.
-- Favor ingredient reuse and lower waste without compromising training nutrition.
-- Produce retailer-ready identifiers and substitution constraints.
-
-## Then: shoppable grocery lists
+## Next: shoppable grocery lists
 
 Add an optional **Shop with Instacart** handoff to the consolidated Grocery List.
 
