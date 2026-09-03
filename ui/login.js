@@ -19,7 +19,7 @@
     try {
       if (p && p.startsWith("/") && !p.startsWith("//")) return p;
     } catch {}
-    return "/ui/index.html";
+    return null;
   }
   function parseReturn(def) {
     try {
@@ -30,6 +30,26 @@
       return sanitizeReturnPath(v) || (def || "/ui/index.html");
     } catch {}
     return def || "/ui/index.html";
+  }
+
+  let authMode = "signin";
+  function setMode(mode) {
+    authMode = mode === "signup" ? "signup" : "signin";
+    const signingUp = authMode === "signup";
+    $("auth-title").textContent = signingUp ? "Create your account" : "Sign in";
+    $("auth-subtitle").textContent = signingUp ? "Start planning around the way you train" : "Welcome back";
+    $("submitBtn").textContent = signingUp ? "Create account" : "Sign in";
+    $("googleBtn").textContent = signingUp ? "Sign up with Google" : "Continue with Google";
+    $("switch-prompt").textContent = signingUp ? "Already have an account?" : "New to Glycofy?";
+    $("mode-switch").textContent = signingUp ? "Sign in" : "Create an account";
+    $("confirm-wrap").hidden = !signingUp;
+    $("password-hint").hidden = !signingUp;
+    $("confirm-password").required = signingUp;
+    $("password").autocomplete = signingUp ? "new-password" : "current-password";
+    const url = new URL(location.href);
+    if (signingUp) url.searchParams.set("mode", "signup"); else url.searchParams.delete("mode");
+    history.replaceState(null, "", url.pathname + url.search);
+    const box = $("msg"); if (box) box.className = "msg";
   }
   function redirectToReturn(def) {
     const dest = parseReturn(def);
@@ -75,6 +95,26 @@
     return true;
   }
 
+  async function passwordSignup(email, password) {
+    const res = await fetch("/auth/signup", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "X-Requested-With": "XMLHttpRequest"
+      },
+      body: JSON.stringify({ email, password })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data?.detail === "email_in_use") throw new Error("An account already exists for this email. Sign in instead.");
+      if (res.status === 422) throw new Error("Enter a valid email and a password of at least 12 characters.");
+      throw new Error(data?.detail || "We could not create your account. Please try again.");
+    }
+    return true;
+  }
+
   // --- Google login button ---
   async function wireGoogle() {
     const btn = $("googleBtn"); if (!btn) return;
@@ -84,7 +124,7 @@
       if (!j || !j.configured) { btn.disabled = true; btn.title = "Google not configured"; return; }
       btn.addEventListener("click", (e) => {
         e.preventDefault();
-        const ret = encodeURIComponent(parseReturn("/ui/index.html"));
+        const ret = encodeURIComponent(parseReturn(authMode === "signup" ? "/ui/profile.html" : "/ui/index.html"));
         location.href = "/oauth/google/start?return=" + ret;
       });
     } catch {
@@ -107,6 +147,10 @@
 
     await wireGoogle();
 
+    const requestedMode = new URL(location.href).searchParams.get("mode");
+    setMode(requestedMode === "signup" ? "signup" : "signin");
+    $("mode-switch")?.addEventListener("click", () => setMode(authMode === "signup" ? "signin" : "signup"));
+
     const form = $("login-form"); const submitBtn = $("submitBtn");
     if (!form || !submitBtn) return;
     let inflight = false;
@@ -116,25 +160,28 @@
 
       const email = ($("email")?.value || "").trim();
       const pw = $("password")?.value || "";
+      const confirmation = $("confirm-password")?.value || "";
       if (!email || !pw) { flash("Please enter both email and password.", "error"); inflight = false; return; }
+      if (authMode === "signup" && pw.length < 12) { flash("Use at least 12 characters for your password.", "error"); inflight = false; return; }
+      if (authMode === "signup" && pw !== confirmation) { flash("Those passwords do not match.", "error"); inflight = false; return; }
 
       submitBtn.disabled = true;
       submitBtn.dataset.prevText = submitBtn.textContent;
-      submitBtn.textContent = "Signing in…";
+      submitBtn.textContent = authMode === "signup" ? "Creating account…" : "Signing in…";
       form.querySelectorAll("input,button").forEach(el => el.disabled = true);
-      flash("Signing in…");
+      flash(authMode === "signup" ? "Creating your account…" : "Signing in…");
 
       try {
-        await passwordLogin(email, pw);
+        if (authMode === "signup") await passwordSignup(email, pw); else await passwordLogin(email, pw);
         const ok = await ensureAuth({ force: true });
         if (!ok) throw new Error("Authentication failed after login.");
-        flash("Login successful. Redirecting…");
-        setTimeout(() => redirectToReturn("/ui/index.html"), 300);
+        flash(authMode === "signup" ? "Account created. Let’s complete your athlete profile…" : "Login successful. Redirecting…");
+        setTimeout(() => redirectToReturn(authMode === "signup" ? "/ui/profile.html" : "/ui/index.html"), 300);
       } catch (err) {
         console.error("[login] failed:", err);
         flash(err?.message || "Login failed. Please try again.", "error");
         submitBtn.disabled = false;
-        submitBtn.textContent = submitBtn.dataset.prevText || "Sign in";
+        submitBtn.textContent = authMode === "signup" ? "Create account" : "Sign in";
         form.querySelectorAll("input,button").forEach(el => el.disabled = false);
         inflight = false;
       }

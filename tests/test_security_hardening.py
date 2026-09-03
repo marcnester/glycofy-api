@@ -64,6 +64,19 @@ def test_login_page_does_not_expose_demo_credentials(client: TestClient):
     assert "demo@glycofy.app" not in response.text.lower()
 
 
+def test_login_page_exposes_clear_account_creation_flow(client: TestClient):
+    page = client.get("/ui/login.html")
+    script = client.get("/ui/login.js")
+
+    assert page.status_code == 200
+    assert 'id="mode-switch"' in page.text
+    assert "Create an account" in page.text
+    assert 'id="confirm-password"' in page.text
+    assert 'autocomplete="new-password"' in page.text
+    assert 'fetch("/auth/signup"' in script.text
+    assert "at least 12 characters" in script.text
+
+
 def test_profile_uses_official_strava_connect_asset(client: TestClient):
     response = client.get("/ui/profile.html")
     assert response.status_code == 200

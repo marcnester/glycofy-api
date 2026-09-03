@@ -37,6 +37,11 @@
     .or::before,.or::after{content:"";height:1px;background:var(--border);flex:1}
     .btn-google{background:#223047;border:1px solid #2e4060;color:#e6f0ff}
     .btn-google:hover{background:#2a3a57}
+    .auth-switch{text-align:center;margin:2px 0 0;color:var(--muted);font-size:14px}
+    .auth-switch button{border:0;background:transparent;color:var(--accent);padding:4px;font:inherit;font-weight:750;cursor:pointer}
+    .auth-switch button:hover{text-decoration:underline}
+    .password-hint{display:block;margin-top:6px;color:#8297b2;font-size:12px}
+    [hidden]{display:none!important}
   </style>
 </head>
 <body>
@@ -47,8 +52,8 @@
 
 <main>
   <img class="login-logo" src="/ui/assets/glycofy-logo-lockup.png" alt="Glycofy"/>
-  <h1>Sign in</h1>
-  <p class="sub">Welcome back</p>
+  <h1 id="auth-title">Sign in</h1>
+  <p id="auth-subtitle" class="sub">Welcome back</p>
 
   <div id="msg" class="msg"></div>
 
@@ -60,6 +65,11 @@
     <div>
       <label for="password">Password</label>
       <input id="password" type="password" placeholder="••••••••" required autocomplete="current-password"/>
+      <span id="password-hint" class="password-hint" hidden>Use at least 12 characters.</span>
+    </div>
+    <div id="confirm-wrap" hidden>
+      <label for="confirm-password">Confirm password</label>
+      <input id="confirm-password" type="password" placeholder="••••••••" autocomplete="new-password"/>
     </div>
 
     <button id="submitBtn" type="submit" class="btn">Sign in</button>
@@ -67,6 +77,11 @@
     <div class="or">or</div>
 
     <button id="googleBtn" type="button" class="btn btn-google">Continue with Google</button>
+
+    <p class="auth-switch">
+      <span id="switch-prompt">New to Glycofy?</span>
+      <button id="mode-switch" type="button">Create an account</button>
+    </p>
 
     <p class="fineprint">
       By continuing, you agree to the <a href="/ui/terms.html">Terms</a> and acknowledge the
@@ -77,6 +92,6 @@
 
 <!-- core.js is optional; login.js is self-contained -->
 <script src="/ui/core.js?v=2025-11-05" defer></script>
-<script src="/ui/login.js?v=2025-11-05" defer></script>
+<script src="/ui/login.js?v=2026-09-02-signup" defer></script>
 </body>
 </html>
