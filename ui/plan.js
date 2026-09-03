@@ -152,6 +152,15 @@
   let AI_REASONS = {}; // slot -> reason string
   let AI_FREEFORM = {}; // slot -> { idea, description, approx_macros, ingredients[], instructions[], total_time_min }
 
+  function timingLabel(meta) {
+    const prep = Math.round(Number(meta?.prep_time_min) || 0);
+    const cook = Math.round(Number(meta?.cook_time_min) || 0);
+    const total = Math.round(Number(meta?.total_time_min) || 0);
+    if (prep > 0 && cook === 0) return `Ready in ${total || prep} min`;
+    if (prep > 0 && cook > 0) return `${prep} min prep · ${cook} min cook · ${total || prep + cook} min total`;
+    return total > 0 ? `${total} min total` : '';
+  }
+
   // ----- utils -----
   function flash(msg, type = 'ok') {
     if (!flashBox) return;
@@ -649,6 +658,8 @@
     let approx = null;
     let ing = null;
     let instr = null;
+    let prepTime = null;
+    let cookTime = null;
     let totalTime = null;
 
     if (ai) {
@@ -657,6 +668,8 @@
       approx = ai.approx_macros || ai.macros || null;
       ing = ai.ingredients || ai.items || null;
       instr = ai.instructions || ai.steps || null;
+      prepTime = ai.prep_time_min ?? null;
+      cookTime = ai.cook_time_min ?? null;
       totalTime = ai.total_time_min || ai.total_minutes || null;
     }
 
@@ -673,6 +686,8 @@
       instr = source.instructions || source.steps;
     }
     if (!totalTime) totalTime = source.total_time_min || source.total_minutes || null;
+    if (prepTime == null) prepTime = source.prep_time_min ?? null;
+    if (cookTime == null) cookTime = source.cook_time_min ?? null;
 
     const normIngredients = normalizeIngredients(ing);
     const normInstructions = normalizeInstructions(instr);
@@ -685,6 +700,8 @@
       approx_macros: approx,
       ingredients: normIngredients,
       instructions: normInstructions,
+      prep_time_min: Number(prepTime) > 0 ? Math.round(Number(prepTime)) : null,
+      cook_time_min: Number(cookTime) >= 0 && cookTime != null ? Math.round(Number(cookTime)) : null,
       total_time_min: Number(totalTime) > 0 ? Math.round(Number(totalTime)) : null,
     };
   }
@@ -723,6 +740,8 @@
       payload.instructions = ff.instructions.slice();
     }
     if (Number(ff.total_time_min) > 0) payload.total_time_min = Math.round(Number(ff.total_time_min));
+    if (Number(ff.prep_time_min) > 0) payload.prep_time_min = Math.round(Number(ff.prep_time_min));
+    if (ff.cook_time_min != null && Number(ff.cook_time_min) >= 0) payload.cook_time_min = Math.round(Number(ff.cook_time_min));
 
     return payload;
   }
@@ -1023,7 +1042,8 @@
               (base && base.meta && base.meta.ai_idea && base.meta.ai_idea.total_time_min) ||
               0
             );
-            summary.textContent = `How to make it${totalTime > 0 ? ` · ${Math.round(totalTime)} min` : ''}`;
+            const timing = timingLabel((ff && ff) || (base && base.meta) || {});
+            summary.textContent = `How to make it${timing ? ` · ${timing}` : (totalTime > 0 ? ` · ${Math.round(totalTime)} min total` : '')}`;
             details.appendChild(summary);
 
             const ol = document.createElement('ol');
@@ -1097,7 +1117,7 @@
           ${
             instrList.length
               ? `<details class="meal-instructions">
-                   <summary>How to make it${Number(view?.meta?.total_time_min) > 0 ? ` · ${Math.round(Number(view.meta.total_time_min))} min` : ''}</summary>
+                   <summary>How to make it${timingLabel(view?.meta) ? ` · ${timingLabel(view.meta)}` : ''}</summary>
                    <ol>
                      ${instrList
                        .map((step) => `<li>${escapeHtml(step)}</li>`)

@@ -20,6 +20,8 @@ def _meal(slot: str, day: int) -> dict:
             {"name": "olive oil", "amount": "1", "unit": "tbsp"},
         ],
         "instructions": ["Cook the protein and carbohydrate.", "Combine and serve."],
+        "prep_time_min": 10,
+        "cook_time_min": 15,
         "total_time_min": 25,
         "protein_group": "plant" if day == 1 else "poultry",
         "protein_item": protein,

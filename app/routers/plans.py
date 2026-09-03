@@ -298,6 +298,8 @@ class AIIdeaPayload(BaseModel):
     ingredients: list[Any] = Field(default_factory=list)
     # Optional step-wise instructions from the LLM (list of short steps)
     instructions: list[str] | None = None
+    prep_time_min: int | None = Field(default=None, ge=1, le=240)
+    cook_time_min: int | None = Field(default=None, ge=0, le=240)
     total_time_min: int | None = Field(default=None, ge=1, le=240)
     # Optional protein group ("fish", "plant", etc.) if we ever need it
     protein_group: str | None = None
@@ -319,6 +321,8 @@ class LLMNewRecipe(BaseModel):
     title: str
     ingredients: list[Any] = Field(default_factory=list)
     instructions: list[str] = Field(default_factory=list)
+    prep_time_min: int | None = Field(default=None, ge=1, le=240)
+    cook_time_min: int | None = Field(default=None, ge=0, le=240)
     total_time_min: int | None = Field(default=None, ge=1, le=240)
     protein_group: str | None = None
     macro_estimate: dict[str, float] | None = None
@@ -445,8 +449,17 @@ def _apply_ai_idea_to_meal(meal: PlanMeal, ai: AIIdeaPayload, slot: str) -> None
     meal.meal_type = slot_norm
     meal.title = title
     meal.instructions = instructions_text
-    if ai.total_time_min:
-        meal.meta = {**(meal.meta or {}), "total_time_min": ai.total_time_min}
+    timing = {
+        key: value
+        for key, value in {
+            "prep_time_min": ai.prep_time_min,
+            "cook_time_min": ai.cook_time_min,
+            "total_time_min": ai.total_time_min,
+        }.items()
+        if value is not None
+    }
+    if timing:
+        meal.meta = {**(meal.meta or {}), **timing}
 
     if kcal is not None:
         meal.kcal = float(kcal)
