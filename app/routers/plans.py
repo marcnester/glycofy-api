@@ -1124,6 +1124,7 @@ _GROCERY_CATEGORY_KEYWORDS = {
         "asparagus",
         "avocado",
         "banana",
+        "basil",
         "berries",
         "berry",
         "blueberry",
@@ -1131,10 +1132,12 @@ _GROCERY_CATEGORY_KEYWORDS = {
         "cabbage",
         "carrot",
         "celery",
+        "cherry tomato",
         "cilantro",
         "corn",
         "cucumber",
         "garlic",
+        "ginger",
         "greens",
         "kale",
         "lemon",
@@ -1182,15 +1185,19 @@ _GROCERY_CATEGORY_KEYWORDS = {
     },
     "Pantry": {
         "almond",
+        "almonds",
         "beans",
         "chickpea",
         "chia",
         "flour",
+        "granola",
         "honey",
         "lentil",
         "nut butter",
         "oil",
+        "protein powder",
         "seed",
+        "seeds",
         "seasoning",
         "spice",
         "vinegar",
@@ -1202,6 +1209,7 @@ _GROCERY_NAME_ALIASES = {
     "berry": "mixed berries",
     "carrot sticks": "carrot",
     "canned chickpeas": "chickpeas",
+    "celery sticks": "celery",
     "cucumber slices": "cucumber",
     "eggs": "egg",
     "fresh spinach": "spinach",
@@ -1248,6 +1256,7 @@ _CUP_GRAMS = {
     "brown rice": 195,
     "canned chickpeas": 164,
     "chickpeas": 164,
+    "cherry tomatoes": 149,
     "cottage cheese": 226,
     "greek yogurt": 245,
     "hummus": 246,
@@ -1382,7 +1391,7 @@ def _format_grocery_measurements(name_key: str, measurements: dict[str, float], 
 
 def _grocery_category(name: str, meta: dict[str, Any] | None = None) -> str:
     explicit = str((meta or {}).get("category") or "").strip()
-    if explicit:
+    if explicit and explicit.lower() != "other":
         return explicit
     lowered = name.lower()
     key = re.sub(r"[^a-z0-9]+", " ", lowered).strip()

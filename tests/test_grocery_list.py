@@ -33,6 +33,7 @@ def test_grocery_category_uses_whole_words_and_explicit_metadata():
     assert _grocery_category("Chicken breast") == "Meat & Seafood"
     assert _grocery_category("Veggie mix") == "Other"
     assert _grocery_category("Anything", {"category": "Frozen"}) == "Frozen"
+    assert _grocery_category("Almonds", {"category": "Other"}) == "Pantry"
 
 
 def test_grocery_measurements_parse_fractions_and_convert_compatible_units():

@@ -61,7 +61,7 @@
     CATEGORIES.concat(Object.keys(byCategory).filter(c=>!CATEGORIES.includes(c))).forEach(category=>{
       const items=byCategory[category];if(!items?.length)return;
       const section=document.createElement(category==="Pantry"?"details":"section");section.className=`category${category==="Pantry"?" category--pantry":""}`;
-      const heading=document.createElement(category==="Pantry"?"summary":"h2");heading.textContent=`${category} · ${items.filter(i=>!stateFor(i).pantry).length}${category==="Pantry"?" likely on hand":""}`;section.appendChild(heading);
+      const heading=document.createElement(category==="Pantry"?"summary":"h2");heading.textContent=`${category}${category==="Pantry"?" check":""} · ${items.filter(i=>!stateFor(i).pantry).length}`;section.appendChild(heading);
       items.forEach(item=>{
         const state=stateFor(item);const row=document.createElement("div");row.className=`grocery-item${state.done?" is-done":""}`;row.hidden=state.pantry;
         const check=document.createElement("input");check.type="checkbox";check.checked=state.done;check.setAttribute("aria-label",`Collected ${item.name}`);
