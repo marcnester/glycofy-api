@@ -97,10 +97,13 @@ def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeyp
         primary_diet="omnivore",
         diet_tags=[],
         exclusions=[],
+        athlete_feedback={"feedback_count": 3, "favorite_meals": ["Salmon rice bowl"]},
     )
 
     assert len(calls) == 1
     assert calls[0]["response_format"]["type"] == "json_schema"
+    sent_payload = json.loads(calls[0]["messages"][1]["content"])
+    assert sent_payload["athlete_feedback"]["favorite_meals"] == ["Salmon rice bowl"]
     assert meta["accepted"] == 8
     assert meta["rejected"] == 0
     assert all(set(recommendations[date]) == set(llm_recommend.SLOTS) for date in dates)

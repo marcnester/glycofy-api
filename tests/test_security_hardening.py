@@ -102,6 +102,18 @@ def test_home_replaces_technical_account_details_with_training_summary(client: T
     assert "/v1/training-events/context/" in script.text
 
 
+def test_plan_exposes_private_adaptive_meal_feedback(client: TestClient):
+    page = client.get("/ui/plan.html")
+    script = client.get("/ui/plan.js")
+
+    assert page.status_code == 200
+    assert 'id="meal-feedback-dialog"' in page.text
+    assert page.text.count('data-action="feedback"') == 4
+    assert "A quick check-in helps Glycofy" in page.text
+    assert "/v1/feedback/meals/" in script.text
+    assert "Glycofy will use it in future plans" in script.text
+
+
 def test_profile_uses_official_strava_connect_asset(client: TestClient):
     response = client.get("/ui/profile.html")
     assert response.status_code == 200

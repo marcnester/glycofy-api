@@ -52,6 +52,9 @@ from app.routers import (
     llm_recommend as llm_recommend_router,
 )
 from app.routers import (
+    meal_feedback as meal_feedback_router,
+)
+from app.routers import (
     oauth_google as oauth_google_router,
 )
 from app.routers import (
@@ -200,6 +203,7 @@ app.include_router(plans_router.router, prefix="/v1/plan", tags=["plan"])
 app.include_router(recipes_router.router, prefix="/recipes", tags=["recipes"])
 app.include_router(summary_router.router, prefix="/v1", tags=["summary"])
 app.include_router(imports_router.router, prefix="/imports", tags=["imports"])
+app.include_router(meal_feedback_router.router, prefix="/v1/feedback", tags=["meal-feedback"])
 app.include_router(energy_router.router, prefix="/v1/energy", tags=["energy"])
 app.include_router(llm_recommend_router.router, prefix="/v1/llm", tags=["llm"])
 app.include_router(preferences_router.router, prefix="/v1/preferences", tags=["preferences"])  # ← NEW

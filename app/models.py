@@ -10,6 +10,7 @@ Tables:
 - plans                 (totals JSON, source VARCHAR)
 - plan_meals            (tags JSON, updated_at)
 - plan_items
+- meal_feedback
 - user_preferences
 - energy_targets
 - plan_lock
@@ -304,6 +305,14 @@ class PlanMeal(Base):
         foreign_keys="PlanItem.meal_id",
         order_by="PlanItem.id",
     )
+    feedback: Mapped[MealFeedback | None] = relationship(
+        "MealFeedback",
+        back_populates="meal",
+        cascade="save-update, merge",
+        passive_deletes=True,
+        uselist=False,
+        foreign_keys="MealFeedback.plan_meal_id",
+    )
 
     def __repr__(self) -> str:
         return f"<PlanMeal id={self.id} plan_id={self.plan_id} title={self.title!r}>"
@@ -335,6 +344,40 @@ class PlanItem(Base):
 
     def __repr__(self) -> str:
         return f"<PlanItem id={self.id} meal_id={self.meal_id} name={self.name!r}>"
+
+
+class MealFeedback(Base):
+    """Private athlete feedback retained even if the source plan is regenerated."""
+
+    __tablename__ = "meal_feedback"
+    __table_args__ = (
+        UniqueConstraint("user_id", "plan_meal_id", name="ux_meal_feedback_user_meal"),
+        Index("ix_meal_feedback_user_updated", "user_id", "updated_at"),
+        Index("ix_meal_feedback_user_date", "user_id", "plan_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    plan_meal_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("plan_meals.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    plan_date: Mapped[date] = mapped_column(Date, nullable=False)
+    meal_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    meal_title: Mapped[str] = mapped_column(String(160), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(24), nullable=False)
+    portion: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hunger_after: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    energy_after: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    digestion: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    practicality: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+    meal: Mapped[PlanMeal | None] = relationship("PlanMeal", back_populates="feedback", foreign_keys=[plan_meal_id])
 
 
 class GroceryApproval(Base):

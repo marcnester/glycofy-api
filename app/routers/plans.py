@@ -90,6 +90,21 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
                 "recipe_id": getattr(m, "recipe_id", None),
                 # WHY BUTTON FIX: return persisted AI explanation to the UI.
                 "meta": getattr(m, "meta", None) or {},
+                "feedback": (
+                    {
+                        "outcome": m.feedback.outcome,
+                        "portion": m.feedback.portion,
+                        "rating": m.feedback.rating,
+                        "hunger_after": m.feedback.hunger_after,
+                        "energy_after": m.feedback.energy_after,
+                        "digestion": m.feedback.digestion,
+                        "practicality": m.feedback.practicality,
+                        "note": m.feedback.note,
+                        "updated_at": m.feedback.updated_at.isoformat() if m.feedback.updated_at else None,
+                    }
+                    if getattr(m, "feedback", None)
+                    else None
+                ),
                 "ingredients": [
                     {
                         "id": getattr(i, "id", None) if not isinstance(i, dict) else i.get("id"),

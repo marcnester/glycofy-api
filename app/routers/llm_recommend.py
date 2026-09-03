@@ -31,6 +31,7 @@ from app.models import (
     User,
     UserPreference,  # ORM mapped to user_preferences
 )
+from app.services.meal_feedback import feedback_context
 from app.services.training_nutrition import (
     MacroTargets,
     TrainingNutritionResult,
@@ -1743,6 +1744,7 @@ def _llm_pick_or_create(
     used_meal_keys: set[str] | None,
     allow_new_recipe: bool,
     banned_protein_groups: set[str] | None = None,
+    athlete_feedback: dict[str, Any] | None = None,
 ) -> tuple[str, Recipe | None, dict[str, float] | None, str, dict[str, Any], dict[str, Any] | None]:
     # Pre-compute best catalog candidate (for safe fallback)
     best_r: Recipe | None = None
@@ -1782,6 +1784,7 @@ def _llm_pick_or_create(
         "  - banned_protein_groups_slot_week: protein groups that are ALREADY used twice\n"
         "    for this slot in the current week — you MUST NOT use these groups again for this slot.\n"
         "  - allow_new_recipe: flag indicating whether you may invent a new recipe.\n\n"
+        "  - athlete_feedback: recent meal outcomes and preference signals.\n\n"
         "GOAL (PER SLOT):\n"
         "- Choose the best meal for this slot by either:\n"
         '  1) PICKING a catalog recipe (mode="pick"); or\n'
@@ -1806,6 +1809,9 @@ def _llm_pick_or_create(
         "- For cooked meat, poultry, seafood, or eggs, include heat level or oven temperature, approximate cooking "
         "time, and a clear safe-doneness cue.\n"
         "- Respect diet_tags + ingredient_exclusions strictly.\n"
+        "- Use athlete_feedback as a preference signal: avoid poorly rated or skipped meals, favor patterns from "
+        "favorites, and adapt practicality or portion style when repeated signals exist. Do not infer allergies or "
+        "medical conditions from feedback.\n"
         "- NEVER use a protein_group that appears in banned_protein_groups_slot_week for this slot.\n\n"
         "- NEVER create a recipe equivalent to an identity in used_meal_keys_week.\n\n"
         "OUTPUT FORMAT (STRICT JSON ONLY):\n"
@@ -1863,6 +1869,7 @@ def _llm_pick_or_create(
         "banned_protein_groups_slot_week": sorted(list(banned_groups)),
         "allow_new_recipe": bool(allow_new_recipe),
         "ingredient_exclusions": ingredient_exclusions,
+        "athlete_feedback": athlete_feedback or {"feedback_count": 0},
         "candidates": candidate_payloads,
     }
 
@@ -2238,6 +2245,7 @@ def _cache_key(
     pref_tags: list[str],
     week_meal_keys: set[str] | None = None,
     nutrition_fingerprint: dict[str, Any] | None = None,
+    athlete_feedback: dict[str, Any] | None = None,
 ) -> str:
     blob = json.dumps(
         {
@@ -2249,6 +2257,7 @@ def _cache_key(
             "pref_tags": pref_tags,
             "week_meal_keys": sorted(week_meal_keys or set()),
             "nutrition": nutrition_fingerprint or {},
+            "athlete_feedback": athlete_feedback or {},
         },
         sort_keys=True,
     )
@@ -2443,6 +2452,7 @@ def _recommend_for_single_meal(
     week_protein_counts: dict[tuple[str, str], int] | None = None,
     protein_cap_per_slot: int = 2,
     prefer_fast_catalog: bool = False,
+    athlete_feedback: dict[str, Any] | None = None,
 ) -> SlotRecommendation:
     logger.info("LLM recommend-slot: date=%s slot=%s target_macros=%s", date, tgt.slot, tgt.model_dump())
 
@@ -2563,6 +2573,7 @@ def _recommend_for_single_meal(
                 used_meal_keys=used_meal_keys,
                 allow_new_recipe=allow_new_recipe,
                 banned_protein_groups=banned_groups_week or None,
+                athlete_feedback=athlete_feedback,
             )
             mode, picked_recipe, _deltas, _reason, _meta, ai_idea_payload = result
             if mode != "empty" and (picked_recipe is not None or ai_idea_payload):
@@ -3067,6 +3078,7 @@ def recommend_recipes(
         baseline=_baseline_from_meals(payload.meals),
     )
     adjusted_meals = _apply_nutrition_targets(payload.meals, nutrition)
+    athlete_feedback = feedback_context(db, user.id)
 
     # Weekly variety is mutable state. Include it in the cache key so an older
     # recommendation cannot be replayed after another day has used that meal.
@@ -3076,6 +3088,7 @@ def recommend_recipes(
         pref_tags,
         week_used_meal_keys,
         nutrition.cache_fingerprint(),
+        athlete_feedback,
     )
     cached = _CACHE.get(key)
     if cached:
@@ -3113,6 +3126,7 @@ def recommend_recipes(
             allow_new_recipe=allow_new,
             week_protein_counts=week_protein_counts,
             protein_cap_per_slot=2,
+            athlete_feedback=athlete_feedback,
         )
         items.append(rec)
 
@@ -3220,6 +3234,7 @@ def _batch_week_recommendations(
     primary_diet: str,
     diet_tags: list[str],
     exclusions: list[str],
+    athlete_feedback: dict[str, Any] | None = None,
 ) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
     """Generate the whole week in one model round-trip and discard unsafe cells."""
     if not client or not days or _circuit_open() or _BUDGET.spent_usd >= _daily_budget_usd():
@@ -3243,11 +3258,15 @@ def _batch_week_recommendations(
         "avoid one-off ingredients; and target no more than about 40 unique non-pantry grocery products for the week. "
         "Create variety through preparation and seasoning rather than a completely different ingredient set every day. "
         "Plan globally first so variety is intentional, then emit only the requested structured data."
+        " Use athlete_feedback as a bounded preference signal: avoid poorly rated or skipped meals, favor useful "
+        "patterns from favorites, and respond to repeated portion, digestion, or practicality signals without "
+        "inferring medical conditions."
     )
     payload = {
         "primary_diet": primary_diet,
         "diet_tags": diet_tags,
         "ingredient_exclusions": exclusions,
+        "athlete_feedback": athlete_feedback or {"feedback_count": 0},
         "days": days,
     }
     started = time.perf_counter()
@@ -3385,6 +3404,7 @@ def recommend_weekly_apply(
     pref = _get_user_pref(db, user.id)
     pref_tags = _diet_tags_from_preferences(pref)
     primary_diet = _primary_diet_from_preferences(pref)
+    athlete_feedback = feedback_context(db, user.id)
 
     client = _get_openai_client()
     provider = "openai" if client else "stub"
@@ -3444,6 +3464,7 @@ def recommend_weekly_apply(
         primary_diet=primary_diet,
         diet_tags=pref_tags,
         exclusions=_preference_exclusions(pref),
+        athlete_feedback=athlete_feedback,
     )
 
     for day in payload.days:
@@ -3516,6 +3537,7 @@ def recommend_weekly_apply(
                     week_protein_counts=week_protein_counts,
                     protein_cap_per_slot=2,
                     prefer_fast_catalog=True,
+                    athlete_feedback=athlete_feedback,
                 )
             else:
                 meta = rec.meta or {}
@@ -3575,6 +3597,7 @@ def recommend_weekly_apply(
                 week_protein_counts=week_protein_counts,
                 protein_cap_per_slot=2,
                 prefer_fast_catalog=True,
+                athlete_feedback=athlete_feedback,
             )
             day_items.append(dinner_rec)
 

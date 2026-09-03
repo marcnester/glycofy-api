@@ -249,6 +249,16 @@
       padding:0 12px;
       font-size:13px;
     }
+    .meal-card-actions .meal-log--saved{border-color:rgba(80,200,138,.5);color:#9fe3c0;background:rgba(80,200,138,.08)}
+    .feedback-dialog{width:min(620px,calc(100vw - 28px));border:1px solid rgba(255,255,255,.14);border-radius:18px;background:#151b24;color:#e7ecf3;padding:0;box-shadow:0 28px 80px rgba(0,0,0,.65)}
+    .feedback-dialog::backdrop{background:rgba(3,6,12,.78);backdrop-filter:blur(4px)}
+    .feedback-form{padding:24px}
+    .feedback-form h2{margin:0 0 5px;font-size:23px}.feedback-form__intro{margin:0 0 20px;color:#9fb0c9}
+    .feedback-field{border:0;padding:0;margin:0 0 18px}.feedback-field legend,.feedback-label{display:block;margin-bottom:8px;font-size:13px;font-weight:750;color:#cdd8e8}
+    .feedback-options{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.feedback-option{position:relative}.feedback-option input{position:absolute;opacity:0;pointer-events:none}.feedback-option span{display:flex;align-items:center;justify-content:center;min-height:42px;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:11px;color:#cbd6e6;cursor:pointer;text-align:center}.feedback-option input:checked+span{border-color:#50c88a;background:rgba(80,200,138,.14);color:#baf2d3;font-weight:750}
+    .feedback-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.feedback-control{width:100%;min-height:42px;border:1px solid rgba(255,255,255,.12);border-radius:11px;background:#0f151e;color:#e7ecf3;padding:9px 11px}.feedback-note{min-height:82px;resize:vertical}
+    .feedback-actions{display:flex;align-items:center;gap:9px;margin-top:22px}.feedback-actions .spacer{flex:1}.feedback-delete{color:#f4a9a3}
+    @media(max-width:620px){.feedback-grid{grid-template-columns:1fr}.feedback-options{grid-template-columns:1fr}.feedback-form{padding:20px}}
 
     .plan-busy{
       position:fixed;
@@ -392,6 +402,7 @@
           </div>
 
           <div class="meal-card-actions">
+            <button class="btn btn--ghost" data-action="feedback" type="button">Log meal</button>
             <button class="btn btn--ghost" data-action="swap-ai" type="button">Swap (AI)</button>
             <button class="btn btn--ghost" data-action="why" type="button">Why?</button>
           </div>
@@ -413,6 +424,7 @@
           </div>
 
           <div class="meal-card-actions">
+            <button class="btn btn--ghost" data-action="feedback" type="button">Log meal</button>
             <button class="btn btn--ghost" data-action="swap-ai" type="button">Swap (AI)</button>
             <button class="btn btn--ghost" data-action="why" type="button">Why?</button>
           </div>
@@ -434,6 +446,7 @@
           </div>
 
           <div class="meal-card-actions">
+            <button class="btn btn--ghost" data-action="feedback" type="button">Log meal</button>
             <button class="btn btn--ghost" data-action="swap-ai" type="button">Swap (AI)</button>
             <button class="btn btn--ghost" data-action="why" type="button">Why?</button>
           </div>
@@ -455,6 +468,7 @@
           </div>
 
           <div class="meal-card-actions">
+            <button class="btn btn--ghost" data-action="feedback" type="button">Log meal</button>
             <button class="btn btn--ghost" data-action="swap-ai" type="button">Swap (AI)</button>
             <button class="btn btn--ghost" data-action="why" type="button">Why?</button>
           </div>
@@ -462,6 +476,37 @@
       </div>
     </div>
   </main>
+
+  <dialog id="meal-feedback-dialog" class="feedback-dialog">
+    <form id="meal-feedback-form" class="feedback-form">
+      <input id="feedback-meal-id" type="hidden" />
+      <h2 id="feedback-title">How was this meal?</h2>
+      <p class="feedback-form__intro">A quick check-in helps Glycofy make your next plan more personal.</p>
+      <fieldset class="feedback-field">
+        <legend>What happened?</legend>
+        <div class="feedback-options">
+          <label class="feedback-option"><input type="radio" name="feedback-outcome" value="eaten" required><span>Ate it</span></label>
+          <label class="feedback-option"><input type="radio" name="feedback-outcome" value="substituted"><span>Substituted</span></label>
+          <label class="feedback-option"><input type="radio" name="feedback-outcome" value="skipped"><span>Skipped</span></label>
+        </div>
+      </fieldset>
+      <div class="feedback-grid">
+        <label><span class="feedback-label">Portion</span><select id="feedback-portion" class="feedback-control"><option value="">Not rated</option><option value="too_small">Too small</option><option value="right">Just right</option><option value="too_large">Too large</option></select></label>
+        <label><span class="feedback-label">Overall rating</span><select id="feedback-rating" class="feedback-control"><option value="">Not rated</option><option value="5">5 — Loved it</option><option value="4">4 — Good</option><option value="3">3 — Okay</option><option value="2">2 — Not for me</option><option value="1">1 — Avoid</option></select></label>
+        <label><span class="feedback-label">Hunger afterward</span><select id="feedback-hunger" class="feedback-control"><option value="">Not rated</option><option value="hungry">Still hungry</option><option value="satisfied">Satisfied</option><option value="too_full">Too full</option></select></label>
+        <label><span class="feedback-label">Energy afterward</span><select id="feedback-energy" class="feedback-control"><option value="">Not rated</option><option value="low">Low</option><option value="steady">Steady</option><option value="great">Great</option></select></label>
+        <label><span class="feedback-label">Digestion</span><select id="feedback-digestion" class="feedback-control"><option value="">Not rated</option><option value="comfortable">Comfortable</option><option value="minor_issue">Minor issue</option><option value="poor">Poor</option></select></label>
+        <label><span class="feedback-label">Preparation</span><select id="feedback-practicality" class="feedback-control"><option value="">Not rated</option><option value="easy">Easy</option><option value="manageable">Manageable</option><option value="difficult">Difficult</option></select></label>
+      </div>
+      <label><span class="feedback-label" style="margin-top:16px">Personal note</span><textarea id="feedback-note" class="feedback-control feedback-note" maxlength="500" placeholder="Optional — keep a note with this meal check-in…"></textarea></label>
+      <div class="feedback-actions">
+        <button id="feedback-delete" class="btn btn--ghost feedback-delete" type="button">Remove</button>
+        <span class="spacer"></span>
+        <button id="feedback-cancel" class="btn btn--ghost" type="button">Cancel</button>
+        <button class="btn btn--primary" type="submit">Save feedback</button>
+      </div>
+    </form>
+  </dialog>
 
   <div id="plan-busy" class="plan-busy" style="display:none;">
     <div class="plan-busy__box">

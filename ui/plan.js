@@ -77,6 +77,11 @@
     $('meals') || document.querySelector('.plan-meals') || document.body;
   const emptyEl = $('empty_state');
   const createBtn = $('create_btn');
+  const feedbackDialog = $('meal-feedback-dialog');
+  const feedbackForm = $('meal-feedback-form');
+  const feedbackMealId = $('feedback-meal-id');
+  const feedbackTitle = $('feedback-title');
+  const feedbackDelete = $('feedback-delete');
 
   // Busy overlay
   const busyEl = $('plan-busy');
@@ -164,6 +169,55 @@
     setTimeout(() => {
       if (flashBox) flashBox.style.display = 'none';
     }, 4200);
+  }
+
+  function feedbackOutcomeLabel(outcome) {
+    return { eaten: 'Ate it ✓', substituted: 'Substituted ✓', skipped: 'Skipped ✓' }[outcome] || 'Log meal';
+  }
+
+  function setFeedbackField(id, value) {
+    const el = $(id);
+    if (el) el.value = value == null ? '' : String(value);
+  }
+
+  function openMealFeedback(meal) {
+    if (!feedbackDialog || !feedbackForm || !meal?.id) return;
+    feedbackForm.reset();
+    feedbackMealId.value = String(meal.id);
+    feedbackTitle.textContent = `How was ${meal.title || 'this meal'}?`;
+    const data = meal.feedback || {};
+    const outcome = data.outcome || 'eaten';
+    const outcomeInput = feedbackForm.querySelector(`input[name="feedback-outcome"][value="${outcome}"]`);
+    if (outcomeInput) outcomeInput.checked = true;
+    setFeedbackField('feedback-portion', data.portion);
+    setFeedbackField('feedback-rating', data.rating);
+    setFeedbackField('feedback-hunger', data.hunger_after);
+    setFeedbackField('feedback-energy', data.energy_after);
+    setFeedbackField('feedback-digestion', data.digestion);
+    setFeedbackField('feedback-practicality', data.practicality);
+    setFeedbackField('feedback-note', data.note);
+    feedbackDelete.style.display = meal.feedback ? '' : 'none';
+    feedbackDialog.showModal();
+  }
+
+  async function saveMealFeedback(mealId) {
+    const outcome = feedbackForm.querySelector('input[name="feedback-outcome"]:checked')?.value;
+    if (!outcome) throw new Error('Choose what happened with this meal.');
+    const optional = (id) => $(id)?.value || null;
+    return fetchJSON(`/v1/feedback/meals/${mealId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        outcome,
+        portion: optional('feedback-portion'),
+        rating: optional('feedback-rating') ? Number(optional('feedback-rating')) : null,
+        hunger_after: optional('feedback-hunger'),
+        energy_after: optional('feedback-energy'),
+        digestion: optional('feedback-digestion'),
+        practicality: optional('feedback-practicality'),
+        note: optional('feedback-note'),
+      }),
+    });
   }
 
   const fmt = (n) => (n == null || isNaN(n) ? '—' : Math.round(Number(n)));
@@ -837,6 +891,7 @@
         const badgeEl = card.querySelector('.meal-badge, .meal__badge, .chip');
         const titleEl = card.querySelector('.meal-title, .meal__title, h3');
         const slotLabelEl = card.querySelector('.meal-slot-label');
+        const feedbackBtn = card.querySelector('[data-action="feedback"]');
 
         // slot label (e.g., Breakfast, Lunch)
         if (slotLabelEl) {
@@ -862,6 +917,13 @@
             badgeEl.textContent = '';
             badgeEl.style.display = 'none';
           }
+        }
+
+        if (feedbackBtn) {
+          feedbackBtn.disabled = !base.id;
+          feedbackBtn.textContent = feedbackOutcomeLabel(base.feedback?.outcome);
+          feedbackBtn.classList.toggle('meal-log--saved', Boolean(base.feedback));
+          feedbackBtn.setAttribute('aria-label', `${base.feedback ? 'Edit feedback for' : 'Log'} ${base.title || slot}`);
         }
 
         // macros
@@ -1303,7 +1365,7 @@
   if (mealsRoot) {
     mealsRoot.addEventListener('click', async (e) => {
       const target = e.target.closest(
-        '[data-ai-swap],[data-ai-why],[data-action="swap-ai"],[data-action="why"]'
+        '[data-ai-swap],[data-ai-why],[data-action="swap-ai"],[data-action="why"],[data-action="feedback"]'
       );
       if (!target) return;
 
@@ -1323,6 +1385,12 @@
 
       const slot = normalizeSlot(slotAttr);
       if (!slot) return;
+
+      if (target.getAttribute('data-action') === 'feedback') {
+        const meal = (CURRENT_PLAN?.meals || []).find((item) => normalizeSlot(item.meal_type) === slot);
+        openMealFeedback(meal);
+        return;
+      }
 
       if (isWhy) {
         const reason = getReasonForSlot(slot) || 'No reason available.';
@@ -1375,6 +1443,40 @@
       }
     });
   }
+
+  $('feedback-cancel')?.addEventListener('click', () => feedbackDialog?.close());
+  feedbackDialog?.addEventListener('click', (event) => {
+    if (event.target === feedbackDialog) feedbackDialog.close();
+  });
+  feedbackForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const mealId = Number(feedbackMealId?.value || 0);
+    if (!mealId) return;
+    try {
+      const saved = await saveMealFeedback(mealId);
+      const meal = (CURRENT_PLAN?.meals || []).find((item) => item.id === mealId);
+      if (meal) meal.feedback = saved;
+      feedbackDialog.close();
+      renderPlan(CURRENT_PLAN);
+      flash('Feedback saved. Glycofy will use it in future plans.');
+    } catch (error) {
+      flash(String(error.message || 'Unable to save feedback.'), 'error');
+    }
+  });
+  feedbackDelete?.addEventListener('click', async () => {
+    const mealId = Number(feedbackMealId?.value || 0);
+    if (!mealId) return;
+    try {
+      await fetchJSON(`/v1/feedback/meals/${mealId}`, { method: 'DELETE' });
+      const meal = (CURRENT_PLAN?.meals || []).find((item) => item.id === mealId);
+      if (meal) meal.feedback = null;
+      feedbackDialog.close();
+      renderPlan(CURRENT_PLAN);
+      flash('Meal feedback removed.');
+    } catch (error) {
+      flash(String(error.message || 'Unable to remove feedback.'), 'error');
+    }
+  });
 
   // ----- boot -----
   async function boot() {
