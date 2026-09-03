@@ -1,0 +1,50 @@
+/* Glycofy's final shared theme layer. Load this last on every page. */
+:root {
+  color-scheme: dark;
+  --glyco-canvas: #0d1218;
+  --glyco-canvas-glow: rgba(80, 200, 138, .055);
+  --glyco-panel: #121921;
+  --glyco-panel-raised: #151d27;
+  --glyco-border: rgba(255, 255, 255, .085);
+  --glyco-text: #e7ecf3;
+  --glyco-muted: #9fb0c9;
+  --glyco-accent: #50c88a;
+  --glyco-accent-strong: #74dda9;
+  --bg: var(--glyco-canvas);
+  --panel: var(--glyco-panel);
+  --text: var(--glyco-text);
+  --muted: var(--glyco-muted);
+  --primary: var(--glyco-accent);
+  --primary-strong: var(--glyco-accent-strong);
+  --accent: var(--glyco-accent);
+  --accent-2: var(--glyco-accent-strong);
+}
+
+html,
+body,
+html.ui-root,
+body.ui-root {
+  min-height: 100%;
+  background-color: var(--glyco-canvas) !important;
+  background-image:
+    radial-gradient(1100px 520px at 12% -14%, var(--glyco-canvas-glow), transparent 62%),
+    linear-gradient(180deg, #0d1218 0%, #0c1117 100%) !important;
+  background-attachment: fixed !important;
+  color: var(--glyco-text);
+}
+
+.topbar {
+  background: rgba(11, 16, 22, .92) !important;
+  border-bottom-color: rgba(80, 200, 138, .12) !important;
+  backdrop-filter: saturate(140%) blur(10px);
+}
+
+.topbar .nav a.active,
+.topbar .nav-links a.active {
+  background: rgba(80, 200, 138, .10) !important;
+  border-color: rgba(80, 200, 138, .25) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html, body { background-attachment: scroll !important; }
+}
