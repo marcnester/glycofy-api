@@ -1,6 +1,13 @@
 import json
+from datetime import datetime
 from types import SimpleNamespace
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+
+from app.db import Base
+from app.models import User, WeeklyPlanningJob
 from app.routers import llm_recommend
 
 
@@ -114,33 +121,74 @@ def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeyp
 
 
 def test_weekly_job_status_is_scoped_to_owner():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
     job_id = "owner-scoped-job"
-    llm_recommend._WEEKLY_JOBS[job_id] = {
-        "job_id": job_id,
-        "user_id": 42,
-        "status": "completed",
-        "stage": "completed",
-        "message": "Ready",
-        "completed_days": 7,
-        "total_days": 7,
-        "elapsed_seconds": 12.5,
-        "result": {"days": []},
-        "error": None,
-    }
-    try:
+    with Session(engine) as db:
+        db.add_all(
+            [
+                User(id=42, email="owner@example.com", password_hash="x"),
+                User(id=99, email="stranger@example.com", password_hash="x"),
+            ]
+        )
+        db.add(
+            WeeklyPlanningJob(
+                id=job_id,
+                user_id=42,
+                status="completed",
+                stage="completed",
+                message="Ready",
+                completed_days=7,
+                total_days=7,
+                payload={},
+                result={"days": []},
+                cancel_requested=False,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+                completed_at=datetime.utcnow(),
+            )
+        )
+        db.commit()
         owner = SimpleNamespace(id=42)
-        response = llm_recommend.weekly_job_status(job_id, owner)
+        response = llm_recommend.weekly_job_status(job_id, db, owner)
         assert response.status == "completed"
 
         stranger = SimpleNamespace(id=99)
         try:
-            llm_recommend.weekly_job_status(job_id, stranger)
+            llm_recommend.weekly_job_status(job_id, db, stranger)
         except llm_recommend.HTTPException as exc:
             assert exc.status_code == 404
         else:
             raise AssertionError("another user could read the weekly job")
-    finally:
-        llm_recommend._WEEKLY_JOBS.pop(job_id, None)
+
+
+def test_weekly_job_can_be_cancelled_by_its_owner():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = User(id=42, email="owner@example.com", password_hash="x")
+        db.add(user)
+        db.add(
+            WeeklyPlanningJob(
+                id="cancel-me",
+                user_id=42,
+                status="running",
+                stage="generating",
+                message="Working",
+                completed_days=0,
+                total_days=7,
+                payload={},
+                cancel_requested=False,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+        )
+        db.commit()
+
+        response = llm_recommend.cancel_weekly_job("cancel-me", db, user)
+        assert response.status == "running"
+        job = db.get(WeeklyPlanningJob, "cancel-me")
+        assert job is not None and job.cancel_requested is True
 
 
 def test_weekly_batch_rejects_a_meal_with_bad_macros(monkeypatch):

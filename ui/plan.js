@@ -87,8 +87,10 @@
   const busyEl = $('plan-busy');
   const busyMsg = $('plan-busy-msg');
   const busyMeta = $('plan-busy-meta');
+  const busyCancel = $('plan-busy-cancel');
   let busyStartedAt = 0;
   let busyTimer = null;
+  let activeWeeklyJobId = null;
 
   const WEEKLY_PROGRESS_STAGES = [
     [0, 'Reviewing your goals and training…'],
@@ -515,6 +517,7 @@
       }
       const job = await response.json();
       if (job.status === 'completed') return job.result;
+      if (job.status === 'cancelled') throw new Error('Weekly planning was cancelled.');
       if (job.status === 'failed') {
         throw new Error(job.error || 'Weekly AI planning failed.');
       }
@@ -535,14 +538,31 @@
       throw new Error(body?.detail || `Weekly AI planning failed: ${response.status}`);
     }
     const job = await response.json();
+    activeWeeklyJobId = job.job_id;
+    if (busyCancel) busyCancel.hidden = false;
     sessionStorage.setItem(
       WEEKLY_JOB_STORAGE_KEY,
       JSON.stringify({ jobId: job.job_id, ...context })
     );
     const result = await pollWeeklyJob(job.job_id);
     sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
+    activeWeeklyJobId = null;
+    if (busyCancel) busyCancel.hidden = true;
     return result;
   }
+
+  busyCancel?.addEventListener('click', async () => {
+    if (!activeWeeklyJobId) return;
+    busyCancel.disabled = true;
+    busyCancel.textContent = 'Cancelling…';
+    try {
+      await fetch(`/v1/llm/recommend/weekly/jobs/${activeWeeklyJobId}/cancel`, { method: 'POST', credentials: 'include' });
+      if (busyMsg) busyMsg.textContent = 'Cancelling after the current AI request…';
+    } finally {
+      busyCancel.disabled = false;
+      busyCancel.textContent = 'Cancel weekly planning';
+    }
+  });
 
   // ----- API calls -----
   async function loadPlan(d) {
@@ -1363,7 +1383,14 @@
     } catch (_) {
       sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
     }
+    if (!saved?.jobId) {
+      const latestResponse = await fetch('/v1/llm/recommend/weekly/jobs', { credentials: 'include' });
+      const latest = latestResponse.ok ? await latestResponse.json() : null;
+      if (latest && ['queued', 'running'].includes(latest.status)) saved = { jobId: latest.job_id };
+    }
     if (!saved?.jobId) return;
+    activeWeeklyJobId = saved.jobId;
+    if (busyCancel) busyCancel.hidden = false;
     setBusy(true, 'Reconnecting to your AI week…');
     try {
       await pollWeeklyJob(saved.jobId);
@@ -1377,6 +1404,8 @@
       sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
       flash(String(err.message || 'Failed to resume weekly planning.'), 'error');
     } finally {
+      activeWeeklyJobId = null;
+      if (busyCancel) busyCancel.hidden = true;
       setBusy(false);
     }
   })();

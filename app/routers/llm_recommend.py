@@ -30,6 +30,7 @@ from app.models import (
     Recipe,
     User,
     UserPreference,  # ORM mapped to user_preferences
+    WeeklyPlanningJob,
 )
 from app.services.meal_feedback import feedback_context
 from app.services.training_nutrition import (
@@ -43,6 +44,22 @@ ClientType = Any
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+_WEEKLY_JOB_CONTEXT = threading.local()
+
+
+class WeeklyJobCancelled(RuntimeError):
+    pass
+
+
+def _raise_if_weekly_job_cancelled(db: Session) -> None:
+    job_id = getattr(_WEEKLY_JOB_CONTEXT, "job_id", None)
+    if not job_id:
+        return
+    db.expire_all()
+    cancelled = db.query(WeeklyPlanningJob.cancel_requested).filter(WeeklyPlanningJob.id == job_id).scalar()
+    if cancelled:
+        raise WeeklyJobCancelled("Weekly planning cancelled")
+
 
 __all__ = ["router"]
 
@@ -3653,6 +3670,7 @@ def recommend_weekly_apply(
         rolling_carb_items = list(dict.fromkeys(used_carb_items[prior_carb_count:]))
 
         # ✅ Persist this day into plans/plan_meals
+        _raise_if_weekly_job_cancelled(db)
         persist_summaries.append(
             _persist_day_recommendations(
                 db=db,
@@ -3666,6 +3684,7 @@ def recommend_weekly_apply(
 
     # ✅ Commit once at the end so changes persist
     try:
+        _raise_if_weekly_job_cancelled(db)
         db.commit()
     except Exception as e:
         db.rollback()
@@ -3684,32 +3703,62 @@ def recommend_weekly_apply(
     return resp
 
 
-_WEEKLY_JOBS: dict[str, dict[str, Any]] = {}
-_WEEKLY_JOBS_LOCK = threading.Lock()
-_WEEKLY_JOB_TTL_SECONDS = 60 * 60
 _WEEKLY_JOB_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="weekly-plan")
 
 
 def _update_weekly_job(job_id: str, **updates: Any) -> None:
-    with _WEEKLY_JOBS_LOCK:
-        if job_id in _WEEKLY_JOBS:
-            _WEEKLY_JOBS[job_id].update(updates)
+    with SessionLocal() as db:
+        job = db.query(WeeklyPlanningJob).filter(WeeklyPlanningJob.id == job_id).first()
+        if job is None:
+            return
+        for key, value in updates.items():
+            setattr(job, key, value)
+        job.updated_at = datetime.utcnow()
+        db.commit()
+
+
+def _weekly_job_dict(job: WeeklyPlanningJob) -> dict[str, Any]:
+    now = datetime.utcnow()
+    elapsed = 0.0
+    if job.started_at:
+        elapsed = round(((job.completed_at or now) - job.started_at).total_seconds(), 1)
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "stage": job.stage,
+        "message": job.message,
+        "completed_days": job.completed_days,
+        "total_days": job.total_days,
+        "elapsed_seconds": elapsed,
+        "result": job.result,
+        "error": job.error,
+    }
 
 
 def _run_weekly_job(job_id: str, payload_data: dict[str, Any], user_id: int, ip: str) -> None:
-    started = time.perf_counter()
     _update_weekly_job(
         job_id,
         status="running",
         stage="generating",
         message="Designing 28 meals with AI…",
-        started_monotonic=started,
+        started_at=datetime.utcnow(),
     )
     with SessionLocal() as db:
         try:
+            _WEEKLY_JOB_CONTEXT.job_id = job_id
             user = db.query(User).filter(User.id == user_id).first()
             if user is None:
                 raise RuntimeError("User no longer exists")
+            job = db.query(WeeklyPlanningJob).filter(WeeklyPlanningJob.id == job_id).first()
+            if job is None or job.cancel_requested:
+                _update_weekly_job(
+                    job_id,
+                    status="cancelled",
+                    stage="cancelled",
+                    message="Weekly planning cancelled.",
+                    completed_at=datetime.utcnow(),
+                )
+                return
 
             class JobRequest:
                 pass
@@ -3723,16 +3772,34 @@ def _run_weekly_job(job_id: str, payload_data: dict[str, Any], user_id: int, ip:
                 db,
                 user,
             )
-            elapsed = round(time.perf_counter() - started, 2)
+            db.expire_all()
+            job = db.query(WeeklyPlanningJob).filter(WeeklyPlanningJob.id == job_id).first()
+            if job and job.cancel_requested:
+                _update_weekly_job(
+                    job_id,
+                    status="cancelled",
+                    stage="cancelled",
+                    message="Weekly planning cancelled.",
+                    completed_at=datetime.utcnow(),
+                )
+                return
             _update_weekly_job(
                 job_id,
                 status="completed",
                 stage="completed",
                 message="Your AI week is ready.",
                 completed_days=len(result.get("days", [])),
-                elapsed_seconds=elapsed,
                 result=result,
-                completed_at=time.time(),
+                completed_at=datetime.utcnow(),
+            )
+        except WeeklyJobCancelled:
+            db.rollback()
+            _update_weekly_job(
+                job_id,
+                status="cancelled",
+                stage="cancelled",
+                message="Weekly planning cancelled.",
+                completed_at=datetime.utcnow(),
             )
         except Exception as exc:
             db.rollback()
@@ -3743,72 +3810,62 @@ def _run_weekly_job(job_id: str, payload_data: dict[str, Any], user_id: int, ip:
                 stage="failed",
                 message="We couldn't finish this week plan.",
                 error=str(getattr(exc, "detail", None) or exc),
-                elapsed_seconds=round(time.perf_counter() - started, 2),
-                completed_at=time.time(),
+                completed_at=datetime.utcnow(),
             )
-
-
-def _prune_weekly_jobs() -> None:
-    cutoff = time.time() - _WEEKLY_JOB_TTL_SECONDS
-    with _WEEKLY_JOBS_LOCK:
-        expired = [
-            job_id
-            for job_id, job in _WEEKLY_JOBS.items()
-            if job.get("completed_at", job.get("created_at", time.time())) < cutoff
-        ]
-        for job_id in expired:
-            _WEEKLY_JOBS.pop(job_id, None)
+        finally:
+            _WEEKLY_JOB_CONTEXT.job_id = None
 
 
 @router.post("/recommend/weekly/jobs", response_model=WeeklyJobStartResponse, tags=["llm"])
 def start_weekly_job(
     request: Request,
     payload: WeeklyRecommendRequest = Body(...),
+    db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     if not payload.days:
         raise HTTPException(status_code=400, detail="No days provided")
-    _prune_weekly_jobs()
     ip = request.client.host if request and request.client else "unknown"
-    with _WEEKLY_JOBS_LOCK:
-        existing = next(
-            (
-                job
-                for job in _WEEKLY_JOBS.values()
-                if job.get("user_id") == user.id and job.get("status") in {"queued", "running"}
-            ),
-            None,
+    existing = (
+        db.query(WeeklyPlanningJob)
+        .filter(WeeklyPlanningJob.user_id == user.id, WeeklyPlanningJob.status.in_(("queued", "running")))
+        .order_by(WeeklyPlanningJob.created_at.desc())
+        .first()
+    )
+    if existing:
+        return {"job_id": existing.id, "status": existing.status}
+    job_id = uuid.uuid4().hex
+    now = datetime.utcnow()
+    db.add(
+        WeeklyPlanningJob(
+            id=job_id,
+            user_id=user.id,
+            status="queued",
+            stage="queued",
+            message="Starting your AI week…",
+            completed_days=0,
+            total_days=len(payload.days),
+            payload=payload.model_dump(mode="json"),
+            cancel_requested=False,
+            created_at=now,
+            updated_at=now,
         )
-        if existing:
-            return {"job_id": existing["job_id"], "status": existing["status"]}
-        job_id = uuid.uuid4().hex
-        _WEEKLY_JOBS[job_id] = {
-            "job_id": job_id,
-            "user_id": user.id,
-            "status": "queued",
-            "stage": "queued",
-            "message": "Starting your AI week…",
-            "completed_days": 0,
-            "total_days": len(payload.days),
-            "elapsed_seconds": 0.0,
-            "result": None,
-            "error": None,
-            "created_at": time.time(),
-        }
+    )
+    db.commit()
     _WEEKLY_JOB_EXECUTOR.submit(_run_weekly_job, job_id, payload.model_dump(), user.id, ip)
     return {"job_id": job_id, "status": "queued"}
 
 
 @router.get("/recommend/weekly/jobs/{job_id}", response_model=WeeklyJobStatusResponse, tags=["llm"])
-def weekly_job_status(job_id: str, user: User = Depends(get_current_user)):
-    with _WEEKLY_JOBS_LOCK:
-        job = dict(_WEEKLY_JOBS.get(job_id) or {})
-    if not job or job.get("user_id") != user.id:
+def weekly_job_status(job_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    job = (
+        db.query(WeeklyPlanningJob).filter(WeeklyPlanningJob.id == job_id, WeeklyPlanningJob.user_id == user.id).first()
+    )
+    if not job:
         raise HTTPException(status_code=404, detail="Weekly plan job not found")
-    if job.get("status") in {"queued", "running"}:
-        started = job.get("started_monotonic")
-        elapsed = round(time.perf_counter() - started, 1) if started else 0.0
-        job["elapsed_seconds"] = elapsed
+    result = _weekly_job_dict(job)
+    if job.status in {"queued", "running"}:
+        elapsed = result["elapsed_seconds"]
         phases = (
             (45, "saving", "Saving your personalized week…"),
             (32, "instructions", "Adding quantities and cooking instructions…"),
@@ -3818,9 +3875,36 @@ def weekly_job_status(job_id: str, user: User = Depends(get_current_user)):
         )
         for threshold, stage, message in phases:
             if elapsed >= threshold:
-                job.update({"stage": stage, "message": message})
+                result.update({"stage": stage, "message": message})
                 break
-    return WeeklyJobStatusResponse.model_validate(job)
+    return WeeklyJobStatusResponse.model_validate(result)
+
+
+@router.get("/recommend/weekly/jobs", response_model=WeeklyJobStatusResponse | None, tags=["llm"])
+def latest_weekly_job(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    job = (
+        db.query(WeeklyPlanningJob)
+        .filter(WeeklyPlanningJob.user_id == user.id)
+        .order_by(WeeklyPlanningJob.created_at.desc())
+        .first()
+    )
+    return WeeklyJobStatusResponse.model_validate(_weekly_job_dict(job)) if job else None
+
+
+@router.post("/recommend/weekly/jobs/{job_id}/cancel", response_model=WeeklyJobStatusResponse, tags=["llm"])
+def cancel_weekly_job(job_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    job = (
+        db.query(WeeklyPlanningJob).filter(WeeklyPlanningJob.id == job_id, WeeklyPlanningJob.user_id == user.id).first()
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Weekly plan job not found")
+    if job.status in {"queued", "running"}:
+        job.cancel_requested = True
+        job.message = "Cancelling after the current AI request…"
+        job.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(job)
+    return WeeklyJobStatusResponse.model_validate(_weekly_job_dict(job))
 
 
 # ---------- Training curve API (for graphs in UI) ----------
