@@ -77,6 +77,19 @@ def test_login_page_exposes_clear_account_creation_flow(client: TestClient):
     assert "at least 12 characters" in script.text
 
 
+def test_home_replaces_technical_account_details_with_training_summary(client: TestClient):
+    page = client.get("/ui/index.html")
+    script = client.get("/ui/index.js")
+
+    assert "Today’s training &amp; fueling" in page.text
+    assert 'id="trainingConfidence"' in page.text
+    assert 'id="fuelingFocus"' in page.text
+    assert 'id="manageTraining"' in page.text
+    assert "Cookie session" not in page.text
+    assert "<h3>Account</h3>" not in page.text
+    assert "/v1/training-events/context/" in script.text
+
+
 def test_profile_uses_official_strava_connect_asset(client: TestClient):
     response = client.get("/ui/profile.html")
     assert response.status_code == 200

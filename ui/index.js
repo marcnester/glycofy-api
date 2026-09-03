@@ -39,6 +39,15 @@
     return r.json();
   }
 
+  async function getTrainingSummary(date) {
+    const [eventsResponse, contextResponse] = await Promise.all([
+      fetch(`/v1/training-events?from=${date}&to=${date}`, { credentials: "include" }),
+      fetch(`/v1/training-events/context/${date}?days=7`, { credentials: "include" }),
+    ]);
+    if (!eventsResponse.ok || !contextResponse.ok) throw new Error("training unavailable");
+    return { events: (await eventsResponse.json()).items || [], context: await contextResponse.json() };
+  }
+
   async function seedPlanIfMissing(date) {
     await fetch(`/v1/plan/${date}?engine=heuristic&replace=false`, {
       method: "POST",
@@ -59,29 +68,66 @@
 
   function renderUser(me) {
     const name = me?.name || me?.email || "athlete";
-    if ($("accUser")) $("accUser").textContent = me?.email || "(unknown)";
-    if ($("accStatus")) {
-      $("accStatus").textContent = "Signed in";
-      $("accStatus").className = "ok";
-    }
-    if ($("accAuth")) $("accAuth").textContent = "Cookie session";
-
     if ($("heroTitle")) $("heroTitle").textContent = `Welcome back, ${name}!`;
     if ($("heroSub"))
       $("heroSub").textContent = "Your plan for today is ready to tune.";
   }
 
   function renderSignedOut() {
-    if ($("accStatus")) {
-      $("accStatus").textContent = "Signed out";
-      $("accStatus").className = "warn";
-    }
-    if ($("accAuth")) $("accAuth").textContent = "No active session";
     if ($("heroTitle"))
       $("heroTitle").textContent = "Eat with intent. Train with data.";
     if ($("heroSub"))
       $("heroSub").textContent = "Sign in to build meals that match your goals.";
-    if ($("goLogin")) $("goLogin").style.display = "";
+  }
+
+  function workoutTime(value) {
+    if (!value) return "Time not specified";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "Time not specified";
+    return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(parsed);
+  }
+
+  function fuelingFor(event) {
+    if (!event) return "Follow today’s calorie and macro targets; no workout-specific timing is needed.";
+    if (event.intensity === "race" || event.intensity === "hard" || event.priority === "key" || event.duration_min >= 90) {
+      return "Prioritize carbohydrate availability before training and protein with carbohydrates afterward.";
+    }
+    if (event.intensity === "moderate" || event.duration_min >= 60) {
+      return "Use a balanced pre-workout carbohydrate meal and include recovery protein afterward.";
+    }
+    return "Keep fueling steady, hydrate well, and use your normal protein distribution for recovery.";
+  }
+
+  function renderTrainingSummary(summary) {
+    const events = summary?.events || [];
+    const context = summary?.context || {};
+    const event = events[0] || null;
+    $("workoutTitle").textContent = event ? event.sport : "No workout scheduled today";
+    $("workoutMeta").textContent = event
+      ? `${workoutTime(event.start_time)} · ${event.duration_min} min · ${event.intensity}${events.length > 1 ? ` · +${events.length - 1} more today` : ""}`
+      : "Recovery or rest day";
+    $("fuelingFocus").textContent = fuelingFor(event);
+    $("trainingContext").textContent = context.message || "Training context is unavailable right now.";
+    const confidence = $("trainingConfidence");
+    if (context.state === "complete") {
+      confidence.textContent = "Full training context";
+      confidence.className = "confidence-badge";
+    } else if (context.state === "standard") {
+      confidence.textContent = "Standard targets";
+      confidence.className = "confidence-badge partial";
+    } else {
+      confidence.textContent = "Partial context";
+      confidence.className = "confidence-badge partial";
+    }
+  }
+
+  function renderTrainingUnavailable() {
+    $("workoutTitle").textContent = "Training details unavailable";
+    $("workoutMeta").textContent = "Open Training to review your schedule";
+    $("fuelingFocus").textContent = "Today’s meals still follow your athlete profile and macro targets.";
+    $("trainingContext").textContent = "We couldn’t load training context for this dashboard view.";
+    $("trainingConfidence").textContent = "Standard targets";
+    $("trainingConfidence").className = "confidence-badge partial";
   }
 
   function renderPlanSummary(plan) {
@@ -149,20 +195,12 @@
 
   function initStaticBits() {
     if ($("yr")) $("yr").textContent = new Date().getFullYear();
-    if ($("apiNote")) $("apiNote").textContent = "API: " + window.location.origin;
     const openPlanner = $("openPlanner");
     if (openPlanner) {
       openPlanner.addEventListener("click", () => {
         const d = todayISO();
         window.location.href =
           "/ui/plan.html?date=" + encodeURIComponent(d);
-      });
-    }
-    const goLogin = $("goLogin");
-    if (goLogin) {
-      goLogin.addEventListener("click", () => {
-        const ret = encodeURIComponent("/ui/index.html");
-        window.location.href = `/ui/login.html?return=${ret}`;
       });
     }
   }
@@ -179,10 +217,10 @@
     linkWithDate($("adjustMeals"), "/ui/plan.html", d);
     linkWithDate($("viewActivities"), "/ui/activities.html", d);
     linkWithDate($("openProfile"), "/ui/profile.html", d);
+    linkWithDate($("manageTraining"), "/ui/activities.html", d);
 
-    // Bind logout buttons (topbar + card)
+    // Bind the topbar logout action.
     bindLogout(document.querySelector("#logout_btn,[data-nav='logout']"));
-    bindLogout($("doLogout"));
 
     try {
       const me = await getMe();
@@ -200,6 +238,12 @@
         }
       }
       renderPlanSummary(plan);
+
+      try {
+        renderTrainingSummary(await getTrainingSummary(d));
+      } catch {
+        renderTrainingUnavailable();
+      }
 
       if ($("dlTxt")) {
         $("dlTxt").href = `/v1/plan/${d}/grocery.txt`;
