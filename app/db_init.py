@@ -1,6 +1,7 @@
 # app/db_init.py
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 from sqlalchemy import text
@@ -27,10 +28,13 @@ def ensure_demo_user() -> None:
             print(f"✅ User exists: id={user.id}, email={user.email}")
             return
 
+        demo_password = os.getenv("DEMO_PASSWORD", "")
+        if len(demo_password) < 12:
+            raise RuntimeError("Set DEMO_PASSWORD to at least 12 characters before creating a demo user")
         print("▶ Seeding demo user…")
         user = User(
             email=email.lower(),
-            password_hash=hash_password("Demo1234!"),
+            password_hash=hash_password(demo_password),
             sex="male",
             dob=None,
             height_cm=183.0,

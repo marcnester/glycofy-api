@@ -5,6 +5,7 @@ Run with:  python -m scripts.dev_seed
 
 from __future__ import annotations
 
+import os
 import sys
 
 from passlib.hash import bcrypt_sha256
@@ -14,10 +15,13 @@ from app.db import Base, SessionLocal, engine
 from app.models import User  # assumes you already have a User model with these fields
 
 DEMO_EMAIL = "demo@glycofy.app"
-DEMO_PASSWORD = "Demo1234!"  # keep <=72 bytes; bcrypt has a 72-byte limit
 
 
 def main() -> int:
+    demo_password = os.getenv("DEMO_PASSWORD", "")
+    if not 12 <= len(demo_password) <= 72:
+        print("Set DEMO_PASSWORD to a value between 12 and 72 characters before running this script")
+        return 2
     # 1) ensure tables exist
     Base.metadata.create_all(bind=engine)
 
@@ -29,7 +33,7 @@ def main() -> int:
             print(f"ℹ️  User already exists: {DEMO_EMAIL} (id={user.id})")
             return 0
 
-        pwd_hash = bcrypt_sha256.hash(DEMO_PASSWORD)
+        pwd_hash = bcrypt_sha256.hash(demo_password)
         user = User(
             email=DEMO_EMAIL,
             password_hash=pwd_hash,
@@ -43,9 +47,7 @@ def main() -> int:
         db.commit()
         db.refresh(user)
         print(f"✅ Created user: {DEMO_EMAIL} (id={user.id})")
-        print("   You can login with:")
-        print(f"   email:    {DEMO_EMAIL}")
-        print(f"   password: {DEMO_PASSWORD}")
+        print(f"   Demo email: {DEMO_EMAIL}")
         return 0
     except IntegrityError:
         db.rollback()

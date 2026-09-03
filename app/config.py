@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     AUTH_RATE_LIMIT_PER_15_MINUTES: int = 20
     OAUTH_RATE_LIMIT_PER_15_MINUTES: int = 30
     SECURITY_AUDIT_RETENTION_DAYS: int = 365
-    SECURITY_ALERT_EMAIL_TO: str = "marcnester@gmail.com"
+    SECURITY_ALERT_EMAIL_TO: str = ""
     SECURITY_ALERT_EMAIL_ENABLED: bool = False
     SECURITY_ALERT_EMAIL_COOLDOWN_SECONDS: int = 900
     SMTP_HOST: str | None = None

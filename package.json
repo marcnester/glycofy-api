@@ -1,7 +1,8 @@
 {
   "name": "glycofy-api",
   "version": "1.0.0",
-  "description": "",
+  "description": "Athlete-aware AI meal planning and grocery preparation platform",
+  "private": true,
   "main": "index.js",
   "scripts": {
     "test": "npm audit --omit=dev --audit-level=high",
@@ -13,7 +14,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "UNLICENSED",
   "type": "commonjs",
   "bugs": {
     "url": "https://github.com/marcnester/glycofy-api/issues"

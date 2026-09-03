@@ -64,6 +64,19 @@ def test_login_page_does_not_expose_demo_credentials(client: TestClient):
     assert "demo@glycofy.app" not in response.text.lower()
 
 
+def test_public_demo_helpers_do_not_embed_a_shared_password():
+    paths = (
+        Path("app/db_init.py"),
+        Path("scripts/dev_seed.py"),
+        Path("scripts/reset_demo_password.py"),
+        Path("web/login.html"),
+    )
+    combined = "\n".join(path.read_text() for path in paths)
+
+    assert "Demo1234!" not in combined
+    assert "DEMO_PASSWORD" in combined
+
+
 def test_login_page_exposes_clear_account_creation_flow(client: TestClient):
     page = client.get("/ui/login.html")
     script = client.get("/ui/login.js")

@@ -42,7 +42,7 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: SECURITY_ALERT_EMAIL_TO
-        value: marcnester@gmail.com
+        sync: false
       - key: SECURITY_ALERT_EMAIL_ENABLED
         value: "false"
 

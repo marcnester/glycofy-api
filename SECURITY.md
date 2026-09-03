@@ -54,11 +54,11 @@ Warnings such as individual failed logins and CSRF rejections should create sear
 
 ### Temporary email delivery
 
-Alert-class events can temporarily be delivered to `marcnester@gmail.com` through SMTP. Delivery is non-blocking, uses a bounded queue, and suppresses duplicate event/outcome combinations for 15 minutes by default. Set these only in the deployment secret store or local `.env`, never in source control:
+Alert-class events can temporarily be delivered through SMTP. Delivery is non-blocking, uses a bounded queue, and suppresses duplicate event/outcome combinations for 15 minutes by default. Set these only in the deployment secret store or local `.env`, never in source control:
 
 ```dotenv
 SECURITY_ALERT_EMAIL_ENABLED=true
-SECURITY_ALERT_EMAIL_TO=marcnester@gmail.com
+SECURITY_ALERT_EMAIL_TO=security@example.com
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USERNAME=your-sending-account@example.com
