@@ -16,6 +16,9 @@ venv/
 # Environment variables
 .env
 
+# Local planning notes
+docs/CURRENT_CHECKPOINT.md
+
 # Logs
 *.log
 

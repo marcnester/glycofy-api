@@ -63,7 +63,7 @@ The long-term goal is a closed loop in which training informs nutrition, the pla
 | Integrations | Google OAuth, Strava OAuth/webhooks, TrainingPeaks CSV | Identity and training context |
 | Production | Docker, Render, GitHub Actions | Deployment, migrations, health checks, and verification gates |
 
-The production entry point is `app.main:app`. The top-level `api/` directory contains earlier prototype code and is not copied into the production image.
+The production entry point is `app.main:app`.
 
 ## Local development
 

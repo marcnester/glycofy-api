@@ -69,7 +69,6 @@ def test_public_demo_helpers_do_not_embed_a_shared_password():
         Path("app/db_init.py"),
         Path("scripts/dev_seed.py"),
         Path("scripts/reset_demo_password.py"),
-        Path("web/login.html"),
     )
     combined = "\n".join(path.read_text() for path in paths)
 

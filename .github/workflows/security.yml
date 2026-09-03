@@ -12,6 +12,20 @@ permissions:
 jobs:
   python:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: glycofy
+          POSTGRES_PASSWORD: glycofy_test
+          POSTGRES_DB: glycofy_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U glycofy -d glycofy_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,7 +34,14 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: ruff check app tests
+      - run: mypy app
       - run: pytest -q
+      - name: Test complete PostgreSQL migration chain
+        env:
+          DATABASE_URL: postgresql+psycopg://glycofy:glycofy_test@127.0.0.1:5432/glycofy_test
+        run: |
+          alembic upgrade head
+          test "$(alembic current 2>/dev/null | awk '{print $1}')" = "$(alembic heads 2>/dev/null | awk '{print $1}')"
       - run: pip-audit -r requirements.txt
       - run: bandit -q -lll -r app -x tests
 
