@@ -7,6 +7,17 @@
   let edits = {};
   let approval = null;
   let editingItem = null;
+  let shopping = null;
+
+  async function loadShopping() {
+    try {
+      shopping = await glyco.fetchJSON(`/v1/plan/grocery-list/shopping?${rangeQuery()}`);
+      const button = $("instacart_btn");
+      button.hidden = !shopping.configured;
+      button.disabled = !shopping.approved;
+      button.title = shopping.approved ? "Send this approved list to Instacart" : "Approve the current list first";
+    } catch { $("instacart_btn").hidden = true; }
+  }
 
   function localISO(date) { return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
   function monday(date) { const copy = new Date(date); copy.setDate(copy.getDate() - ((copy.getDay() + 6) % 7)); return copy; }
@@ -176,7 +187,7 @@
         approval.items.forEach((item) => { edits[item.id] = { done: false, pantry: Boolean(item.pantry), quantity: item.quantity == null ? null : Number(item.quantity) / approval.servings, unit: item.unit, preferredBrand: item.preferred_brand || item.preference?.preferred_brand || "", packageQuantity: item.package_quantity || item.package?.package_size || null, packageUnit: item.package_unit || item.package?.package_unit || item.unit || "" }; });
       }
       if (data.missing_dates.length) { notice.textContent = `${data.missing_dates.length} selected day${data.missing_dates.length === 1 ? " has" : "s have"} no meal plan yet. Only planned days are included.`; notice.hidden = false; }
-      render(); renderApproval();
+      render(); renderApproval(); await loadShopping();
     } catch (error) { const root = $("grocery_list"); root.replaceChildren(); const message = document.createElement("div"); message.className = "empty"; message.textContent = error.message || "Could not load grocery list."; root.appendChild(message); }
   }
   async function approve() {
@@ -184,7 +195,7 @@
     try {
       const items = (data?.items || []).map((item) => { const state = stateFor(item); const pack = packagePlan(item); return { id: item.id, quantity: scaledQuantity(item) === "" ? null : Number(scaledQuantity(item)), unit: state.unit || "", pantry: Boolean(state.pantry), preferred_brand: state.preferredBrand || null, package_quantity: state.packageQuantity ? Number(state.packageQuantity) : null, package_unit: state.packageUnit || null, purchase_count: pack?.count || null }; });
       const result = await glyco.fetchJSON(`/v1/plan/grocery-list/approval?${rangeQuery()}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ servings: Number($("servings").value || 1), items }) });
-      approval = result.approval; saveEdits(false); renderApproval();
+      approval = result.approval; saveEdits(false); renderApproval(); await loadShopping();
     } catch (error) { const notice = $("notice"); notice.textContent = error.message || "Could not approve this list."; notice.hidden = false; renderApproval(); }
     finally { button.disabled = Boolean(data?.missing_dates?.length); }
   }
@@ -192,6 +203,11 @@
   document.addEventListener("DOMContentLoaded", () => {
     const query = new URLSearchParams(location.search); const start = query.get("start") || localISO(monday(new Date())); $("start_date").value = start; $("end_date").value = query.get("end") || addDays(start, 6);
     $("load_btn").addEventListener("click", load); $("servings").addEventListener("change", () => { markChanged(); render(); }); $("approve_btn").addEventListener("click", approve);
+    $("instacart_btn").addEventListener("click", async () => {
+      const button = $("instacart_btn"); button.disabled = true; button.textContent = "Opening Instacart…";
+      try { const result = await glyco.fetchJSON(`/v1/plan/grocery-list/shopping?${rangeQuery()}`, { method: "POST" }); location.assign(result.url); }
+      catch (error) { const notice = $("notice"); notice.textContent = error.message || "Could not open Instacart."; notice.hidden = false; button.disabled = false; button.textContent = "Shop on Instacart"; }
+    });
     $("clear_btn").addEventListener("click", () => { Object.values(edits).forEach((state) => { state.done = false; }); saveEdits(false); render(); });
     $("copy_btn").addEventListener("click", async () => { await navigator.clipboard.writeText(listText()); $("copy_btn").textContent = "Copied"; setTimeout(() => { $("copy_btn").textContent = "Copy list"; }, 1500); });
     $("print_btn").addEventListener("click", () => window.print()); $("txt_btn").addEventListener("click", () => download("glycofy-grocery-list.txt", listText(), "text/plain;charset=utf-8"));

@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     STRAVA_WEBHOOK_VERIFY_TOKEN: str | None = None
     STRAVA_WEBHOOK_SUBSCRIPTION_ID: int | None = None
 
+    # ─── Grocery checkout (optional) ─────────────────────────────────────────
+    INSTACART_API_KEY: str | None = None
+    INSTACART_API_BASE: str = "https://connect.instacart.com"
+    INSTACART_LINK_EXPIRES_DAYS: int = 30
+
     def strava_ready(self) -> bool:
         """Check whether Strava OAuth is fully configured."""
         return bool(self.STRAVA_CLIENT_ID and self.STRAVA_CLIENT_SECRET and self.STRAVA_REDIRECT_URI)
@@ -147,6 +152,8 @@ class Settings(BaseSettings):
             errors.append("OAUTH_TOKEN_ENCRYPTION_KEY must be configured")
         if self.strava_ready() and len(self.STRAVA_WEBHOOK_VERIFY_TOKEN or "") < 32:
             errors.append("STRAVA_WEBHOOK_VERIFY_TOKEN must contain at least 32 characters")
+        if self.INSTACART_API_KEY and self.INSTACART_API_BASE.rstrip("/") != "https://connect.instacart.com":
+            errors.append("INSTACART_API_BASE must use the production Instacart endpoint")
         if self.SECURITY_ALERT_EMAIL_ENABLED:
             if not self.SMTP_HOST:
                 errors.append("SMTP_HOST is required when alert email is enabled")

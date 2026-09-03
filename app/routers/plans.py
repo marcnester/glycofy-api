@@ -4,6 +4,8 @@
 # app/routers/plans.py
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from datetime import date as date_cls
 from datetime import datetime, timedelta
@@ -16,9 +18,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth_utils import get_current_user
+from app.config import settings
 from app.db import get_db
 from app.models import GroceryApproval, GroceryPreference, Plan, PlanItem, PlanMeal, Recipe, User
 from app.routers.plan_models import EnergyTarget, UserPreference
+from app.services.instacart import InstacartError, create_products_link
 
 router = APIRouter()
 
@@ -1534,6 +1538,117 @@ def _approval_to_dict(approval: GroceryApproval, current_fingerprint: list[dict[
         "approved_at": approval.approved_at.isoformat(),
         "stale": (approval.plan_fingerprint or []) != current_fingerprint,
     }
+
+
+_INSTACART_UNITS = {
+    "item": "each",
+    "piece": "each",
+    "cup": "cup",
+    "tbsp": "tablespoon",
+    "tsp": "teaspoon",
+    "oz": "ounce",
+    "lb": "pound",
+    "g": "gram",
+    "kg": "kilogram",
+    "can": "can",
+}
+
+
+def _instacart_items(approval: GroceryApproval) -> list[dict[str, Any]]:
+    result = []
+    for item in approval.items or []:
+        if item.get("pantry"):
+            continue
+        line: dict[str, Any] = {
+            "name": item.get("name") or item.get("id"),
+            "display_text": item.get("name") or item.get("id"),
+        }
+        quantity = item.get("quantity")
+        unit = _INSTACART_UNITS.get(_grocery_unit(item.get("unit")))
+        if quantity is not None and unit:
+            line["line_item_measurements"] = [{"quantity": float(quantity), "unit": unit}]
+        if item.get("preferred_brand"):
+            line["filters"] = {"brand_filters": [item["preferred_brand"]]}
+        result.append(line)
+    return result
+
+
+def _shopping_approval(
+    start: date_cls, end: date_cls, db: Session, user: User
+) -> tuple[GroceryApproval | None, list[dict[str, Any]]]:
+    plans = (
+        db.query(Plan)
+        .filter(Plan.user_id == user.id, Plan.date >= start, Plan.date <= end)
+        .order_by(Plan.date.asc())
+        .all()
+    )
+    approval = (
+        db.query(GroceryApproval)
+        .filter(
+            GroceryApproval.user_id == user.id, GroceryApproval.start_date == start, GroceryApproval.end_date == end
+        )
+        .first()
+    )
+    return approval, _grocery_plan_fingerprint(plans)
+
+
+@router.get("/grocery-list/shopping", response_model=dict[str, Any])
+def grocery_shopping_status(
+    start: date_cls = Query(...),
+    end: date_cls | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    final_day = end or (start + timedelta(days=6))
+    approval, fingerprint = _shopping_approval(start, final_day, db, user)
+    fresh = bool(approval and approval.plan_fingerprint == fingerprint)
+    return {
+        "configured": bool(settings.INSTACART_API_KEY),
+        "approved": fresh,
+        "cached_url": approval.shopping_url if fresh and approval else None,
+    }
+
+
+@router.post("/grocery-list/shopping", response_model=dict[str, str])
+def create_grocery_shopping_link(
+    start: date_cls = Query(...),
+    end: date_cls | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not settings.INSTACART_API_KEY:
+        raise HTTPException(status_code=503, detail="Grocery delivery is not configured yet")
+    final_day = end or (start + timedelta(days=6))
+    approval, current = _shopping_approval(start, final_day, db, user)
+    if not approval or approval.plan_fingerprint != current:
+        raise HTTPException(status_code=400, detail="Approve the current shopping list first")
+    items = _instacart_items(approval)
+    if not items:
+        raise HTTPException(status_code=400, detail="No ingredients need to be purchased")
+    fingerprint = hashlib.sha256(json.dumps(items, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if approval.shopping_url and approval.shopping_fingerprint == fingerprint:
+        return {"url": approval.shopping_url}
+    payload = {
+        "title": f"Glycofy meals · {start.isoformat()} to {final_day.isoformat()}",
+        "link_type": "shopping_list",
+        "expires_in": settings.INSTACART_LINK_EXPIRES_DAYS,
+        "line_items": items,
+    }
+    if settings.PUBLIC_BASE_URL:
+        payload["landing_page_configuration"] = {
+            "partner_linkback_url": f"{settings.PUBLIC_BASE_URL.rstrip('/')}/ui/grocery.html?start={start.isoformat()}&end={final_day.isoformat()}"
+        }
+    try:
+        url = create_products_link(
+            api_base=settings.INSTACART_API_BASE, api_key=settings.INSTACART_API_KEY, payload=payload
+        )
+    except InstacartError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    approval.shopping_url = url
+    approval.shopping_fingerprint = fingerprint
+    approval.shopping_created_at = datetime.utcnow()
+    db.commit()
+    return {"url": url}
 
 
 @router.get("/grocery-list/week", response_model=dict[str, Any])

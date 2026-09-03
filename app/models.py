@@ -401,6 +401,9 @@ class GroceryApproval(Base):
     plan_fingerprint: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     approved_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    shopping_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shopping_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    shopping_created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class GroceryPreference(Base):

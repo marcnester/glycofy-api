@@ -41,6 +41,10 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: INSTACART_API_KEY
+        sync: false
+      - key: INSTACART_API_BASE
+        value: https://connect.instacart.com
       - key: SECURITY_ALERT_EMAIL_TO
         sync: false
       - key: SECURITY_ALERT_EMAIL_ENABLED

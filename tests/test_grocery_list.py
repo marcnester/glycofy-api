@@ -5,12 +5,14 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
 from app.main import app
+from app.models import GroceryApproval
 from app.routers.plans import (
     _format_grocery_measurements,
     _grocery_category,
     _grocery_measurement,
     _grocery_name,
     _grocery_unit,
+    _instacart_items,
     _package_suggestion,
 )
 
@@ -60,6 +62,30 @@ def test_package_suggestion_rounds_up_to_purchasable_amounts():
         "source": "estimated",
     }
     assert _package_suggestion("olive oil", "Pantry", 2, "tbsp") is None
+
+
+def test_instacart_payload_uses_measurements_and_excludes_pantry():
+    approval = GroceryApproval(
+        items=[
+            {
+                "id": "salmon",
+                "name": "Salmon",
+                "quantity": 18,
+                "unit": "oz",
+                "pantry": False,
+                "preferred_brand": "Harbor",
+            },
+            {"id": "salt", "name": "Salt", "quantity": 1, "unit": "tsp", "pantry": True},
+        ]
+    )
+    assert _instacart_items(approval) == [
+        {
+            "name": "Salmon",
+            "display_text": "Salmon",
+            "line_item_measurements": [{"quantity": 18.0, "unit": "ounce"}],
+            "filters": {"brand_filters": ["Harbor"]},
+        }
+    ]
 
 
 def test_weekly_grocery_approval_is_persisted_and_detects_plan_changes():
