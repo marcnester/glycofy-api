@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.auth_utils import get_current_user
 from app.db import get_db
-from app.models import Plan, PlanItem, PlanMeal, Recipe, User
+from app.models import GroceryApproval, Plan, PlanItem, PlanMeal, Recipe, User
 from app.routers.plan_models import EnergyTarget, UserPreference
 
 router = APIRouter()
@@ -1234,6 +1234,41 @@ def _grocery_category(name: str, meta: dict[str, Any] | None = None) -> str:
     return "Other"
 
 
+class GroceryApprovalItemIn(BaseModel):
+    id: str = Field(min_length=1, max_length=260)
+    quantity: float | None = Field(default=None, ge=0)
+    unit: str = Field(default="", max_length=32)
+    pantry: bool = False
+
+
+class GroceryApprovalIn(BaseModel):
+    servings: int = Field(default=1, ge=1, le=12)
+    items: list[GroceryApprovalItemIn] = Field(default_factory=list, max_length=300)
+
+
+def _grocery_plan_fingerprint(plans: list[Plan]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": plan.id,
+            "date": plan.date.isoformat(),
+            "updated_at": plan.updated_at.isoformat() if plan.updated_at else None,
+        }
+        for plan in plans
+    ]
+
+
+def _approval_to_dict(approval: GroceryApproval, current_fingerprint: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "id": approval.id,
+        "start": approval.start_date.isoformat(),
+        "end": approval.end_date.isoformat(),
+        "servings": approval.servings,
+        "items": approval.items or [],
+        "approved_at": approval.approved_at.isoformat(),
+        "stale": (approval.plan_fingerprint or []) != current_fingerprint,
+    }
+
+
 @router.get("/grocery-list/week", response_model=dict[str, Any])
 def grocery_list_week(
     start: date_cls = Query(..., description="First date to include"),
@@ -1300,6 +1335,102 @@ def grocery_list_week(
         "missing_dates": [day.isoformat() for day in expected_dates if day not in planned_dates],
         "items": items,
     }
+
+
+@router.get("/grocery-list/approval", response_model=dict[str, Any])
+def grocery_approval_status(
+    start: date_cls = Query(...),
+    end: date_cls | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    final_day = end or (start + timedelta(days=6))
+    if final_day < start or (final_day - start).days > 13:
+        raise HTTPException(status_code=400, detail="Approval range must be between 1 and 14 days")
+    approval = (
+        db.query(GroceryApproval)
+        .filter(
+            GroceryApproval.user_id == user.id,
+            GroceryApproval.start_date == start,
+            GroceryApproval.end_date == final_day,
+        )
+        .first()
+    )
+    if approval is None:
+        return {"approval": None}
+    plans = (
+        db.query(Plan)
+        .filter(Plan.user_id == user.id, Plan.date >= start, Plan.date <= final_day)
+        .order_by(Plan.date.asc())
+        .all()
+    )
+    return {"approval": _approval_to_dict(approval, _grocery_plan_fingerprint(plans))}
+
+
+@router.post("/grocery-list/approval", response_model=dict[str, Any])
+def approve_grocery_list(
+    payload: GroceryApprovalIn,
+    start: date_cls = Query(...),
+    end: date_cls | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    final_day = end or (start + timedelta(days=6))
+    current = grocery_list_week(start=start, end=final_day, db=db, user=user)
+    if current["missing_dates"]:
+        raise HTTPException(status_code=400, detail="Every selected day needs a meal plan before approval")
+    base_by_id = {item["id"]: item for item in current["items"]}
+    supplied_by_id = {item.id: item for item in payload.items}
+    unknown = sorted(set(supplied_by_id) - set(base_by_id))
+    if unknown:
+        raise HTTPException(status_code=400, detail="The grocery list changed. Refresh it before approving.")
+
+    snapshot_items = []
+    for item_id, base in base_by_id.items():
+        supplied = supplied_by_id.get(item_id)
+        base_quantity = base["quantity"]
+        quantity = (
+            supplied.quantity
+            if supplied is not None
+            else (round(base_quantity * payload.servings, 2) if base_quantity is not None else None)
+        )
+        snapshot_items.append(
+            {
+                **base,
+                "quantity": quantity,
+                "unit": _grocery_unit(supplied.unit) if supplied is not None else base["unit"],
+                "pantry": supplied.pantry if supplied is not None else False,
+            }
+        )
+
+    plans = (
+        db.query(Plan)
+        .filter(Plan.user_id == user.id, Plan.date >= start, Plan.date <= final_day)
+        .order_by(Plan.date.asc())
+        .all()
+    )
+    fingerprint = _grocery_plan_fingerprint(plans)
+    approval = (
+        db.query(GroceryApproval)
+        .filter(
+            GroceryApproval.user_id == user.id,
+            GroceryApproval.start_date == start,
+            GroceryApproval.end_date == final_day,
+        )
+        .first()
+    )
+    now = datetime.utcnow()
+    if approval is None:
+        approval = GroceryApproval(user_id=user.id, start_date=start, end_date=final_day)
+    approval.servings = payload.servings
+    approval.items = snapshot_items
+    approval.plan_fingerprint = fingerprint
+    approval.approved_at = now
+    approval.updated_at = now
+    db.add(approval)
+    db.commit()
+    db.refresh(approval)
+    return {"approval": _approval_to_dict(approval, fingerprint)}
 
 
 @router.get("/{date}/grocery.txt")

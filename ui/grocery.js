@@ -5,13 +5,26 @@
   const CATEGORIES=["Produce","Meat & Seafood","Dairy & Eggs","Grains & Bakery","Pantry","Other"];
   let data=null;
   let edits={};
+  let approval=null;
 
   function localISO(date){return new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,10)}
   function monday(date){const copy=new Date(date);const offset=(copy.getDay()+6)%7;copy.setDate(copy.getDate()-offset);return copy}
   function addDays(iso,n){const d=new Date(iso+"T12:00:00");d.setDate(d.getDate()+n);return localISO(d)}
   function storageKey(){return `glyco_grocery:${$("start_date").value}:${$("end_date").value}`}
   function loadEdits(){try{edits=JSON.parse(localStorage.getItem(storageKey())||"{}")}catch{edits={}}}
-  function saveEdits(){localStorage.setItem(storageKey(),JSON.stringify(edits))}
+  function saveEdits(trackChange=true){localStorage.setItem(storageKey(),JSON.stringify(edits));if(trackChange)markChanged()}
+  function rangeQuery(){return `start=${encodeURIComponent($("start_date").value)}&end=${encodeURIComponent($("end_date").value)}`}
+  function approvalDate(value){return new Intl.DateTimeFormat(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}).format(new Date(value))}
+  function renderApproval(){
+    const card=$("approval_title").closest(".approval-card");const status=$("approval_status");const button=$("approve_btn");
+    card.classList.toggle("is-approved",Boolean(approval&&!approval.stale));card.classList.toggle("is-stale",Boolean(approval?.stale));
+    if(data?.missing_dates?.length){status.textContent="Complete the missing meal-plan days before approving this shopping list.";button.textContent="Plan all days first";button.disabled=true;return}
+    button.disabled=false;
+    if(approval?.stale){status.textContent="Your meal plan changed after approval. Review the updated ingredients and approve again.";button.textContent="Review and reapprove";return}
+    if(approval){status.textContent=`Approved ${approvalDate(approval.approved_at)} for ${approval.servings} serving${approval.servings===1?"":"s"}. This shopping snapshot is protected from later changes.`;button.textContent="Approved ✓";return}
+    status.textContent="Confirm every day is planned, adjust servings, and mark what you already have.";button.textContent="Approve shopping list";
+  }
+  function markChanged(){if(!approval||approval.stale)return;approval={...approval,stale:true};renderApproval()}
   function stateFor(item){
     if(!edits[item.id])edits[item.id]={done:false,pantry:false,quantity:item.quantity,unit:item.unit};
     return edits[item.id];
@@ -52,7 +65,7 @@
       items.forEach(item=>{
         const state=stateFor(item);const row=document.createElement("div");row.className=`grocery-item${state.done?" is-done":""}`;row.hidden=state.pantry;
         const check=document.createElement("input");check.type="checkbox";check.checked=state.done;check.setAttribute("aria-label",`Collected ${item.name}`);
-        check.addEventListener("change",()=>{state.done=check.checked;saveEdits();row.classList.toggle("is-done",state.done);updateProgress()});
+        check.addEventListener("change",()=>{state.done=check.checked;saveEdits(false);row.classList.toggle("is-done",state.done);updateProgress()});
         const name=document.createElement("div");name.className="item-name";name.textContent=item.name;
         const use=document.createElement("span");use.className="item-use";use.textContent=`Used in ${item.uses.length} meal${item.uses.length===1?"":"s"}`;name.appendChild(use);
         const qty=document.createElement("input");qty.className="quantity";qty.type="number";qty.min="0";qty.step="any";qty.value=scaledQuantity(item);qty.setAttribute("aria-label",`${item.name} quantity`);
@@ -69,17 +82,30 @@
   async function load(){
     const notice=$("notice");notice.hidden=true;$("grocery_list").innerHTML='<p class="muted">Building your grocery list…</p>';
     try{
-      data=await glyco.fetchJSON(`/v1/plan/grocery-list/week?start=${encodeURIComponent($("start_date").value)}&end=${encodeURIComponent($("end_date").value)}`);
+      data=await glyco.fetchJSON(`/v1/plan/grocery-list/week?${rangeQuery()}`);
+      const approvalResponse=await glyco.fetchJSON(`/v1/plan/grocery-list/approval?${rangeQuery()}`);
+      approval=approvalResponse.approval;
       loadEdits();
+      if(approval&&!approval.stale){$("servings").value=approval.servings;approval.items.forEach(item=>{edits[item.id]={done:false,pantry:Boolean(item.pantry),quantity:item.quantity==null?null:Number(item.quantity)/approval.servings,unit:item.unit}})}
       if(data.missing_dates.length){notice.textContent=`${data.missing_dates.length} selected day${data.missing_dates.length===1?" has":"s have"} no meal plan yet. Only planned days are included.`;notice.hidden=false}
-      render();
+      render();renderApproval();
     }catch(error){const root=$("grocery_list");root.replaceChildren();const message=document.createElement("div");message.className="empty";message.textContent=error.message||"Could not load grocery list.";root.appendChild(message)}
+  }
+  async function approve(){
+    const button=$("approve_btn");button.disabled=true;button.textContent="Approving…";
+    try{
+      const items=(data?.items||[]).map(item=>{const state=stateFor(item);return{id:item.id,quantity:scaledQuantity(item)===""?null:Number(scaledQuantity(item)),unit:state.unit||"",pantry:Boolean(state.pantry)}});
+      const result=await glyco.fetchJSON(`/v1/plan/grocery-list/approval?${rangeQuery()}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({servings:Number($("servings").value||1),items})});
+      approval=result.approval;saveEdits(false);renderApproval();
+    }catch(error){const notice=$("notice");notice.textContent=error.message||"Could not approve this list.";notice.hidden=false;renderApproval()}
+    finally{button.disabled=Boolean(data?.missing_dates?.length)}
   }
   document.addEventListener("DOMContentLoaded",()=>{
     const query=new URLSearchParams(location.search);const start=query.get("start")||localISO(monday(new Date()));
     $("start_date").value=start;$("end_date").value=query.get("end")||addDays(start,6);
     $("load_btn").addEventListener("click",load);
-    $("servings").addEventListener("change",render);
+    $("servings").addEventListener("change",()=>{markChanged();render()});
+    $("approve_btn").addEventListener("click",approve);
     $("clear_btn").addEventListener("click",()=>{Object.values(edits).forEach(state=>{state.done=false;state.pantry=false});saveEdits();render()});
     $("copy_btn").addEventListener("click",async()=>{await navigator.clipboard.writeText(listText());$("copy_btn").textContent="Copied";setTimeout(()=>$("copy_btn").textContent="Copy list",1500)});
     $("print_btn").addEventListener("click",()=>window.print());

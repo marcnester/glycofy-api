@@ -28,6 +28,13 @@ body{margin:0;background:#0f1318;color:#e7ecf3;font:15px/1.45 Inter,system-ui,sa
 .grocery-controls input{height:40px;border:1px solid #344154;border-radius:10px;background:#0d131b;color:#fff;padding:0 10px;color-scheme:dark}
 .grocery-controls #servings{width:110px}
 .notice{padding:12px 14px;margin:14px 0;border-radius:12px;background:#2b2415;border:1px solid #6c5423;color:#ffe4a6}
+.approval-card{display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center;margin:18px 0;padding:18px;border:1px solid #2b4350;border-radius:16px;background:linear-gradient(135deg,rgba(80,200,138,.09),rgba(96,165,250,.06))}
+.approval-icon{display:grid;place-items:center;width:42px;height:42px;border:1px solid rgba(80,200,138,.45);border-radius:50%;background:rgba(80,200,138,.12);color:#83e0ad;font-size:20px;font-weight:900}
+.approval-copy h2{margin:2px 0 4px;font-size:19px}
+.approval-copy p{margin:0}
+.approval-card.is-approved{border-color:rgba(80,200,138,.5)}
+.approval-card.is-stale{border-color:#76602d;background:rgba(157,119,35,.1)}
+.approval-card.is-stale .approval-icon{border-color:#937532;color:#ffd37d;background:rgba(157,119,35,.14)}
 .grocery-progress{display:flex;justify-content:space-between;align-items:center;margin:22px 2px 12px}
 .link-button{border:0;background:transparent;color:#86b5ff;cursor:pointer}
 .category{border:1px solid #263140;border-radius:16px;background:#121921;margin:14px 0;overflow:hidden}
@@ -43,5 +50,5 @@ body{margin:0;background:#0f1318;color:#e7ecf3;font:15px/1.45 Inter,system-ui,sa
 .pantry-btn{border:0;background:transparent;color:#9db7dc;cursor:pointer}
 .pantry-btn.is-pantry{color:#74d2a0}
 .empty{padding:32px;text-align:center;border:1px dashed #344154;border-radius:16px}
-@media(max-width:760px){.topbar{flex-wrap:wrap;padding:14px 20px}.nav-links{order:3;overflow:auto;width:100%}.grocery-heading{align-items:flex-start;flex-direction:column}.grocery-item{grid-template-columns:auto 1fr 72px}.unit{grid-column:2}.pantry-btn{grid-column:3;grid-row:2}.grocery-actions{flex-wrap:wrap}}
+@media(max-width:760px){.topbar{flex-wrap:wrap;padding:14px 20px}.nav-links{order:3;overflow:auto;width:100%}.grocery-heading{align-items:flex-start;flex-direction:column}.approval-card{grid-template-columns:auto 1fr}.approval-card .btn{grid-column:1/-1;width:100%}.grocery-item{grid-template-columns:auto 1fr 72px}.unit{grid-column:2}.pantry-btn{grid-column:3;grid-row:2}.grocery-actions{flex-wrap:wrap}}
 @media print{.topbar,.grocery-actions,.grocery-controls,.link-button,.pantry-btn{display:none!important}.grocery-shell{padding:0}.category{break-inside:avoid;background:#fff;color:#000;border-color:#bbb}.grocery-item{border-color:#ddd}.quantity,.unit{border:0;background:#fff;color:#000}.muted,.item-use{color:#555}}

@@ -6,9 +6,9 @@
   <title>Grocery List • Glycofy</title>
   <link rel="icon" href="/ui/favicon.svg" />
   <link rel="stylesheet" href="/ui/styles.css" />
-  <link rel="stylesheet" href="/ui/grocery.css" />
+  <link rel="stylesheet" href="/ui/grocery.css?v=2026-09-02-approval" />
   <script src="/ui/app.js" defer></script>
-  <script src="/ui/grocery.js" defer></script>
+  <script src="/ui/grocery.js?v=2026-09-02-approval" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -48,6 +48,16 @@
         <input id="servings" type="number" min="1" max="12" step="1" value="1" />
       </label>
       <button id="load_btn" class="btn btn-primary">Update list</button>
+    </section>
+
+    <section class="approval-card" aria-labelledby="approval_title">
+      <div class="approval-icon" aria-hidden="true">✓</div>
+      <div class="approval-copy">
+        <p class="eyebrow">Ready to shop</p>
+        <h2 id="approval_title">Review and approve your week</h2>
+        <p id="approval_status" class="muted">Confirm every day is planned, adjust servings, and mark what you already have.</p>
+      </div>
+      <button id="approve_btn" class="btn btn-primary" type="button">Approve shopping list</button>
     </section>
 
     <div id="notice" class="notice" role="status" hidden></div>

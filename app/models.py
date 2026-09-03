@@ -337,6 +337,28 @@ class PlanItem(Base):
         return f"<PlanItem id={self.id} meal_id={self.meal_id} name={self.name!r}>"
 
 
+class GroceryApproval(Base):
+    """A user-reviewed, immutable shopping snapshot for a date range."""
+
+    __tablename__ = "grocery_approvals"
+    __table_args__ = (
+        UniqueConstraint("user_id", "start_date", "end_date", name="ux_grocery_approval_user_range"),
+        Index("ix_grocery_approval_user_range", "user_id", "start_date", "end_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    servings: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    items: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    plan_fingerprint: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    approved_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 # -------------------------
 # Preferences & Targets
 # -------------------------
