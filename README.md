@@ -135,6 +135,8 @@ GitHub Actions repeats the test, dependency, static-analysis, and full-history G
 
 Glycofy handles health-adjacent, dietary, allergy, and connected-account information. The application therefore uses a fail-closed production configuration, HTTP-only secure cookies, CSRF/origin controls, bounded request bodies, authentication and OAuth rate limits, encrypted OAuth tokens, redacted structured logging, and privacy-safe audit events.
 
+Athletes can verify their email, recover a password with expiring single-use links, export their account data, disconnect Strava, and permanently delete their account from Profile. Transactional account email requires the SMTP settings documented in [`.env.example`](.env.example).
+
 Please do not open public issues containing vulnerabilities, credentials, personal information, activity exports, screenshots of private health data, or production logs. Follow [SECURITY.md](SECURITY.md) for the current security baseline and reporting guidance.
 
 ## Repository status and license

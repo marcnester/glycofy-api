@@ -810,6 +810,26 @@ def strava_disconnect(
     return {"ok": True, "provider_revoked": provider_revoked}
 
 
+def revoke_strava_for_user(db: Session, user_id: int) -> bool | None:
+    """Best-effort provider revocation used before permanent account deletion."""
+    acct = _load_strava_account(db, user_id)
+    if not acct:
+        return None
+    provider_revoked = False
+    if acct.access_token:
+        try:
+            response = requests.post(
+                "https://www.strava.com/oauth/deauthorize",
+                data={"access_token": acct.access_token},
+                timeout=15,
+                headers={"User-Agent": UA},
+            )
+            provider_revoked = response.status_code == 200
+        except requests.RequestException:
+            logger.warning("Strava deauthorization during deletion failed user_id=%s", user_id)
+    return provider_revoked
+
+
 # ───────────────────────── Sync routes (require auth) ─────────────────────────
 
 

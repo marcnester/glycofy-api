@@ -34,21 +34,30 @@
 
   let authMode = "signin";
   function setMode(mode) {
-    authMode = mode === "signup" ? "signup" : "signin";
+    authMode = ["signup", "forgot", "reset"].includes(mode) ? mode : "signin";
     const signingUp = authMode === "signup";
-    $("auth-title").textContent = signingUp ? "Create your account" : "Sign in";
-    $("auth-subtitle").textContent = signingUp ? "Start planning around the way you train" : "Welcome back";
-    $("submitBtn").textContent = signingUp ? "Create account" : "Sign in";
+    const recovering = authMode === "forgot";
+    const resetting = authMode === "reset";
+    $("auth-title").textContent = signingUp ? "Create your account" : recovering ? "Reset your password" : resetting ? "Choose a new password" : "Sign in";
+    $("auth-subtitle").textContent = signingUp ? "Start planning around the way you train" : recovering ? "We’ll email you a secure reset link" : resetting ? "Use at least 12 characters" : "Welcome back";
+    $("submitBtn").textContent = signingUp ? "Create account" : recovering ? "Send reset link" : resetting ? "Update password" : "Sign in";
     $("googleBtn").textContent = signingUp ? "Sign up with Google" : "Continue with Google";
     $("switch-prompt").textContent = signingUp ? "Already have an account?" : "New to Glycofy?";
     $("mode-switch").textContent = signingUp ? "Sign in" : "Create an account";
     $("confirm-wrap").hidden = !signingUp;
-    $("password-hint").hidden = !signingUp;
+    $("email-wrap").hidden = resetting;
+    $("password-wrap").hidden = recovering;
+    $("password-hint").hidden = !(signingUp || resetting);
+    $("password").required = !recovering;
     $("confirm-password").required = signingUp;
     $("password").autocomplete = signingUp ? "new-password" : "current-password";
     const url = new URL(location.href);
-    if (signingUp) url.searchParams.set("mode", "signup"); else url.searchParams.delete("mode");
+    if (authMode === "signin") url.searchParams.delete("mode"); else url.searchParams.set("mode", authMode);
     history.replaceState(null, "", url.pathname + url.search);
+    $("forgot-password").textContent = recovering || resetting ? "Back to sign in" : "Forgot password?";
+    $("googleBtn").hidden = recovering || resetting;
+    document.querySelector(".or").hidden = recovering || resetting;
+    document.querySelector(".auth-switch").hidden = recovering || resetting;
     const box = $("msg"); if (box) box.className = "msg";
   }
   function redirectToReturn(def) {
@@ -115,6 +124,13 @@
     return true;
   }
 
+  async function accountAction(path, payload) {
+    const res = await fetch(path, { method: "POST", credentials: "include", headers: {"Content-Type":"application/json", "Accept":"application/json", "X-Requested-With":"XMLHttpRequest"}, body: JSON.stringify(payload) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "We could not complete that request.");
+    return data;
+  }
+
   // --- Google login button ---
   async function wireGoogle() {
     const btn = $("googleBtn"); if (!btn) return;
@@ -147,9 +163,13 @@
 
     await wireGoogle();
 
-    const requestedMode = new URL(location.href).searchParams.get("mode");
-    setMode(requestedMode === "signup" ? "signup" : "signin");
+    const params = new URL(location.href).searchParams;
+    const requestedMode = params.get("mode");
+    setMode(["signup", "reset"].includes(requestedMode) ? requestedMode : "signin");
+    if (params.get("verification") === "success") flash("Email verified. You can sign in now.");
+    if (params.get("verification") === "invalid") flash("That verification link is invalid or expired. Sign in to request another.", "error");
     $("mode-switch")?.addEventListener("click", () => setMode(authMode === "signup" ? "signin" : "signup"));
+    $("forgot-password")?.addEventListener("click", () => setMode(authMode === "forgot" || authMode === "reset" ? "signin" : "forgot"));
 
     const form = $("login-form"); const submitBtn = $("submitBtn");
     if (!form || !submitBtn) return;
@@ -161,17 +181,30 @@
       const email = ($("email")?.value || "").trim();
       const pw = $("password")?.value || "";
       const confirmation = $("confirm-password")?.value || "";
-      if (!email || !pw) { flash("Please enter both email and password.", "error"); inflight = false; return; }
+      if (authMode !== "reset" && !email) { flash("Please enter your email.", "error"); inflight = false; return; }
+      if (authMode !== "forgot" && !pw) { flash("Please enter a password.", "error"); inflight = false; return; }
+      if (authMode === "reset" && !params.get("token")) { flash("This reset link is incomplete. Request a new one.", "error"); inflight = false; return; }
       if (authMode === "signup" && pw.length < 12) { flash("Use at least 12 characters for your password.", "error"); inflight = false; return; }
       if (authMode === "signup" && pw !== confirmation) { flash("Those passwords do not match.", "error"); inflight = false; return; }
 
       submitBtn.disabled = true;
       submitBtn.dataset.prevText = submitBtn.textContent;
-      submitBtn.textContent = authMode === "signup" ? "Creating account…" : "Signing in…";
+      submitBtn.textContent = authMode === "signup" ? "Creating account…" : authMode === "forgot" ? "Sending…" : authMode === "reset" ? "Updating…" : "Signing in…";
       form.querySelectorAll("input,button").forEach(el => el.disabled = true);
       flash(authMode === "signup" ? "Creating your account…" : "Signing in…");
 
       try {
+        if (authMode === "forgot") {
+          const result = await accountAction("/auth/forgot-password", {email});
+          flash(result.message || "If that account exists, reset instructions have been sent.");
+          form.querySelectorAll("input,button").forEach(el => el.disabled = false); inflight = false; return;
+        }
+        if (authMode === "reset") {
+          await accountAction("/auth/reset-password", {token: params.get("token"), password: pw});
+          const clean = new URL(location.href); clean.searchParams.delete("token"); clean.searchParams.delete("mode"); history.replaceState(null, "", clean.pathname + clean.search);
+          setMode("signin"); flash("Password updated. Sign in with your new password.");
+          form.reset(); form.querySelectorAll("input,button").forEach(el => el.disabled = false); inflight = false; return;
+        }
         if (authMode === "signup") await passwordSignup(email, pw); else await passwordLogin(email, pw);
         const ok = await ensureAuth({ force: true });
         if (!ok) throw new Error("Authentication failed after login.");

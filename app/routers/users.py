@@ -4,15 +4,30 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import User
+from app.models import (
+    Activity,
+    EnergyTarget,
+    GroceryApproval,
+    GroceryPreference,
+    MealFeedback,
+    OAuthAccount,
+    Plan,
+    PlannedWorkout,
+    User,
+    UserPreference,
+    WeeklyPlanningJob,
+)
+from app.observability import record_security_event
 
 # IMPORTANT: use the cookie-aware get_current_user from routers.auth
-from app.routers.auth import get_current_user
+from app.routers.auth import _clear_all_session_cookies, get_current_user
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -67,6 +82,7 @@ class UserOut(BaseModel):
     timezone: str | None = None
     # also surface units (used elsewhere in the UI)
     units: str | None = None
+    email_verified: bool = False
 
     class Config:
         from_attributes = True  # pydantic v2: map from ORM
@@ -98,6 +114,10 @@ class UserUpdate(BaseModel):
         return value
 
 
+class DeleteAccountRequest(BaseModel):
+    confirmation: str
+
+
 # ---------- Routes ----------
 @router.get("/me", response_model=UserOut)
 def get_me(
@@ -126,6 +146,7 @@ def get_me(
             "goal": user.goal,
             "timezone": user.timezone,
             "units": units,
+            "email_verified": bool(user.email_verified_at),
         }
     )
 
@@ -212,5 +233,87 @@ def update_me(
             "goal": user.goal,
             "timezone": user.timezone,
             "units": units,
+            "email_verified": bool(user.email_verified_at),
         }
     )
+
+
+def _public_columns(row, excluded: set[str] | None = None) -> dict:
+    blocked = excluded or set()
+    return {column.name: getattr(row, column.name) for column in row.__table__.columns if column.name not in blocked}
+
+
+@router.get("/me/export")
+def export_my_data(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    plans = db.query(Plan).filter(Plan.user_id == user.id).order_by(Plan.date.asc()).all()
+    data = {
+        "exported_at": date.today().isoformat(),
+        "account": _public_columns(user, {"password_hash", "token_version"}),
+        "connected_services": [
+            {
+                "provider": row.provider,
+                "external_athlete_id": row.external_athlete_id,
+                "scope": row.scope,
+                "created_at": row.created_at,
+            }
+            for row in db.query(OAuthAccount).filter(OAuthAccount.user_id == user.id).all()
+        ],
+        "activities": [_public_columns(row) for row in db.query(Activity).filter(Activity.user_id == user.id).all()],
+        "planned_workouts": [
+            _public_columns(row) for row in db.query(PlannedWorkout).filter(PlannedWorkout.user_id == user.id).all()
+        ],
+        "meal_preferences": [
+            _public_columns(row) for row in db.query(UserPreference).filter(UserPreference.user_id == user.id).all()
+        ],
+        "energy_targets": [
+            _public_columns(row) for row in db.query(EnergyTarget).filter(EnergyTarget.user_id == user.id).all()
+        ],
+        "plans": [
+            {
+                **_public_columns(plan),
+                "meals": [
+                    {**_public_columns(meal), "items": [_public_columns(item) for item in meal.items]}
+                    for meal in plan.meals
+                ],
+            }
+            for plan in plans
+        ],
+        "meal_feedback": [
+            _public_columns(row) for row in db.query(MealFeedback).filter(MealFeedback.user_id == user.id).all()
+        ],
+        "grocery_preferences": [
+            _public_columns(row)
+            for row in db.query(GroceryPreference).filter(GroceryPreference.user_id == user.id).all()
+        ],
+        "grocery_approvals": [
+            _public_columns(row) for row in db.query(GroceryApproval).filter(GroceryApproval.user_id == user.id).all()
+        ],
+        "weekly_planning_jobs": [
+            _public_columns(row, {"payload", "result", "error"})
+            for row in db.query(WeeklyPlanningJob).filter(WeeklyPlanningJob.user_id == user.id).all()
+        ],
+    }
+    response = JSONResponse(jsonable_encoder(data))
+    response.headers["Content-Disposition"] = 'attachment; filename="glycofy-data-export.json"'
+    return response
+
+
+@router.delete("/me")
+def delete_my_account(
+    request: Request,
+    body: DeleteAccountRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if body.confirmation.strip() != "DELETE":
+        raise HTTPException(status_code=400, detail="Type DELETE to confirm account deletion")
+    user_id = user.id
+    from app.routers.oauth_strava import revoke_strava_for_user
+
+    provider_revoked = revoke_strava_for_user(db, user_id)
+    record_security_event(db, request, "account_deletion", "requested", severity="warning", user_id=user_id)
+    db.delete(user)
+    db.commit()
+    response = JSONResponse({"ok": True, "strava_revoked": provider_revoked})
+    _clear_all_session_cookies(response)
+    return response

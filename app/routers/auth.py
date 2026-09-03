@@ -1,17 +1,22 @@
 # app/routers/auth.py
 from __future__ import annotations
 
+import hashlib
+import secrets
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from app.auth_utils import create_access_token, get_current_user
 from app.config import settings
 from app.db import get_db
-from app.models import User
+from app.models import AccountActionToken, User
 from app.observability import record_security_event
 from app.rate_limit import AUTH_LIMITER, account_key, client_key
+from app.services.account_email import account_email_configured, send_account_email
 
 # -----------------------------------------------------------------------------
 # Password hashing
@@ -78,6 +83,16 @@ class LoginRequest(BaseModel):
 
 class SessionResponse(BaseModel):
     ok: bool = True
+    verification_sent: bool = False
+
+
+class EmailRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+    password: str = Field(min_length=12, max_length=128)
 
 
 # -----------------------------------------------------------------------------
@@ -109,6 +124,48 @@ def _clear_all_session_cookies(resp: JSONResponse) -> None:
         resp.delete_cookie(name, path="/", samesite="lax")
 
 
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _issue_account_token(db: Session, user: User, purpose: str, hours: int) -> str:
+    now = datetime.utcnow()
+    db.query(AccountActionToken).filter(
+        AccountActionToken.user_id == user.id,
+        AccountActionToken.purpose == purpose,
+        AccountActionToken.used_at.is_(None),
+    ).update({"used_at": now})
+    raw = secrets.token_urlsafe(32)
+    db.add(
+        AccountActionToken(
+            user_id=user.id,
+            purpose=purpose,
+            token_hash=_token_hash(raw),
+            expires_at=now + timedelta(hours=hours),
+            created_at=now,
+        )
+    )
+    db.commit()
+    return raw
+
+
+def _account_link(path: str, token: str) -> str:
+    return f"{(settings.PUBLIC_BASE_URL or '').rstrip('/')}{path}?token={token}"
+
+
+def _send_verification(user: User, db: Session, background_tasks: BackgroundTasks) -> bool:
+    if not account_email_configured():
+        return False
+    token = _issue_account_token(db, user, "verify_email", 24)
+    background_tasks.add_task(
+        send_account_email,
+        user.email,
+        "Verify your Glycofy email",
+        f"Verify your Glycofy email address:\n\n{_account_link('/auth/verify-email', token)}\n\nThis link expires in 24 hours.",
+    )
+    return True
+
+
 # -----------------------------------------------------------------------------
 # Endpoints
 # -----------------------------------------------------------------------------
@@ -124,7 +181,7 @@ def logout(request: Request, db: Session = Depends(get_db), user: User = Depends
 
 
 @router.post("/signup", response_model=SessionResponse, summary="Create account and start a session")
-def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db)):
+def signup(request: Request, body: SignupRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     try:
         _check_auth_limit(request, "signup", body.email)
     except HTTPException:
@@ -144,7 +201,11 @@ def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db))
     token = _create_access_token(
         str(user.id), minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES, token_version=user.token_version
     )
-    resp = JSONResponse(SessionResponse().model_dump())
+    verification_sent = _send_verification(user, db, background_tasks)
+    payload = {"ok": True}
+    if verification_sent:
+        payload["verification_sent"] = True
+    resp = JSONResponse(payload)
     _set_all_session_cookies(resp, token)
     return resp
 
@@ -171,10 +232,87 @@ def login(request: Request, body: LoginRequest, background_tasks: BackgroundTask
     token = _create_access_token(
         str(user.id), minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES, token_version=user.token_version
     )
-    resp = JSONResponse(SessionResponse().model_dump())
+    resp = JSONResponse({"ok": True})
     _set_all_session_cookies(resp, token)
     record_security_event(db, request, "authentication_login", "success", user_id=user.id)
     from app.routers.oauth_strava import schedule_strava_sync_on_login
 
     schedule_strava_sync_on_login(background_tasks=background_tasks, db=db, user_id=user.id)
     return resp
+
+
+@router.post("/forgot-password")
+def forgot_password(
+    request: Request, body: EmailRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
+):
+    _check_auth_limit(request, "forgot_password", body.email)
+    user = db.query(User).filter(User.email == body.email.lower()).first()
+    if user and account_email_configured():
+        token = _issue_account_token(db, user, "reset_password", 1)
+        background_tasks.add_task(
+            send_account_email,
+            user.email,
+            "Reset your Glycofy password",
+            f"Reset your Glycofy password:\n\n{_account_link('/ui/login.html', token)}&mode=reset\n\nThis link expires in one hour. If you did not request this, ignore this message.",
+        )
+    return {"ok": True, "message": "If that account exists, reset instructions have been sent."}
+
+
+@router.post("/reset-password")
+def reset_password(request: Request, body: PasswordResetRequest, db: Session = Depends(get_db)):
+    _check_auth_limit(request, "reset_password")
+    now = datetime.utcnow()
+    row = (
+        db.query(AccountActionToken)
+        .filter(
+            AccountActionToken.token_hash == _token_hash(body.token),
+            AccountActionToken.purpose == "reset_password",
+            AccountActionToken.used_at.is_(None),
+            AccountActionToken.expires_at > now,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=400, detail="This reset link is invalid or has expired")
+    user = db.query(User).filter(User.id == row.user_id).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="This reset link is invalid or has expired")
+    user.password_hash = hash_password(body.password)
+    user.token_version = int(user.token_version or 0) + 1
+    row.used_at = now
+    db.commit()
+    record_security_event(db, request, "password_reset", "success", user_id=user.id)
+    return {"ok": True}
+
+
+@router.get("/verify-email")
+def verify_email(token: str, db: Session = Depends(get_db)):
+    now = datetime.utcnow()
+    row = (
+        db.query(AccountActionToken)
+        .filter(
+            AccountActionToken.token_hash == _token_hash(token),
+            AccountActionToken.purpose == "verify_email",
+            AccountActionToken.used_at.is_(None),
+            AccountActionToken.expires_at > now,
+        )
+        .first()
+    )
+    if not row:
+        return RedirectResponse("/ui/login.html?verification=invalid", status_code=303)
+    user = db.query(User).filter(User.id == row.user_id).first()
+    if not user:
+        return RedirectResponse("/ui/login.html?verification=invalid", status_code=303)
+    user.email_verified_at = now
+    row.used_at = now
+    db.commit()
+    return RedirectResponse("/ui/login.html?verification=success", status_code=303)
+
+
+@router.post("/resend-verification")
+def resend_verification(
+    background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+):
+    if user.email_verified_at:
+        return {"ok": True, "verification_sent": False}
+    return {"ok": True, "verification_sent": _send_verification(user, db, background_tasks)}

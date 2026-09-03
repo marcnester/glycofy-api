@@ -7,6 +7,7 @@ import hmac
 import json
 import secrets
 import time
+from datetime import datetime
 from urllib.parse import urlencode
 
 import httpx
@@ -328,7 +329,9 @@ async def google_callback(
     if not user:
         # OAuth-only users still satisfy the legacy non-null password column,
         # but the generated value is unknown and cannot be used to log in.
-        user = User(email=email, password_hash=hash_password(secrets.token_urlsafe(48)))
+        user = User(
+            email=email, password_hash=hash_password(secrets.token_urlsafe(48)), email_verified_at=datetime.utcnow()
+        )
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -374,6 +377,11 @@ async def google_callback(
         db.add(user)
         db.commit()
         db.refresh(user)
+
+    if not user.email_verified_at:
+        user.email_verified_at = datetime.utcnow()
+        db.add(user)
+        db.commit()
 
     # Upsert oauth_accounts
     account = db.query(OAuthAccount).filter(OAuthAccount.user_id == user.id, OAuthAccount.provider == "google").first()

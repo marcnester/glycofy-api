@@ -40,6 +40,8 @@
     .auth-switch{text-align:center;margin:2px 0 0;color:var(--muted);font-size:14px}
     .auth-switch button{border:0;background:transparent;color:var(--accent);padding:4px;font:inherit;font-weight:750;cursor:pointer}
     .auth-switch button:hover{text-decoration:underline}
+    .auth-link{border:0;background:transparent;color:var(--accent);padding:0;font:inherit;cursor:pointer}
+    .auth-link:hover{text-decoration:underline}
     .password-hint{display:block;margin-top:6px;color:#8297b2;font-size:12px}
     [hidden]{display:none!important}
   </style>
@@ -59,11 +61,11 @@
   <div id="msg" class="msg"></div>
 
   <form id="login-form" class="card" autocomplete="on">
-    <div>
+    <div id="email-wrap">
       <label for="email">Email</label>
       <input id="email" type="email" placeholder="you@example.com" required autocomplete="username"/>
     </div>
-    <div>
+    <div id="password-wrap">
       <label for="password">Password</label>
       <input id="password" type="password" placeholder="••••••••" required autocomplete="current-password"/>
       <span id="password-hint" class="password-hint" hidden>Use at least 12 characters.</span>
@@ -74,6 +76,8 @@
     </div>
 
     <button id="submitBtn" type="submit" class="btn">Sign in</button>
+
+    <button id="forgot-password" type="button" class="auth-link">Forgot password?</button>
 
     <div class="or">or</div>
 
@@ -93,6 +97,6 @@
 
 <!-- core.js is optional; login.js is self-contained -->
 <script src="/ui/core.js?v=2025-11-05" defer></script>
-<script src="/ui/login.js?v=2026-09-02-signup" defer></script>
+<script src="/ui/login.js?v=2026-09-03-account-trust" defer></script>
 </body>
 </html>

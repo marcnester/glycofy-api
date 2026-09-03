@@ -42,6 +42,7 @@
     bindLogout();
     bindNameEditing();
     bindAthleteSetup();
+    bindAccountControls();
     await renderUser();
     await loadPreferences();
     await renderStravaStatus();
@@ -67,6 +68,11 @@
       const emailEl = $("#user_email");
       if (emailEl) emailEl.textContent = me?.email || "—";
 
+      const verification = $("#email_verification_status");
+      const resend = $("#resend_verification");
+      if (verification) verification.textContent = me?.email_verified ? "Verified" : "Not verified — verify your email to protect account recovery.";
+      if (resend) resend.hidden = Boolean(me?.email_verified);
+
       const unitsEl = $("#user_units");
       if (unitsEl) unitsEl.textContent = (me?.units || "US").toUpperCase();
 
@@ -74,6 +80,35 @@
     } catch (e) {
       console.warn("getUser failed", e);
     }
+  }
+
+  function bindAccountControls() {
+    const resend = $("#resend_verification");
+    resend?.addEventListener("click", async () => {
+      resend.disabled = true;
+      try {
+        const result = await fetchJSON("/auth/resend-verification", {method:"POST"});
+        flash(result.verification_sent ? "Verification email sent." : "Email is already verified or delivery is not configured.");
+      } catch { flash("Could not send verification email.", "error"); }
+      finally { resend.disabled = false; }
+    });
+
+    const dialog = $("#delete_account_dialog");
+    const input = $("#delete_confirmation");
+    const confirm = $("#delete_account_confirm");
+    $("#delete_account")?.addEventListener("click", () => { if (input) input.value = ""; if (confirm) confirm.disabled = true; dialog?.showModal(); });
+    $("#delete_account_cancel")?.addEventListener("click", () => dialog?.close());
+    input?.addEventListener("input", () => { if (confirm) confirm.disabled = input.value !== "DELETE"; });
+    confirm?.addEventListener("click", async () => {
+      confirm.disabled = true; confirm.textContent = "Deleting…";
+      try {
+        await fetchJSON("/users/me", {method:"DELETE", headers:{"Content-Type":"application/json", "X-Requested-With":"XMLHttpRequest"}, body:JSON.stringify({confirmation:input?.value || ""})});
+        window.location.replace("/ui/login.html?account=deleted");
+      } catch {
+        flash("Account deletion failed. Your data has not been deleted.", "error");
+        confirm.disabled = false; confirm.textContent = "Delete permanently";
+      }
+    });
   }
 
   // ---- athlete setup ----

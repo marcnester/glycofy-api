@@ -310,6 +310,32 @@
     </section>
 
     <section class="card" style="margin-top:18px;padding:22px;">
+      <h2 style="margin:0 0 8px">Account &amp; privacy</h2>
+      <p class="muted" style="margin:0 0 16px">Control your sign-in and the data Glycofy stores for you.</p>
+      <div class="strava-panel">
+        <div class="strava-copy">
+          <strong>Email</strong>
+          <span id="email_verification_status" class="muted">Checking verification…</span>
+        </div>
+        <button id="resend_verification" class="btn btn--pill" type="button" hidden>Resend verification</button>
+      </div>
+      <div class="strava-panel" style="margin-top:12px">
+        <div class="strava-copy">
+          <strong>Download your data</strong>
+          <span class="muted">Export your profile, training, meal plans, feedback, and preferences as JSON.</span>
+        </div>
+        <a class="btn btn--pill" href="/users/me/export" download>Download export</a>
+      </div>
+      <div class="strava-panel" style="margin-top:12px">
+        <div class="strava-copy">
+          <strong>Delete account</strong>
+          <span class="muted">Permanently deletes your Glycofy data and removes connected-service credentials.</span>
+        </div>
+        <button id="delete_account" class="btn btn--pill btn--danger" type="button">Delete account</button>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:18px;padding:22px;">
       <h2 style="margin:0 0 18px 0;">Strava</h2>
       <div class="strava-panel">
         <div class="strava-summary">
@@ -343,9 +369,21 @@
         </div>
       </div>
     </dialog>
+    <dialog id="delete_account_dialog" class="strava-dialog" aria-labelledby="delete_account_title">
+      <div class="strava-dialog__body">
+        <h2 id="delete_account_title" style="margin:0 0 8px">Permanently delete your account?</h2>
+        <p class="muted">This removes your profile, meal plans, training data, feedback, preferences, and connection credentials. Glycofy will also attempt to revoke Strava access. This cannot be undone.</p>
+        <label for="delete_confirmation">Type <strong>DELETE</strong> to confirm</label>
+        <input id="delete_confirmation" class="input input--wide" autocomplete="off" />
+        <div class="strava-dialog__actions">
+          <button id="delete_account_cancel" class="btn btn--pill" type="button">Keep my account</button>
+          <button id="delete_account_confirm" class="btn btn--pill btn--danger" type="button" disabled>Delete permanently</button>
+        </div>
+      </div>
+    </dialog>
   </main>
 
   <script src="/ui/core.js?v=2025-11-04"></script>
-  <script src="/ui/profile.js?v=2026-09-02-athlete-onboarding"></script>
+  <script src="/ui/profile.js?v=2026-09-03-account-trust"></script>
 </body>
 </html>

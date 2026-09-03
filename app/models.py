@@ -69,6 +69,7 @@ class User(Base):
     timezone: Mapped[str | None] = mapped_column(String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     activities: Mapped[list[Activity]] = relationship(
         "Activity", back_populates="user", cascade="all, delete-orphan", passive_deletes=True
@@ -101,6 +102,22 @@ class SecurityAuditEvent(Base):
     request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     client_id_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     event_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class AccountActionToken(Base):
+    __tablename__ = "account_action_tokens"
+    __table_args__ = (
+        Index("ix_account_token_user_purpose", "user_id", "purpose"),
+        UniqueConstraint("token_hash", name="ux_account_action_token_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 # -------------------------
