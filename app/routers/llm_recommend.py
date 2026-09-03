@@ -177,6 +177,8 @@ class WeeklyJobStatusResponse(BaseModel):
     elapsed_seconds: float = 0.0
     result: dict[str, Any] | None = None
     error: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
 
 
 # ===========================
@@ -3722,6 +3724,8 @@ def _weekly_job_dict(job: WeeklyPlanningJob) -> dict[str, Any]:
     elapsed = 0.0
     if job.started_at:
         elapsed = round(((job.completed_at or now) - job.started_at).total_seconds(), 1)
+    days = (job.payload or {}).get("days") or []
+    dates = [str(day.get("date")) for day in days if isinstance(day, dict) and day.get("date")]
     return {
         "job_id": job.id,
         "status": job.status,
@@ -3732,6 +3736,8 @@ def _weekly_job_dict(job: WeeklyPlanningJob) -> dict[str, Any]:
         "elapsed_seconds": elapsed,
         "result": job.result,
         "error": job.error,
+        "start_date": min(dates) if dates else None,
+        "end_date": max(dates) if dates else None,
     }
 
 
@@ -3889,6 +3895,51 @@ def latest_weekly_job(db: Session = Depends(get_db), user: User = Depends(get_cu
         .first()
     )
     return WeeklyJobStatusResponse.model_validate(_weekly_job_dict(job)) if job else None
+
+
+@router.post("/recommend/weekly/jobs/{job_id}/retry", response_model=WeeklyJobStartResponse, tags=["llm"])
+def retry_weekly_job(
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    original = (
+        db.query(WeeklyPlanningJob).filter(WeeklyPlanningJob.id == job_id, WeeklyPlanningJob.user_id == user.id).first()
+    )
+    if not original:
+        raise HTTPException(status_code=404, detail="Weekly plan job not found")
+    if original.status not in {"failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail="Only failed or cancelled jobs can be retried")
+    active = (
+        db.query(WeeklyPlanningJob)
+        .filter(WeeklyPlanningJob.user_id == user.id, WeeklyPlanningJob.status.in_(("queued", "running")))
+        .first()
+    )
+    if active:
+        return {"job_id": active.id, "status": active.status}
+    payload = WeeklyRecommendRequest.model_validate(original.payload)
+    new_id = uuid.uuid4().hex
+    now = datetime.utcnow()
+    db.add(
+        WeeklyPlanningJob(
+            id=new_id,
+            user_id=user.id,
+            status="queued",
+            stage="queued",
+            message="Retrying your AI week…",
+            completed_days=0,
+            total_days=len(payload.days),
+            payload=payload.model_dump(mode="json"),
+            cancel_requested=False,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.commit()
+    ip = request.client.host if request.client else "unknown"
+    _WEEKLY_JOB_EXECUTOR.submit(_run_weekly_job, new_id, payload.model_dump(), user.id, ip)
+    return {"job_id": new_id, "status": "queued"}
 
 
 @router.post("/recommend/weekly/jobs/{job_id}/cancel", response_model=WeeklyJobStatusResponse, tags=["llm"])

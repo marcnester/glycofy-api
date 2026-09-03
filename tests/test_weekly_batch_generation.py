@@ -191,6 +191,25 @@ def test_weekly_job_can_be_cancelled_by_its_owner():
         assert job is not None and job.cancel_requested is True
 
 
+def test_weekly_job_status_includes_the_planned_date_range():
+    job = WeeklyPlanningJob(
+        id="dated-job",
+        user_id=42,
+        status="completed",
+        stage="completed",
+        message="Ready",
+        completed_days=2,
+        total_days=2,
+        payload={"days": [{"date": "2026-09-03"}, {"date": "2026-09-04"}]},
+        cancel_requested=False,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    result = llm_recommend._weekly_job_dict(job)
+    assert result["start_date"] == "2026-09-03"
+    assert result["end_date"] == "2026-09-04"
+
+
 def test_weekly_batch_rejects_a_meal_with_bad_macros(monkeypatch):
     date = "2026-09-01"
     meals = [_meal(slot, 1) for slot in llm_recommend.SLOTS]

@@ -138,6 +138,12 @@
     .workout-focus h4{margin:5px 0 4px;font-size:20px}
     .workout-meta{color:var(--muted);font-size:13px;text-transform:capitalize}
     .fueling-focus{margin:12px 0 0;padding:13px 14px;border-left:3px solid var(--accent);border-radius:5px 11px 11px 5px;background:rgba(80,200,138,.055)}
+    .planning-status{display:flex;align-items:center;gap:16px;margin:22px 0;padding:17px 19px;border:1px solid rgba(80,200,138,.24);border-radius:16px;background:linear-gradient(135deg,rgba(80,200,138,.08),rgba(96,165,250,.045))}
+    .planning-status[hidden]{display:none}.planning-status__dot{width:11px;height:11px;flex:0 0 auto;border-radius:50%;background:#50c88a;box-shadow:0 0 0 6px rgba(80,200,138,.1)}
+    .planning-status.is-working .planning-status__dot{animation:pulse 1.3s ease-in-out infinite}.planning-status.is-error{border-color:rgba(245,158,11,.35)}.planning-status.is-error .planning-status__dot{background:#f5b942}
+    .planning-status__copy{min-width:0;flex:1}.planning-status__copy strong{display:block}.planning-status__copy span{display:block;margin-top:3px;color:var(--muted);font-size:13px}.planning-status__actions{display:flex;gap:9px;flex-wrap:wrap}
+    @keyframes pulse{50%{opacity:.42;transform:scale(.82)}}
+    @media(max-width:680px){.planning-status{align-items:flex-start;flex-wrap:wrap}.planning-status__actions{width:100%}.planning-status__actions .btn{flex:1}}
     .fueling-focus strong{display:block;margin-bottom:3px;font-size:12px;color:#9ce3bd;text-transform:uppercase;letter-spacing:.05em}
     .context-note{margin:12px 0 0;color:var(--muted);font-size:13px;line-height:1.5}
 
@@ -194,6 +200,15 @@
       </div>
     </section>
 
+    <section id="planningStatus" class="planning-status" aria-live="polite" hidden>
+      <span class="planning-status__dot" aria-hidden="true"></span>
+      <div class="planning-status__copy"><strong id="planningStatusTitle">Building your meal plan</strong><span id="planningStatusDetail"></span></div>
+      <div class="planning-status__actions">
+        <button id="planningRetry" class="btn secondary" type="button" hidden>Try again</button>
+        <a id="planningOpen" class="btn" href="/ui/plan.html">Open planner</a>
+      </div>
+    </section>
+
     <!-- CONTENT -->
     <section class="grid">
       <div class="card">
@@ -238,6 +253,6 @@
   </footer>
 
   <script src="/ui/core.js?v=2025-11-04" defer></script>
-  <script src="/ui/index.js?v=2026-09-02-training-summary" defer></script>
+  <script src="/ui/index.js?v=2026-09-03-planning-status" defer></script>
 </body>
 </html>

@@ -48,6 +48,53 @@
     return { events: (await eventsResponse.json()).items || [], context: await contextResponse.json() };
   }
 
+  function planningDateLink(job) {
+    return `/ui/plan.html${job?.start_date ? `?date=${encodeURIComponent(job.start_date)}` : ''}`;
+  }
+
+  async function renderPlanningStatus() {
+    const card = $("planningStatus");
+    if (!card) return;
+    const response = await fetch("/v1/llm/recommend/weekly/jobs", { credentials: "include" });
+    if (!response.ok) return;
+    const job = await response.json();
+    if (!job) return;
+    const open = $("planningOpen");
+    const retry = $("planningRetry");
+    open.href = planningDateLink(job);
+    retry.hidden = true;
+    card.className = "planning-status";
+    if (["queued", "running"].includes(job.status)) {
+      card.classList.add("is-working");
+      $("planningStatusTitle").textContent = "Your AI week is being built";
+      $("planningStatusDetail").textContent = `${job.message} ${Math.round(job.elapsed_seconds || 0)}s elapsed — you can keep using Glycofy.`;
+      open.textContent = "View progress";
+      card.hidden = false;
+      window.setTimeout(renderPlanningStatus, 5000);
+      return;
+    }
+    if (job.status === "completed") {
+      $("planningStatusTitle").textContent = "Your AI week is ready";
+      $("planningStatusDetail").textContent = `${job.completed_days} days planned${job.end_date ? ` through ${new Date(`${job.end_date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}.`;
+      open.textContent = "Review my week";
+      card.hidden = false;
+      return;
+    }
+    if (["failed", "cancelled"].includes(job.status)) {
+      card.classList.add("is-error");
+      $("planningStatusTitle").textContent = job.status === "cancelled" ? "Weekly planning was cancelled" : "Weekly planning needs another try";
+      $("planningStatusDetail").textContent = job.status === "cancelled" ? "No partial week was saved." : "Your existing plans are safe. Retry when you’re ready.";
+      retry.hidden = false;
+      retry.onclick = async () => {
+        retry.disabled = true;
+        const retried = await fetch(`/v1/llm/recommend/weekly/jobs/${job.job_id}/retry`, { method: "POST", credentials: "include" });
+        retry.disabled = false;
+        if (retried.ok) renderPlanningStatus();
+      };
+      card.hidden = false;
+    }
+  }
+
   async function seedPlanIfMissing(date) {
     await fetch(`/v1/plan/${date}?engine=heuristic&replace=false`, {
       method: "POST",
@@ -225,6 +272,7 @@
     try {
       const me = await getMe();
       renderUser(me);
+      renderPlanningStatus().catch(() => {});
 
       let plan;
       try {
