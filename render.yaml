@@ -54,6 +54,18 @@ services:
       - key: SECURITY_ALERT_EMAIL_TO
         sync: false
       - key: SECURITY_ALERT_EMAIL_ENABLED
+        value: "true"
+      - key: SMTP_HOST
+        value: smtp.mx.cloudflare.net
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USERNAME
+        value: api_token
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        value: noreply@glycofy.ai
+      - key: SMTP_USE_TLS
         value: "false"
       - key: WEEKLY_JOB_RETENTION_DAYS
         value: "30"
