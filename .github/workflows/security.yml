@@ -53,6 +53,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - run: npm install --global npm@11
       - run: npm ci --ignore-scripts
       - run: npm audit --omit=dev --audit-level=high
 
