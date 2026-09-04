@@ -65,6 +65,16 @@ services:
         value: "1"
       - key: ADMIN_EMAILS
         sync: false
+      - key: BETA_FEEDBACK_ENABLED
+        value: "true"
+      - key: BETA_ANALYTICS_ENABLED
+        value: "true"
+      - key: FEATURE_FLAGS
+        value: beta_feedback,beta_analytics
+      - key: PRODUCT_EVENT_RETENTION_DAYS
+        value: "180"
+      - key: BETA_FEEDBACK_RETENTION_DAYS
+        value: "365"
 
 databases:
   - name: glycofy-db

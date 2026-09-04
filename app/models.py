@@ -495,6 +495,45 @@ class AIOperationMetric(Base):
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
 
+class BetaFeedback(Base):
+    """Product feedback with coarse technical context and no health payload."""
+
+    __tablename__ = "beta_feedback"
+    __table_args__ = (Index("ix_beta_feedback_created_status", "created_at", "status"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    category: Mapped[str] = mapped_column(String(24), nullable=False)
+    rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    message: Mapped[str] = mapped_column(String(1200), nullable=False)
+    page_path: Mapped[str] = mapped_column(String(160), nullable=False)
+    browser_family: Mapped[str] = mapped_column(String(24), nullable=False)
+    viewport: Mapped[str] = mapped_column(String(16), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    related_request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="new", server_default="new")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ProductEvent(Base):
+    """Allowlisted beta-funnel event; properties never contain free-form or health data."""
+
+    __tablename__ = "product_events"
+    __table_args__ = (
+        Index("ix_product_event_occurred_name", "occurred_at", "event_name"),
+        Index("ix_product_event_user_occurred", "user_id", "occurred_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    event_name: Mapped[str] = mapped_column(String(48), nullable=False)
+    page_path: Mapped[str] = mapped_column(String(160), nullable=False)
+    browser_family: Mapped[str] = mapped_column(String(24), nullable=False)
+    viewport: Mapped[str] = mapped_column(String(16), nullable=False)
+    session_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
 # -------------------------
 # Preferences & Targets
 # -------------------------

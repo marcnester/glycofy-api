@@ -27,7 +27,17 @@
       <article class="card wide"><div class="label">Weekly jobs</div><div class="value" id="jobs">—</div><div class="muted" id="jobDetail"></div></article>
     </section>
     <p id="state" class="muted">Loading operational data…</p>
+    <div class="head" style="margin-top:38px"><div><h2>Beta pulse</h2><div class="muted">Adoption signals and actionable feedback without private health data.</div></div></div>
+    <section class="metrics">
+      <article class="card"><div class="label">Active testers</div><div class="value" id="activeUsers">—</div></article>
+      <article class="card"><div class="label">Plans completed</div><div class="value" id="plansCompleted">—</div></article>
+      <article class="card"><div class="label">Grocery approvals</div><div class="value" id="groceryApprovals">—</div></article>
+      <article class="card"><div class="label">New feedback</div><div class="value" id="newFeedback">—</div></article>
+      <article class="card wide"><div class="label">Feedback queue</div><div id="feedbackQueue" class="muted" style="margin-top:12px">Loading…</div></article>
+      <article class="card wide"><div class="label">Failed jobs</div><div id="failedJobs" class="muted" style="margin-top:12px">Loading…</div></article>
+    </section>
   </main>
   <script src="/ui/operations.js" defer></script>
+  <script src="/ui/beta.js?v=2026-09-04" defer></script>
 </body>
 </html>

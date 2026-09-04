@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import (
     Activity,
+    BetaFeedback,
     EnergyTarget,
     GroceryApproval,
     GroceryPreference,
@@ -20,6 +21,7 @@ from app.models import (
     OAuthAccount,
     Plan,
     PlannedWorkout,
+    ProductEvent,
     User,
     UserPreference,
     WeeklyPlanningJob,
@@ -280,6 +282,12 @@ def export_my_data(user: User = Depends(get_current_user), db: Session = Depends
         ],
         "meal_feedback": [
             _public_columns(row) for row in db.query(MealFeedback).filter(MealFeedback.user_id == user.id).all()
+        ],
+        "beta_feedback": [
+            _public_columns(row) for row in db.query(BetaFeedback).filter(BetaFeedback.user_id == user.id).all()
+        ],
+        "product_events": [
+            _public_columns(row) for row in db.query(ProductEvent).filter(ProductEvent.user_id == user.id).all()
         ],
         "grocery_preferences": [
             _public_columns(row)

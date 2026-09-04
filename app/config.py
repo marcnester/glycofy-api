@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     WEB_PROCESS_COUNT: int = 1
     SHARED_JOB_QUEUE_URL: str | None = None
     SHARED_RATE_LIMIT_URL: str | None = None
+    PRODUCT_EVENT_RETENTION_DAYS: int = 180
+    BETA_FEEDBACK_RETENTION_DAYS: int = 365
+    BETA_FEEDBACK_ENABLED: bool = True
+    BETA_ANALYTICS_ENABLED: bool = True
+    FEATURE_FLAGS: str = "beta_feedback,beta_analytics"
     SECURITY_ALERT_EMAIL_TO: str = ""
     SECURITY_ALERT_EMAIL_ENABLED: bool = False
     SECURITY_ALERT_EMAIL_COOLDOWN_SECONDS: int = 900

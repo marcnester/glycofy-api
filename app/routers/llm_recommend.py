@@ -4005,13 +4005,19 @@ def reconcile_weekly_jobs() -> dict[str, int]:
             )
             .delete(synchronize_session=False)
         )
-        from app.models import AIOperationMetric
+        from app.models import AIOperationMetric, BetaFeedback, ProductEvent
 
         deleted_metrics = (
             db.query(AIOperationMetric)
             .filter(AIOperationMetric.occurred_at < metric_cutoff)
             .delete(synchronize_session=False)
         )
+        db.query(ProductEvent).filter(
+            ProductEvent.occurred_at < datetime.utcnow() - timedelta(days=max(1, settings.PRODUCT_EVENT_RETENTION_DAYS))
+        ).delete(synchronize_session=False)
+        db.query(BetaFeedback).filter(
+            BetaFeedback.created_at < datetime.utcnow() - timedelta(days=max(1, settings.BETA_FEEDBACK_RETENTION_DAYS))
+        ).delete(synchronize_session=False)
         db.commit()
     for job_id, payload, user_id in recovered:
         _WEEKLY_JOB_EXECUTOR.submit(_run_weekly_job, job_id, payload, user_id, "recovered")

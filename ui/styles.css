@@ -189,3 +189,9 @@ a:hover { color: var(--primary-strong); }
 .stat__label{ color: var(--muted); font-size: 12px; margin-bottom: 6px; }
 .stat__value{ font-weight: 800; font-size: 22px; letter-spacing: .2px; }
 .stat__unit{ color: var(--muted); font-size: 12px; }
+
+/* Beta feedback stays reachable without competing with primary actions. */
+.beta-feedback-button{position:fixed;right:18px;bottom:18px;z-index:180;border:1px solid rgba(80,200,138,.46);border-radius:999px;background:#15231d;color:#9be0bc;padding:11px 16px;font:700 14px/1 Inter,system-ui;box-shadow:0 12px 30px rgba(0,0,0,.4);cursor:pointer}
+.beta-feedback-button:hover{background:#1a3026;color:#c1f0d6}.beta-feedback-dialog{width:min(560px,calc(100vw - 28px));padding:0;border:1px solid var(--border);border-radius:20px;background:var(--panel);color:var(--text);box-shadow:0 28px 80px rgba(0,0,0,.65)}
+.beta-feedback-dialog::backdrop{background:rgba(3,7,12,.72);backdrop-filter:blur(4px)}.beta-feedback-form{display:grid;gap:16px;padding:24px}.beta-feedback-head{display:flex;justify-content:space-between;gap:16px}.beta-feedback-head h2{margin:4px 0 0}.beta-feedback-kicker{color:var(--primary);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}.beta-feedback-close{border:0;background:transparent;color:var(--muted);font-size:28px;cursor:pointer}.beta-feedback-form label{display:grid;gap:7px;font-weight:700}.beta-feedback-form select,.beta-feedback-form textarea{width:100%;border:1px solid var(--chip-border);border-radius:12px;background:#0b1016;color:var(--text);padding:11px;font:inherit}.beta-feedback-form textarea{min-height:120px;resize:vertical}.beta-feedback-privacy,.beta-feedback-state{margin:0;color:var(--muted);font-size:13px;line-height:1.45}.beta-feedback-submit{justify-self:end;background:var(--primary);color:#071b14}
+@media(max-width:600px){.beta-feedback-button{right:12px;bottom:12px}.beta-feedback-form{padding:20px}}

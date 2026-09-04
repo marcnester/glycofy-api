@@ -39,6 +39,7 @@ from app.routers import (
 from app.routers import (
     auth as auth_router,
 )
+from app.routers import beta as beta_router
 from app.routers import (
     energy as energy_router,
 )
@@ -207,6 +208,7 @@ async def security_controls(request: Request, call_next):
 # -----------------------------
 app.include_router(health_router.router, prefix="", tags=["health"])
 app.include_router(auth_router.router, prefix="/auth", tags=["auth"])
+app.include_router(beta_router.router, prefix="/v1/beta", tags=["beta"])
 app.include_router(users_router.router, tags=["users"])
 app.include_router(activities_router.router, prefix="/activities", tags=["activities"])
 app.include_router(plans_router.router, prefix="/v1/plan", tags=["plan"])

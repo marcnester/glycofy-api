@@ -13,7 +13,16 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 
-REQUIRED_TABLES = {"alembic_version", "users", "plans", "plan_meals", "weekly_planning_jobs", "ai_operation_metrics"}
+REQUIRED_TABLES = {
+    "ai_operation_metrics",
+    "alembic_version",
+    "beta_feedback",
+    "plan_meals",
+    "plans",
+    "product_events",
+    "users",
+    "weekly_planning_jobs",
+}
 
 
 def main() -> int:

@@ -12,6 +12,8 @@ Set `ADMIN_EMAILS` to a comma-separated operator allowlist. An authenticated ope
 
 The endpoint never returns prompts, meals, health fields, IP addresses, or user identifiers. Search Render logs for a failed job's `error_reference` to find its JSON stack trace.
 
+The same dashboard includes privacy-safe beta funnel totals, the feedback queue, and failed-job diagnostics. See [Beta program](BETA_PROGRAM.md) for the event contract and retention policy.
+
 Recommended beta alerts are failure rate above 5%, p95 weekly latency above 120 seconds, any exhausted recovery, or sustained readiness failure.
 
 ## Backup restore drill

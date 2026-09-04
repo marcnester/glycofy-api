@@ -27,5 +27,29 @@ async function loadOperations() {
   }
 }
 
+function rows(items, formatter, empty) {
+  if (!items.length) return empty;
+  return items.slice(0, 6).map(formatter).join("<hr style='border:0;border-top:1px solid var(--border);margin:12px 0'>");
+}
+
+async function loadBeta() {
+  try {
+    const [summaryResponse, feedbackResponse, jobsResponse] = await Promise.all([
+      fetch("/v1/operations/beta-summary?days=30", {credentials:"same-origin"}),
+      fetch("/v1/operations/feedback?limit=20", {credentials:"same-origin"}),
+      fetch("/v1/operations/failed-jobs?limit=20", {credentials:"same-origin"})
+    ]);
+    if (![summaryResponse, feedbackResponse, jobsResponse].every(response => response.ok)) return;
+    const [summary, feedback, jobs] = await Promise.all([summaryResponse.json(), feedbackResponse.json(), jobsResponse.json()]);
+    document.getElementById("activeUsers").textContent = number.format(summary.active_users);
+    document.getElementById("plansCompleted").textContent = number.format(summary.events.weekly_plan_completed || 0);
+    document.getElementById("groceryApprovals").textContent = number.format(summary.events.grocery_approved || 0);
+    document.getElementById("newFeedback").textContent = number.format(summary.feedback.new);
+    document.getElementById("feedbackQueue").innerHTML = rows(feedback, item => `<strong>${item.category}</strong> · ${item.page_path}<br>${item.message.replace(/[<>&]/g, character => ({"<":"&lt;", ">":"&gt;", "&":"&amp;"}[character]))}<br><small>${item.browser} · ${item.viewport} · ${item.request_id || "no request ID"}</small>`, "No feedback yet.");
+    document.getElementById("failedJobs").innerHTML = rows(jobs, item => `<strong>${item.error_code || "Unknown failure"}</strong><br><small>Reference ${item.error_reference || "unavailable"} · attempt ${item.attempt_count}</small>`, "No failed jobs.");
+  } catch (_) { /* AI operations remain useful if beta metrics are unavailable */ }
+}
+
 document.getElementById("window").addEventListener("change", loadOperations);
 loadOperations();
+loadBeta();
