@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth_utils import get_current_user
+from app.config import settings
 from app.db import SessionLocal, get_db
 from app.models import (
     Plan,
@@ -32,6 +33,7 @@ from app.models import (
     UserPreference,  # ORM mapped to user_preferences
     WeeklyPlanningJob,
 )
+from app.services.ai_operations import record_ai_operation
 from app.services.meal_feedback import feedback_context
 from app.services.meal_quality import PROMPT_VERSION, QUALITY_POLICY_VERSION, validate_meal
 from app.services.training_nutrition import (
@@ -178,6 +180,8 @@ class WeeklyJobStatusResponse(BaseModel):
     elapsed_seconds: float = 0.0
     result: dict[str, Any] | None = None
     error: str | None = None
+    error_reference: str | None = None
+    attempt_count: int = 0
     start_date: str | None = None
     end_date: str | None = None
 
@@ -1156,8 +1160,28 @@ def _safe_openai_json_pick(
             if not data or not isinstance(data, dict):
                 meta["fallback"] = "parse_error"
                 logger.warning("LLM: invalid JSON response; falling back to heuristic")
+                record_ai_operation(
+                    "single_meal",
+                    status="parse_error",
+                    model=model,
+                    prompt_version=PROMPT_VERSION,
+                    latency_ms=latency_ms,
+                    usage=usage,
+                    cost_usd=cost_est,
+                    error_code="parse_error",
+                )
                 return None, meta
 
+            record_ai_operation(
+                "single_meal",
+                status="success",
+                model=model,
+                prompt_version=PROMPT_VERSION,
+                latency_ms=latency_ms,
+                usage=usage,
+                cost_usd=cost_est,
+                accepted_items=1,
+            )
             return data, meta
 
         except Exception as e:
@@ -1170,6 +1194,14 @@ def _safe_openai_json_pick(
                 break
 
     meta.update({"fallback": "llm_error", "error": err})
+    record_ai_operation(
+        "single_meal",
+        status="failed",
+        model=model,
+        prompt_version=PROMPT_VERSION,
+        latency_ms=int((time.time() - t0) * 1000),
+        error_code="provider_error",
+    )
     return None, meta
 
 
@@ -3386,6 +3418,14 @@ def _batch_week_recommendations(
     except Exception as exc:
         _record_failure()
         logger.exception("LLM weekly batch failed: %s", exc)
+        record_ai_operation(
+            "weekly_plan",
+            status="failed",
+            model=_openai_model(),
+            prompt_version=PROMPT_VERSION,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            error_code=type(exc).__name__[:80],
+        )
         return {}, {"mode": "error", "error": type(exc).__name__}
 
     targets = {(day["date"], meal["slot"]): meal["target_macros"] for day in days for meal in day.get("meals", [])}
@@ -3489,6 +3529,17 @@ def _batch_week_recommendations(
         "quality_policy_version": QUALITY_POLICY_VERSION,
     }
     logger.info("LLM weekly batch completed: %s", meta)
+    record_ai_operation(
+        "weekly_plan",
+        status="success" if rejected == 0 else "partial",
+        model=_openai_model(),
+        prompt_version=PROMPT_VERSION,
+        latency_ms=latency_ms,
+        usage=usage,
+        cost_usd=cost,
+        accepted_items=meta["accepted"],
+        rejected_items=rejected,
+    )
     return output, meta
 
 
@@ -3770,6 +3821,7 @@ def recommend_weekly_apply(
 
 
 _WEEKLY_JOB_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="weekly-plan")
+_WEEKLY_WORKER_ID = f"web-{uuid.uuid4().hex[:12]}"
 
 
 def _update_weekly_job(job_id: str, **updates: Any) -> None:
@@ -3800,19 +3852,35 @@ def _weekly_job_dict(job: WeeklyPlanningJob) -> dict[str, Any]:
         "elapsed_seconds": elapsed,
         "result": job.result,
         "error": job.error,
+        "error_reference": job.error_reference,
+        "attempt_count": job.attempt_count,
         "start_date": min(dates) if dates else None,
         "end_date": max(dates) if dates else None,
     }
 
 
 def _run_weekly_job(job_id: str, payload_data: dict[str, Any], user_id: int, ip: str) -> None:
-    _update_weekly_job(
-        job_id,
-        status="running",
-        stage="generating",
-        message="Designing 28 meals with AI…",
-        started_at=datetime.utcnow(),
-    )
+    with SessionLocal() as claim_db:
+        claimed = (
+            claim_db.query(WeeklyPlanningJob)
+            .filter(WeeklyPlanningJob.id == job_id, WeeklyPlanningJob.status == "queued")
+            .update(
+                {
+                    WeeklyPlanningJob.status: "running",
+                    WeeklyPlanningJob.stage: "generating",
+                    WeeklyPlanningJob.message: "Designing 28 meals with AI…",
+                    WeeklyPlanningJob.started_at: datetime.utcnow(),
+                    WeeklyPlanningJob.updated_at: datetime.utcnow(),
+                    WeeklyPlanningJob.worker_id: _WEEKLY_WORKER_ID,
+                    WeeklyPlanningJob.attempt_count: WeeklyPlanningJob.attempt_count + 1,
+                },
+                synchronize_session=False,
+            )
+        )
+        claim_db.commit()
+        if claimed != 1:
+            logger.info("weekly_job_claim_skipped", extra={"job_id": job_id})
+            return
     with SessionLocal() as db:
         try:
             _WEEKLY_JOB_CONTEXT.job_id = job_id
@@ -3827,6 +3895,7 @@ def _run_weekly_job(job_id: str, payload_data: dict[str, Any], user_id: int, ip:
                     stage="cancelled",
                     message="Weekly planning cancelled.",
                     completed_at=datetime.utcnow(),
+                    worker_id=None,
                 )
                 return
 
@@ -3861,6 +3930,7 @@ def _run_weekly_job(job_id: str, payload_data: dict[str, Any], user_id: int, ip:
                 completed_days=len(result.get("days", [])),
                 result=result,
                 completed_at=datetime.utcnow(),
+                worker_id=None,
             )
         except WeeklyJobCancelled:
             db.rollback()
@@ -3873,17 +3943,86 @@ def _run_weekly_job(job_id: str, payload_data: dict[str, Any], user_id: int, ip:
             )
         except Exception as exc:
             db.rollback()
-            logger.exception("LLM weekly job failed job_id=%s", job_id)
+            error_reference = uuid.uuid4().hex
+            logger.exception(
+                "weekly_job_failed",
+                extra={"job_id": job_id, "error_reference": error_reference, "error_code": type(exc).__name__},
+            )
             _update_weekly_job(
                 job_id,
                 status="failed",
                 stage="failed",
                 message="We couldn't finish this week plan.",
-                error=str(getattr(exc, "detail", None) or exc),
+                error="We couldn't finish this week plan. Please retry.",
+                error_code=type(exc).__name__[:80],
+                error_reference=error_reference,
                 completed_at=datetime.utcnow(),
+                worker_id=None,
             )
         finally:
             _WEEKLY_JOB_CONTEXT.job_id = None
+
+
+def reconcile_weekly_jobs() -> dict[str, int]:
+    """Recover work orphaned by a deployment and prune expired operational records."""
+    cutoff = datetime.utcnow() - timedelta(days=max(1, settings.WEEKLY_JOB_RETENTION_DAYS))
+    metric_cutoff = datetime.utcnow() - timedelta(days=max(1, settings.AI_METRIC_RETENTION_DAYS))
+    recovered: list[tuple[str, dict[str, Any], int]] = []
+    failed = 0
+    deleted_jobs = 0
+    deleted_metrics = 0
+    with SessionLocal() as db:
+        interrupted = db.query(WeeklyPlanningJob).filter(WeeklyPlanningJob.status.in_(("queued", "running"))).all()
+        for job in interrupted:
+            if job.cancel_requested:
+                job.status = "cancelled"
+                job.stage = "cancelled"
+                job.message = "Weekly planning cancelled."
+                job.completed_at = datetime.utcnow()
+                job.worker_id = None
+            elif job.attempt_count >= settings.WEEKLY_JOB_MAX_ATTEMPTS:
+                job.status = "failed"
+                job.stage = "failed"
+                job.message = "We couldn't recover this week plan. Please retry."
+                job.error = job.message
+                job.error_code = "recovery_attempts_exhausted"
+                job.error_reference = uuid.uuid4().hex
+                job.completed_at = datetime.utcnow()
+                job.worker_id = None
+                failed += 1
+            else:
+                job.status = "queued"
+                job.stage = "recovering"
+                job.message = "Resuming your AI week after an update…"
+                job.worker_id = None
+                job.updated_at = datetime.utcnow()
+                recovered.append((job.id, dict(job.payload), job.user_id))
+        deleted_jobs = (
+            db.query(WeeklyPlanningJob)
+            .filter(
+                WeeklyPlanningJob.status.in_(("completed", "failed", "cancelled")),
+                WeeklyPlanningJob.completed_at < cutoff,
+            )
+            .delete(synchronize_session=False)
+        )
+        from app.models import AIOperationMetric
+
+        deleted_metrics = (
+            db.query(AIOperationMetric)
+            .filter(AIOperationMetric.occurred_at < metric_cutoff)
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+    for job_id, payload, user_id in recovered:
+        _WEEKLY_JOB_EXECUTOR.submit(_run_weekly_job, job_id, payload, user_id, "recovered")
+    result = {
+        "recovered": len(recovered),
+        "failed": failed,
+        "deleted_jobs": deleted_jobs,
+        "deleted_metrics": deleted_metrics,
+    }
+    logger.info("weekly_job_reconciliation", extra=result)
+    return result
 
 
 @router.post("/recommend/weekly/jobs", response_model=WeeklyJobStartResponse, tags=["llm"])

@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     AUTH_RATE_LIMIT_PER_15_MINUTES: int = 20
     OAUTH_RATE_LIMIT_PER_15_MINUTES: int = 30
     SECURITY_AUDIT_RETENTION_DAYS: int = 365
+    WEEKLY_JOB_RETENTION_DAYS: int = 30
+    AI_METRIC_RETENTION_DAYS: int = 90
+    WEEKLY_JOB_MAX_ATTEMPTS: int = 3
+    ADMIN_EMAILS: str = ""
+    WEB_PROCESS_COUNT: int = 1
+    SHARED_JOB_QUEUE_URL: str | None = None
+    SHARED_RATE_LIMIT_URL: str | None = None
     SECURITY_ALERT_EMAIL_TO: str = ""
     SECURITY_ALERT_EMAIL_ENABLED: bool = False
     SECURITY_ALERT_EMAIL_COOLDOWN_SECONDS: int = 900
@@ -159,6 +166,8 @@ class Settings(BaseSettings):
             errors.append("AUTH_RATE_LIMIT_PER_15_MINUTES must be positive")
         if self.OAUTH_RATE_LIMIT_PER_15_MINUTES < 1:
             errors.append("OAUTH_RATE_LIMIT_PER_15_MINUTES must be positive")
+        if self.WEB_PROCESS_COUNT > 1 and not (self.SHARED_JOB_QUEUE_URL and self.SHARED_RATE_LIMIT_URL):
+            errors.append("multiple web processes require shared job queue and rate-limit backends")
         if not self.OAUTH_TOKEN_ENCRYPTION_KEY:
             errors.append("OAUTH_TOKEN_ENCRYPTION_KEY must be configured")
         if self.strava_ready() and len(self.STRAVA_WEBHOOK_VERIFY_TOKEN or "") < 32:

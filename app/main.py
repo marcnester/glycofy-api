@@ -60,6 +60,7 @@ from app.routers import (
 from app.routers import (
     oauth_strava as oauth_strava_router,
 )
+from app.routers import operations as operations_router
 from app.routers import (
     plans as plans_router,
 )
@@ -100,6 +101,15 @@ app = FastAPI(
     redoc_url=None if settings.is_production else "/redoc",
     openapi_url=None if settings.is_production else "/openapi.json",
 )
+
+
+@app.on_event("startup")
+def recover_interrupted_weekly_plans() -> None:
+    # Importing lazily keeps application boot order deterministic and submits
+    # recovered jobs only after the database migration pre-deploy step.
+    if settings.is_production:
+        llm_recommend_router.reconcile_weekly_jobs()
+
 
 # -----------------------------
 # CORS
@@ -206,6 +216,7 @@ app.include_router(imports_router.router, prefix="/imports", tags=["imports"])
 app.include_router(meal_feedback_router.router, prefix="/v1/feedback", tags=["meal-feedback"])
 app.include_router(energy_router.router, prefix="/v1/energy", tags=["energy"])
 app.include_router(llm_recommend_router.router, prefix="/v1/llm", tags=["llm"])
+app.include_router(operations_router.router, prefix="/v1/operations", tags=["operations"])
 app.include_router(preferences_router.router, prefix="/v1/preferences", tags=["preferences"])  # ← NEW
 app.include_router(training_events_router.router)
 app.include_router(user_profile.router)

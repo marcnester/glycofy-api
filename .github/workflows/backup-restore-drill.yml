@@ -1,0 +1,23 @@
+name: Backup restore verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-restored-database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Verify restored database without modifying it
+        env:
+          RESTORE_DATABASE_URL: ${{ secrets.RESTORE_DATABASE_URL }}
+        run: python scripts/verify_backup_restore.py

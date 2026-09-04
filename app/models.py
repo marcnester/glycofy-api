@@ -459,11 +459,40 @@ class WeeklyPlanningJob(Base):
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_reference: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    worker_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AIOperationMetric(Base):
+    """Privacy-safe operational telemetry; never stores prompts or user/health data."""
+
+    __tablename__ = "ai_operation_metrics"
+    __table_args__ = (
+        Index("ix_ai_metric_occurred", "occurred_at"),
+        Index("ix_ai_metric_operation_status", "operation", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    operation: Mapped[str] = mapped_column(String(40), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    estimated_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
+    accepted_items: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rejected_items: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
 
 # -------------------------

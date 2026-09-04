@@ -1,5 +1,7 @@
 # Deploying Glycofy on Render
 
+See [Production operations](PRODUCTION_OPERATIONS.md) for job recovery, monitoring, retention, backup drills, and the single-instance scaling boundary.
+
 Glycofy is defined as a Render Blueprint in `render.yaml`. The initial
 production topology is deliberately small: one Docker web service and one
 private managed PostgreSQL database. Alembic migrations run as a pre-deploy

@@ -55,6 +55,16 @@ services:
         sync: false
       - key: SECURITY_ALERT_EMAIL_ENABLED
         value: "false"
+      - key: WEEKLY_JOB_RETENTION_DAYS
+        value: "30"
+      - key: AI_METRIC_RETENTION_DAYS
+        value: "90"
+      - key: WEEKLY_JOB_MAX_ATTEMPTS
+        value: "3"
+      - key: WEB_PROCESS_COUNT
+        value: "1"
+      - key: ADMIN_EMAILS
+        sync: false
 
 databases:
   - name: glycofy-db
