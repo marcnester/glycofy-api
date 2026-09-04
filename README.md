@@ -32,6 +32,7 @@ Athlete profile + training context
 
 - **Complete athlete onboarding** — units, body measurements, sex, date of birth, goals, timezone, dietary pattern, allergies, and ingredient exclusions.
 - **Training-aware nutrition** — completed Strava activities and upcoming workouts inform recovery and fueling decisions.
+- **AI quality and safety harness** — generated meals are checked for diet/allergen conflicts, nutrition plausibility, complete measured ingredients, cooking safety, and realistic timing before they can be persisted.
 - **Flexible training input** — users can connect Strava, enter workouts manually, or import planned workouts from a TrainingPeaks CSV export.
 - **Daily and weekly AI planning** — structured meal recommendations target calories and macronutrients while enforcing dietary safety and weekly variety.
 - **Transparent planning context** — Glycofy explains when recent or upcoming training data is missing and falls back to standard athlete targets.

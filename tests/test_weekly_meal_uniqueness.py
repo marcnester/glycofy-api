@@ -23,7 +23,10 @@ def test_ai_created_meal_retries_duplicate_weekly_title(monkeypatch):
                             {"name": "spinach", "amount": "2", "unit": "cups"},
                             {"name": "salmon", "amount": "6", "unit": "oz"},
                         ],
-                        "instructions": ["Cook and serve."],
+                        "instructions": ["Cook quinoa.", "Cook salmon until it flakes easily, then serve."],
+                        "prep_time_min": 8,
+                        "cook_time_min": 15,
+                        "total_time_min": 23,
                         "protein_group": "fish",
                         "protein_item": "salmon",
                         "carb_item": "quinoa",
@@ -43,7 +46,10 @@ def test_ai_created_meal_retries_duplicate_weekly_title(monkeypatch):
                             {"name": "spinach", "amount": "2", "unit": "cups"},
                             {"name": "salmon", "amount": "6", "unit": "oz"},
                         ],
-                        "instructions": ["Cook and serve."],
+                        "instructions": ["Cook the sweet potato.", "Cook salmon until it flakes easily, then serve."],
+                        "prep_time_min": 8,
+                        "cook_time_min": 15,
+                        "total_time_min": 23,
                         "protein_group": "fish",
                         "protein_item": "salmon",
                         "carb_item": "sweet potato",
@@ -484,6 +490,7 @@ def test_weekly_generation_carries_protein_history_into_the_next_day(monkeypatch
         )
 
     monkeypatch.setattr(llm_recommend, "_recommend_for_single_meal", fake_recommendation)
+    monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", lambda *_args, **_kwargs: ({}, {"mode": "test"}))
     monkeypatch.setattr(
         llm_recommend,
         "_persist_day_recommendations",

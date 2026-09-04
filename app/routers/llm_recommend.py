@@ -33,6 +33,7 @@ from app.models import (
     WeeklyPlanningJob,
 )
 from app.services.meal_feedback import feedback_context
+from app.services.meal_quality import PROMPT_VERSION, QUALITY_POLICY_VERSION, validate_meal
 from app.services.training_nutrition import (
     MacroTargets,
     TrainingNutritionResult,
@@ -1069,7 +1070,13 @@ def _safe_openai_json_pick(
     system: str,
     user_payload: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    meta: dict[str, Any] = {"provider": "openai", "model": model, "mode": "pick_or_create"}
+    meta: dict[str, Any] = {
+        "provider": "openai",
+        "model": model,
+        "mode": "pick_or_create",
+        "prompt_version": PROMPT_VERSION,
+        "quality_policy_version": QUALITY_POLICY_VERSION,
+    }
     if client is None:
         meta.update({"fallback": "no_client"})
         logger.info("LLM: no client available; using heuristic mode")
@@ -2193,6 +2200,42 @@ def _llm_pick_or_create(
                 meta["mode"] = "empty"
                 return "empty", None, None, "Unable to satisfy day variety rule.", meta, None
 
+        quality_report = validate_meal(
+            {
+                "title": title,
+                "ingredients": ingredients,
+                "instructions": instructions,
+                "prep_time_min": new_recipe.get("prep_time_min"),
+                "cook_time_min": new_recipe.get("cook_time_min"),
+                "total_time_min": new_recipe.get("total_time_min"),
+                "macro_estimate": macro_est,
+            },
+            target=tgt.model_dump(exclude={"slot"}),
+            exclusions=ingredient_exclusions,
+            diet=primary_diet,
+        )
+        meta["quality"] = {"policy_version": QUALITY_POLICY_VERSION, "issues": quality_report.codes()}
+        if not quality_report.safe:
+            meta["fallback"] = "quality_validation"
+            if best_r is not None:
+                meta["mode"] = "pick"
+                return "pick", best_r, best_deltas, "default: quality-safe catalog recipe", meta, None
+            fallback_idea = _deterministic_fallback_idea(
+                slot=slot_norm,
+                tgt=tgt,
+                primary_diet=primary_diet,
+                ingredient_exclusions=ingredient_exclusions,
+                used_protein_items=used_protein_set,
+                used_carb_items=used_carb_set,
+                used_meal_keys=used_meal_keys or set(),
+                banned_protein_groups=banned_groups,
+            )
+            if fallback_idea is not None:
+                meta["mode"] = "create"
+                return "create", None, None, "Reliable quality-safe fallback meal.", meta, fallback_idea
+            meta["mode"] = "empty"
+            return "empty", None, None, "Unable to produce a nutrition-safe meal.", meta, None
+
         deltas: dict[str, float] = {}
         for m in _MACROS:
             target_v = float(getattr(tgt, m, 0.0))
@@ -3012,6 +3055,22 @@ def _persist_day_recommendations(
 
         pm = by_slot[slot]
         pm.meta = {**(pm.meta or {}), "reason": it.reason} if it.reason else (pm.meta or {})
+        generation_meta = it.meta or {}
+        tracked_meta = {
+            key: generation_meta[key]
+            for key in (
+                "provider",
+                "model",
+                "prompt_version",
+                "quality_policy_version",
+                "quality",
+                "fallback",
+                "batch",
+            )
+            if key in generation_meta
+        }
+        if tracked_meta:
+            pm.meta = {**(pm.meta or {}), "generation": tracked_meta}
 
         # Catalog pick
         if it.recipe and getattr(it.recipe, "id", None):
@@ -3276,6 +3335,7 @@ def _batch_week_recommendations(
         return {}, {"mode": "unavailable"}
 
     system = (
+        f"PROMPT_VERSION={PROMPT_VERSION}. QUALITY_POLICY_VERSION={QUALITY_POLICY_VERSION}. "
         "You are Glycofy's elite sports-nutrition planner. Design the COMPLETE week as one coherent plan. "
         "Return exactly one breakfast, lunch, dinner, and snack for every requested date. "
         "Respect diet tags and ingredient exclusions as hard safety constraints. Keep every recipe practical, "
@@ -3355,11 +3415,11 @@ def _batch_week_recommendations(
             macros = meal.get("macros") or {}
             protein_group = str(meal.get("protein_group") or "unknown").strip().lower()
             title_key = _meal_similarity_key(title)
-            macro_ok = bool(target) and all(
-                _safe_float(target.get(name)) <= 0
-                or abs(_safe_float(macros.get(name)) - _safe_float(target.get(name))) / _safe_float(target.get(name))
-                <= 0.25
-                for name in _MACROS
+            quality_report = validate_meal(
+                meal,
+                target=target,
+                exclusions=exclusions,
+                diet=primary_diet,
             )
             invalid = (
                 slot not in SLOTS
@@ -3373,8 +3433,7 @@ def _batch_week_recommendations(
                 or not 1 <= total_time_min <= 240
                 or not 1 <= prep_time_min <= 240
                 or not 0 <= cook_time_min <= 240
-                or not macro_ok
-                or _text_violates_exclusions(f"{title} {json.dumps(ingredients)}", exclusions)
+                or not quality_report.safe
             )
             if slot in _DAY_UNIQUE_SLOTS:
                 invalid = invalid or not protein or not carb or protein in day_proteins or carb in day_carbs
@@ -3403,6 +3462,9 @@ def _batch_week_recommendations(
                     "provider": "openai",
                     "mode": "create",
                     "batch": True,
+                    "prompt_version": PROMPT_VERSION,
+                    "quality_policy_version": QUALITY_POLICY_VERSION,
+                    "quality": {"issues": quality_report.codes()},
                     "protein_group": ai_idea["protein_group"],
                     "protein_item": protein,
                     "carb_item": carb,
@@ -3423,6 +3485,8 @@ def _batch_week_recommendations(
         "cost_usd": round(cost, 6),
         "accepted": sum(len(slots) for slots in output.values()),
         "rejected": rejected,
+        "prompt_version": PROMPT_VERSION,
+        "quality_policy_version": QUALITY_POLICY_VERSION,
     }
     logger.info("LLM weekly batch completed: %s", meta)
     return output, meta
