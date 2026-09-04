@@ -16,7 +16,7 @@ from app.db import get_db
 from app.models import AccountActionToken, User
 from app.observability import record_security_event
 from app.rate_limit import AUTH_LIMITER, account_key, client_key
-from app.services.account_email import account_email_configured, send_account_email
+from app.services.account_email import account_email_configured, build_account_email_html, send_account_email
 
 # -----------------------------------------------------------------------------
 # Password hashing
@@ -157,11 +157,21 @@ def _send_verification(user: User, db: Session, background_tasks: BackgroundTask
     if not account_email_configured():
         return False
     token = _issue_account_token(db, user, "verify_email", 24)
+    verify_url = _account_link("/auth/verify-email", token)
     background_tasks.add_task(
         send_account_email,
         user.email,
         "Verify your Glycofy email",
-        f"Verify your Glycofy email address:\n\n{_account_link('/auth/verify-email', token)}\n\nThis link expires in 24 hours.",
+        f"Verify your Glycofy email address:\n\n{verify_url}\n\nThis link expires in 24 hours.",
+        build_account_email_html(
+            preheader="Confirm your email to secure your Glycofy account.",
+            heading="Welcome to Glycofy",
+            message="Confirm your email address so we can keep your account secure and your training-fueled meal plans within reach.",
+            action_label="Verify email address",
+            action_url=verify_url,
+            expires="This secure link expires in 24 hours.",
+            security_note="If you did not create a Glycofy account, you can safely ignore this email.",
+        ),
     )
     return True
 
@@ -249,11 +259,21 @@ def forgot_password(
     user = db.query(User).filter(User.email == body.email.lower()).first()
     if user and account_email_configured():
         token = _issue_account_token(db, user, "reset_password", 1)
+        reset_url = f"{_account_link('/ui/login.html', token)}&mode=reset"
         background_tasks.add_task(
             send_account_email,
             user.email,
             "Reset your Glycofy password",
-            f"Reset your Glycofy password:\n\n{_account_link('/ui/login.html', token)}&mode=reset\n\nThis link expires in one hour. If you did not request this, ignore this message.",
+            f"Reset your Glycofy password:\n\n{reset_url}\n\nThis link expires in one hour. If you did not request this, ignore this message.",
+            build_account_email_html(
+                preheader="Use this secure link to reset your Glycofy password.",
+                heading="Reset your password",
+                message="We received a request to reset your Glycofy password. Use the secure button below to choose a new one.",
+                action_label="Reset password",
+                action_url=reset_url,
+                expires="This secure link expires in one hour and can only be used once.",
+                security_note="If you did not request a password reset, no action is needed. Your password has not changed.",
+            ),
         )
     return {"ok": True, "message": "If that account exists, reset instructions have been sent."}
 
