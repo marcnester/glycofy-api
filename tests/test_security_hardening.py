@@ -134,6 +134,8 @@ def test_week_page_loads_with_cookie_auth_and_exports_structured_ingredients(cli
     assert 'for="week_start"' in page.text
     assert "if (!ensureAuth || !ensureAuth()) return" not in script.text
     assert "raw.qty ?? raw.quantity ?? raw.amount" in script.text
+    assert "Promise.allSettled" in script.text
+    assert "not planned yet" in script.text
 
 
 def test_profile_uses_official_strava_connect_asset(client: TestClient):

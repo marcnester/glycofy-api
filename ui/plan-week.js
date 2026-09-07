@@ -69,7 +69,7 @@
     h3.textContent = plan.date;
     const badge = document.createElement('div');
     badge.className = 'badge';
-    badge.textContent = 'Draft';
+    badge.textContent = plan?.missing ? 'Not planned' : 'Planned';
     head.appendChild(h3);
     head.appendChild(badge);
     card.appendChild(head);
@@ -117,14 +117,22 @@
 
     try{
       // Load all 7 days in parallel
-      const plans = await Promise.all(dates.map(d => fetchDayPlan(d, diet)));
+      const results = await Promise.allSettled(dates.map(d => fetchDayPlan(d, diet)));
+      const plans = results.map((result, index) => (
+        result.status === 'fulfilled'
+          ? result.value
+          : { date: dates[index], meals: [], missing: true }
+      ));
+      const missingCount = plans.filter(plan => plan.missing).length;
 
       // Render
       for (const p of plans) renderDayCard(grid, p);
 
       // Save for export
       window.__glyco_weekPlans = plans;
-      ok('Week loaded.');
+      ok(missingCount
+        ? `Week loaded. ${missingCount} day${missingCount === 1 ? '' : 's'} not planned yet.`
+        : 'Week loaded.');
     }catch(e){
       console.error('[week] load failed', e);
       err(e.message || 'Failed to load week.');
