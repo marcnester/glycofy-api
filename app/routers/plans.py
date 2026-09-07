@@ -9,6 +9,7 @@ import json
 import re
 from datetime import date as date_cls
 from datetime import datetime, timedelta
+from fractions import Fraction
 from math import ceil
 from typing import Any, Literal
 
@@ -46,6 +47,31 @@ def _safe_meal_type(value: str | None) -> str:
     if mt in {"breakfast", "lunch", "dinner", "snack"}:
         return mt
     return "snack"
+
+
+def _parse_ingredient_quantity(raw_qty: Any, raw_unit: Any = None) -> tuple[float | None, str | None]:
+    """Preserve structured AI/catalog quantities when writing plan items."""
+    unit = str(raw_unit).strip() if raw_unit not in (None, "") else None
+    if raw_qty in (None, ""):
+        return None, unit
+
+    text = str(raw_qty).strip()
+    if not text:
+        return None, unit
+
+    parts = text.split(maxsplit=1)
+    number_text = parts[0]
+    inferred_unit = parts[1].strip() if len(parts) > 1 else None
+    try:
+        quantity = float(number_text)
+    except (TypeError, ValueError):
+        try:
+            quantity = float(Fraction(number_text))
+        except (ValueError, ZeroDivisionError):
+            # A free-form value is still more useful than silently discarding it.
+            combined = " ".join(value for value in (text, unit) if value)
+            return None, combined or None
+    return quantity, unit or inferred_unit
 
 
 def _default_meal_order(meal_type: str) -> int:
@@ -214,8 +240,8 @@ def _apply_recipe_to_meal(meal: PlanMeal, recipe: Recipe) -> None:
 
         if isinstance(ing, dict):
             name = str(ing.get("name") or ing.get("ingredient") or ing.get("item") or "Item").strip()
-            qty = ing.get("qty") or ing.get("quantity")
-            unit = ing.get("unit")
+            raw_qty = ing.get("qty", ing.get("quantity", ing.get("amount")))
+            qty, unit = _parse_ingredient_quantity(raw_qty, ing.get("unit") or ing.get("units"))
             kcal = ing.get("kcal")
             protein_g = ing.get("protein_g")
             carbs_g = ing.get("carbs_g")
@@ -288,6 +314,7 @@ class PlanPatchIn(BaseModel):
 class AIIngredientPayload(BaseModel):
     name: str
     amount: str | None = None  # free-form like "1 cup", "100 grams"
+    unit: str | None = None
 
 
 class AIIdeaPayload(BaseModel):
@@ -480,6 +507,7 @@ def _apply_ai_idea_to_meal(meal: PlanMeal, ai: AIIdeaPayload, slot: str) -> None
     for ing in getattr(ai, "ingredients", None) or []:
         name = "Item"
         amount: str | None = None
+        explicit_unit: str | None = None
 
         # ✅ HANDLE DICT FIRST (CRITICAL)
         if isinstance(ing, dict):
@@ -488,12 +516,14 @@ def _apply_ai_idea_to_meal(meal: PlanMeal, ai: AIIdeaPayload, slot: str) -> None
 
             amount = ing.get("amount") or ing.get("qty") or ing.get("quantity") or ""
             amount = str(amount).strip() or None
+            explicit_unit = str(ing.get("unit") or ing.get("units") or "").strip() or None
 
         # ✅ HANDLE Pydantic objects
         elif hasattr(ing, "name") and not isinstance(ing, dict):
             try:
                 name = (getattr(ing, "name", "") or "Item").strip()
                 amount = (getattr(ing, "amount", "") or "").strip() or None
+                explicit_unit = (getattr(ing, "unit", "") or "").strip() or None
             except Exception:
                 name = "Item"
                 amount = None
@@ -508,17 +538,7 @@ def _apply_ai_idea_to_meal(meal: PlanMeal, ai: AIIdeaPayload, slot: str) -> None
             name = str(ing).strip() or "Item"
             amount = None
 
-        qty_val: float | None = None
-        unit_val: str | None = None
-
-        if amount:
-            parts = amount.split()
-            try:
-                qty_val = float(parts[0])
-                unit_val = " ".join(parts[1:]) or None
-            except ValueError:
-                qty_val = None
-                unit_val = amount
+        qty_val, unit_val = _parse_ingredient_quantity(amount, explicit_unit)
 
         meal.items.append(
             PlanItem(

@@ -1,5 +1,5 @@
-from app.models import PlanMeal
-from app.routers.plans import AIIdeaPayload, LLMNewRecipe, _apply_ai_idea_to_meal
+from app.models import PlanMeal, Recipe
+from app.routers.plans import AIIdeaPayload, LLMNewRecipe, _apply_ai_idea_to_meal, _apply_recipe_to_meal
 
 
 def test_ai_cooking_steps_take_priority_over_description_and_persist_time():
@@ -27,6 +27,37 @@ def test_ai_cooking_steps_take_priority_over_description_and_persist_time():
         "cook_time_min": 15,
         "total_time_min": 25,
     }
+    assert meal.items[0].qty == 6
+    assert meal.items[0].unit == "oz"
+
+
+def test_ai_ingredient_preserves_separate_amount_and_unit():
+    meal = PlanMeal(meal_type="lunch", items=[], meta={})
+    idea = AIIdeaPayload(
+        title="Rice bowl",
+        ingredients=[{"name": "brown rice", "amount": "1/2", "unit": "cup"}],
+    )
+
+    _apply_ai_idea_to_meal(meal, idea, "lunch")
+
+    assert meal.items[0].qty == 0.5
+    assert meal.items[0].unit == "cup"
+
+
+def test_catalog_recipe_preserves_amount_field_when_applied():
+    meal = PlanMeal(meal_type="dinner", items=[], meta={})
+    recipe = Recipe(
+        title="Measured dinner",
+        meal_type="dinner",
+        ingredients=[
+            {"name": "chicken breast", "amount": "200", "unit": "g"},
+            {"name": "olive oil", "amount": "1", "unit": "tbsp"},
+        ],
+    )
+
+    _apply_recipe_to_meal(meal, recipe)
+
+    assert [(item.qty, item.unit) for item in meal.items] == [(200, "g"), (1, "tbsp")]
 
 
 def test_new_recipe_accepts_cooking_time():

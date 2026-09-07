@@ -748,6 +748,7 @@
     const ingPayload = ingredients.map((it) => ({
       name: it.name || 'Item',
       amount: it.amount || it.qty || '',
+      unit: it.unit || it.units || '',
     }));
 
     const payload = {
