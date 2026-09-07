@@ -129,3 +129,14 @@ a:focus, .btn:focus { outline: 2px solid #5bb0ff; outline-offset: 2px; }
 
 /* Utility */
 .hidden { display:none !important; }
+
+@media (max-width: 600px) {
+  .container { width: 100%; padding-left: 16px; padding-right: 16px; }
+  .controls, .card { padding: 16px; }
+  .row { align-items: stretch; flex-direction: column; }
+  .row .field, .row input, .row select { width: 100%; }
+  .actions .btn, .btn-group .btn { flex: 1 1 140px; }
+  .macros { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .meal-body .line { gap: 12px; }
+  .meal-body .line > :last-child { text-align: right; }
+}

@@ -30,6 +30,7 @@ html, body { height: 100%; }
 html, body {
   background: var(--bg);
   color: var(--text);
+  max-width: 100%;
 }
 body.ui-root {
   margin: 0;
@@ -195,3 +196,65 @@ a:hover { color: var(--primary-strong); }
 .beta-feedback-button:hover{background:#1a3026;color:#c1f0d6}.beta-feedback-dialog{width:min(560px,calc(100vw - 28px));padding:0;border:1px solid var(--border);border-radius:20px;background:var(--panel);color:var(--text);box-shadow:0 28px 80px rgba(0,0,0,.65)}
 .beta-feedback-dialog::backdrop{background:rgba(3,7,12,.72);backdrop-filter:blur(4px)}.beta-feedback-form{display:grid;gap:16px;padding:24px}.beta-feedback-head{display:flex;justify-content:space-between;gap:16px}.beta-feedback-head h2{margin:4px 0 0}.beta-feedback-kicker{color:var(--primary);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}.beta-feedback-close{border:0;background:transparent;color:var(--muted);font-size:28px;cursor:pointer}.beta-feedback-form label{display:grid;gap:7px;font-weight:700}.beta-feedback-form select,.beta-feedback-form textarea{width:100%;border:1px solid var(--chip-border);border-radius:12px;background:#0b1016;color:var(--text);padding:11px;font:inherit}.beta-feedback-form textarea{min-height:120px;resize:vertical}.beta-feedback-privacy,.beta-feedback-state{margin:0;color:var(--muted);font-size:13px;line-height:1.45}.beta-feedback-submit{justify-self:end;background:var(--primary);color:#071b14}
 @media(max-width:600px){.beta-feedback-button{right:12px;bottom:12px}.beta-feedback-form{padding:20px}}
+
+/* ---------- Phone layout ----------
+   Keep the brand and account action on row one, then give every destination an
+   equal, tappable slot on row two. This prevents the desktop header from making
+   the entire document wider than an iPhone viewport. */
+@media (max-width: 760px) {
+  .container { padding-left: 16px; padding-right: 16px; }
+  .page { padding-top: 24px; }
+
+  .topbar__inner {
+    height: auto !important;
+    min-height: 0;
+    padding-top: 10px;
+    padding-bottom: 8px;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+  }
+  .topbar .brand { justify-self: start; padding: 2px 6px; }
+  .topbar .brand img { width: 112px; }
+  .topbar__inner > .nav:nth-of-type(1) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .topbar__inner > .nav:last-child {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
+  }
+  .topbar .nav a {
+    min-width: 0;
+    justify-content: center;
+    padding: 9px 4px;
+    font-size: 13px;
+    text-align: center;
+  }
+  .topbar [data-nav="logout"],
+  .topbar #logout_btn {
+    min-height: 40px;
+    padding: 8px 12px;
+    border-radius: 14px;
+    font-size: 13px;
+  }
+
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .table-wrap { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  img, svg { max-width: 100%; }
+}
+
+@media (max-width: 380px) {
+  .container { padding-left: 12px; padding-right: 12px; }
+  .topbar .brand img { width: 104px; }
+  .topbar .nav a { padding-inline: 2px; font-size: 12px; }
+  .beta-feedback-button { padding: 10px 13px; font-size: 13px; }
+}

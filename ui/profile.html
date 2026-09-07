@@ -157,6 +157,13 @@
     .completion-fill{height:100%;width:0;background:#50c88a;transition:width .2s ease}
     .btn--primary{background:#50c88a!important;border-color:#50c88a!important;color:#071b14!important}
     @media (max-width:640px){.athlete-grid{grid-template-columns:1fr}}
+    @media (max-width:640px){
+      main.page.container{padding-top:24px}
+      main.page.container>section{padding:20px!important}
+      .grid.grid--cols-3{grid-template-columns:1fr!important}
+      .strava-summary{min-width:0;width:100%}
+      .strava-connect img{width:min(237px,100%);height:auto}
+    }
 
     /* Inline editable profile name */
     .editable-field{
