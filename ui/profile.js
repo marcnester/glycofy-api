@@ -98,6 +98,10 @@
     const confirm = $("#delete_account_confirm");
     $("#delete_account")?.addEventListener("click", () => { if (input) input.value = ""; if (confirm) confirm.disabled = true; dialog?.showModal(); });
     $("#delete_account_cancel")?.addEventListener("click", () => dialog?.close());
+    dialog?.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      dialog.close();
+    });
     input?.addEventListener("input", () => { if (confirm) confirm.disabled = input.value !== "DELETE"; });
     confirm?.addEventListener("click", async () => {
       confirm.disabled = true; confirm.textContent = "Deleting…";

@@ -152,6 +152,13 @@ def test_profile_uses_official_strava_connect_asset(client: TestClient):
     assert Path("ui/assets/connect-with-strava.png").read_bytes().startswith(b"\x89PNG")
 
 
+def test_account_deletion_dialog_supports_escape_key():
+    script = Path("ui/profile.js").read_text(encoding="utf-8")
+    assert 'dialog?.addEventListener("cancel"' in script
+    assert "event.preventDefault()" in script
+    assert "dialog.close()" in script
+
+
 def test_profile_exposes_complete_athlete_setup(client: TestClient):
     response = client.get("/ui/profile.html")
     assert response.status_code == 200
