@@ -136,6 +136,7 @@ def test_week_page_loads_with_cookie_auth_and_exports_structured_ingredients(cli
     assert "raw.qty ?? raw.quantity ?? raw.amount" in script.text
     assert "Promise.allSettled" in script.text
     assert "not planned yet" in script.text
+    assert "plan-week.js?v=2026-09-07-missing-days" in page.text
 
 
 def test_profile_uses_official_strava_connect_asset(client: TestClient):
@@ -153,7 +154,9 @@ def test_profile_uses_official_strava_connect_asset(client: TestClient):
 
 
 def test_account_deletion_dialog_supports_escape_key():
+    page = Path("ui/profile.html").read_text(encoding="utf-8")
     script = Path("ui/profile.js").read_text(encoding="utf-8")
+    assert "profile.js?v=2026-09-07-dialog-accessibility" in page
     assert 'dialog?.addEventListener("cancel"' in script
     assert "event.preventDefault()" in script
     assert "dialog.close()" in script
