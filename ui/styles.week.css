@@ -40,6 +40,14 @@ body {
 .nav-links a.active { background:#1b283a; color:#fff; border:1px solid #2d3d56; }
 .nav-cta { display:flex; align-items:center; gap:10px; }
 
+/* Form controls */
+.controls { margin: 22px 0; padding: 18px 20px; border: 1px solid #1c2a3d; border-radius: 16px; background: #101823; }
+.controls .row { gap: 14px; flex-wrap: wrap; }
+.field { display: grid; gap: 6px; min-width: 190px; }
+.field label { color: #a6b6cc; font-size: 12px; font-weight: 700; }
+.field input, .field select { min-height: 44px; border: 1px solid #2d3d56; border-radius: 10px; background: #0c1220; color: #e8eef5; padding: 0 11px; font: inherit; color-scheme: dark; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+
 /* Cards */
 .card {
   background: #101823;
@@ -134,7 +142,7 @@ a:focus, .btn:focus { outline: 2px solid #5bb0ff; outline-offset: 2px; }
   .container { width: 100%; padding-left: 16px; padding-right: 16px; }
   .controls, .card { padding: 16px; }
   .row { align-items: stretch; flex-direction: column; }
-  .row .field, .row input, .row select { width: 100%; }
+  .row .field, .row input, .row select { width: 100%; min-width: 0; }
   .actions .btn, .btn-group .btn { flex: 1 1 140px; }
   .macros { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .meal-body .line { gap: 12px; }

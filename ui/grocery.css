@@ -37,7 +37,7 @@ body{margin:0;background:#0f1318;color:#e7ecf3;font:15px/1.45 Inter,system-ui,sa
 .approval-card.is-stale{border-color:#76602d;background:rgba(157,119,35,.1)}
 .approval-card.is-stale .approval-icon{border-color:#937532;color:#ffd37d;background:rgba(157,119,35,.14)}
 .grocery-progress{display:flex;justify-content:space-between;align-items:center;margin:22px 2px 12px}
-.link-button{border:0;background:transparent;color:#86b5ff;cursor:pointer}
+.link-button{min-height:40px;border:0;background:transparent;color:#86b5ff;cursor:pointer}
 .category{border:1px solid #263140;border-radius:16px;background:#121921;margin:14px 0;overflow:hidden}
 .category h2{font-size:16px;margin:0;padding:15px 18px;border-bottom:1px solid #263140}
 .category--pantry summary{cursor:pointer;list-style:none;font-size:16px;font-weight:800;padding:15px 18px;color:#b9c7da}
