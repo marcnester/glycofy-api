@@ -33,11 +33,11 @@
     <section class="controls">
       <div class="row">
         <div class="field">
-          <label>Week starting (UTC)</label>
+          <label for="week_start">Week starting</label>
           <input id="week_start" type="date" />
         </div>
         <div class="field">
-          <label>Diet preference</label>
+          <label for="diet_pref">Diet preference</label>
           <select id="diet_pref">
             <option value="omnivore">Omnivore</option>
             <option value="pescatarian">Pescatarian</option>
@@ -48,7 +48,7 @@
       </div>
       <div class="actions">
         <button id="load_btn" class="btn">Load week</button>
-        <button id="regen_btn" class="btn ghost" title="Regenerate all days in week">Regenerate week</button>
+        <button id="regen_btn" class="btn ghost" title="Reload the selected week">Refresh week</button>
         <button id="export_txt" class="btn ghost" title="Download combined grocery list (.txt)">Export grocery (.txt)</button>
         <button id="export_csv" class="btn ghost" title="Download combined grocery list (.csv)">Export grocery (.csv)</button>
       </div>

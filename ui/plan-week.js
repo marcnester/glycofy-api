@@ -5,7 +5,7 @@
     console.error('[week] /ui/app.js must load before /ui/plan-week.js');
     return;
   }
-  const { $, fmt, fetchJSON, ensureAuth } = glyco;
+  const { $, fmt, fetchJSON } = glyco;
 
   // ---------- Small helpers ----------
   function ok(msg){ const el=$('alert_ok'); if(el){ el.textContent=msg; el.style.display='block'; } }
@@ -138,7 +138,16 @@
       for (const m of (p?.meals || [])){
         if (Array.isArray(m.ingredients)){
           for (const raw of m.ingredients){
-            const key = (raw || '').trim();
+            let key = '';
+            if (typeof raw === 'string') {
+              key = raw.trim();
+            } else if (raw && typeof raw === 'object') {
+              const name = String(raw.name || raw.ingredient || raw.item || '').trim();
+              const amount = raw.qty ?? raw.quantity ?? raw.amount ?? '';
+              const unit = String(raw.unit || raw.units || '').trim();
+              const measurement = `${amount} ${unit}`.trim();
+              key = `${name}${measurement ? ` — ${measurement}` : ''}`;
+            }
             if (!key) continue;
             counts.set(key, (counts.get(key) || 0) + 1);
           }
@@ -176,8 +185,6 @@
 
   // ---------- Init ----------
   document.addEventListener('DOMContentLoaded', () => {
-    if (!ensureAuth || !ensureAuth()) return;
-
     setDefaults();
 
     // Default diet from user if empty

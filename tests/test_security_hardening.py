@@ -125,6 +125,17 @@ def test_grocery_page_exposes_package_and_pantry_preferences(client: TestClient)
     assert "packages_to_buy" in script.text
 
 
+def test_week_page_loads_with_cookie_auth_and_exports_structured_ingredients(client: TestClient):
+    page = client.get("/ui/plan-week.html")
+    script = client.get("/ui/plan-week.js")
+
+    assert page.status_code == 200
+    assert script.status_code == 200
+    assert 'for="week_start"' in page.text
+    assert "if (!ensureAuth || !ensureAuth()) return" not in script.text
+    assert "raw.qty ?? raw.quantity ?? raw.amount" in script.text
+
+
 def test_profile_uses_official_strava_connect_asset(client: TestClient):
     response = client.get("/ui/profile.html")
     assert response.status_code == 200
