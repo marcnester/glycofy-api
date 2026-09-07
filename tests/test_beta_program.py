@@ -133,3 +133,22 @@ def test_feedback_control_is_present_on_every_authenticated_primary_page():
     script = Path("ui/beta.js").read_text(encoding="utf-8")
     assert "We never attach meals, health information, or activity details" in script
     assert "beta-feedback-button" in script
+
+
+def test_beta_shell_includes_tour_offline_state_and_accessibility_escape_hatch():
+    script = Path("ui/beta.js").read_text(encoding="utf-8")
+    styles = Path("ui/styles.css").read_text(encoding="utf-8")
+    assert "glycofy.welcomeTour.v1" in script
+    assert "TrainingPeaks CSV" in script
+    assert "You’re offline" in script
+    assert 'skip.href = "#" + main.id' in script
+    assert "welcome-tour::backdrop" in styles
+    assert "a:focus-visible" in styles
+
+
+def test_primary_pages_have_mobile_viewports_and_landmark_navigation():
+    for name in ("index.html", "plan.html", "profile.html", "activities.html", "plan-week.html", "grocery.html"):
+        page = Path(f"ui/{name}").read_text(encoding="utf-8")
+        assert 'name="viewport"' in page
+        assert "<main" in page
+        assert 'aria-label="Primary"' in page

@@ -41,6 +41,9 @@ body.ui-root {
 
 a { color: var(--primary); text-decoration: none; }
 a:hover { color: var(--primary-strong); }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, [contenteditable="true"]:focus-visible { outline: 3px solid var(--primary-strong); outline-offset: 3px; }
+.skip-link{position:fixed;left:12px;top:8px;z-index:10000;transform:translateY(-150%);border-radius:10px;background:var(--primary);color:#071b14;padding:10px 14px;font-weight:800}.skip-link:focus{transform:translateY(0)}
+.connection-banner{position:fixed;left:50%;top:12px;z-index:9000;width:min(560px,calc(100vw - 24px));transform:translateX(-50%);border:1px solid rgba(245,185,66,.5);border-radius:12px;background:#332715;color:#ffe3a6;padding:11px 14px;text-align:center;font-weight:750;box-shadow:var(--shadow)}.connection-banner[hidden]{display:none}
 
 /* ---------- Global layout primitives ---------- */
 .container { max-width: 1200px; width: 100%; margin: 0 auto; padding: 0 24px; }
@@ -196,6 +199,12 @@ a:hover { color: var(--primary-strong); }
 .beta-feedback-button:hover{background:#1a3026;color:#c1f0d6}.beta-feedback-dialog{width:min(560px,calc(100vw - 28px));padding:0;border:1px solid var(--border);border-radius:20px;background:var(--panel);color:var(--text);box-shadow:0 28px 80px rgba(0,0,0,.65)}
 .beta-feedback-dialog::backdrop{background:rgba(3,7,12,.72);backdrop-filter:blur(4px)}.beta-feedback-form{display:grid;gap:16px;padding:24px}.beta-feedback-head{display:flex;justify-content:space-between;gap:16px}.beta-feedback-head h2{margin:4px 0 0}.beta-feedback-kicker{color:var(--primary);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}.beta-feedback-close{border:0;background:transparent;color:var(--muted);font-size:28px;cursor:pointer}.beta-feedback-form label{display:grid;gap:7px;font-weight:700}.beta-feedback-form select,.beta-feedback-form textarea{width:100%;border:1px solid var(--chip-border);border-radius:12px;background:#0b1016;color:var(--text);padding:11px;font:inherit}.beta-feedback-form textarea{min-height:120px;resize:vertical}.beta-feedback-privacy,.beta-feedback-state{margin:0;color:var(--muted);font-size:13px;line-height:1.45}.beta-feedback-submit{justify-self:end;background:var(--primary);color:#071b14}
 @media(max-width:600px){.beta-feedback-button{right:12px;bottom:12px}.beta-feedback-form{padding:20px}}
+
+.welcome-tour{width:min(580px,calc(100vw - 28px));padding:0;border:1px solid rgba(80,200,138,.26);border-radius:24px;background:linear-gradient(150deg,#16221e,#111820 68%);color:var(--text);box-shadow:0 32px 100px rgba(0,0,0,.72)}
+.welcome-tour::backdrop{background:rgba(3,7,12,.78);backdrop-filter:blur(7px)}
+.welcome-tour__body{padding:30px}.welcome-tour__progress{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:7px;margin-bottom:30px}.welcome-tour__progress span{height:4px;border-radius:999px;background:rgba(255,255,255,.12)}.welcome-tour__progress span.active{background:var(--primary)}
+.welcome-tour__eyebrow{margin:0 0 8px;color:var(--primary);font-size:12px;font-weight:850;letter-spacing:.1em;text-transform:uppercase}.welcome-tour h2{margin:0;font-size:clamp(26px,5vw,36px);line-height:1.08}.welcome-tour__copy{min-height:76px;margin:16px 0 28px;color:#b7c5d7;font-size:16px;line-height:1.6}.welcome-tour__actions{display:flex;align-items:center;gap:9px}.welcome-tour__spacer{flex:1}.welcome-tour__skip{border-color:transparent;background:transparent;color:var(--muted)}.welcome-tour__next{background:var(--primary);color:#071b14}
+@media(max-width:600px){.welcome-tour__body{padding:24px 20px}.welcome-tour__copy{min-height:110px}.welcome-tour__actions{flex-wrap:wrap}.welcome-tour__skip{order:3;width:100%}.welcome-tour__spacer{display:none}.welcome-tour__back,.welcome-tour__next{flex:1;min-height:44px}}
 
 /* ---------- Phone layout ----------
    Keep the brand and account action on row one, then give every destination an
