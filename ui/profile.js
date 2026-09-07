@@ -102,6 +102,12 @@
       event.preventDefault();
       dialog.close();
     });
+    dialog?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dialog.close();
+      }
+    });
     input?.addEventListener("input", () => { if (confirm) confirm.disabled = input.value !== "DELETE"; });
     confirm?.addEventListener("click", async () => {
       confirm.disabled = true; confirm.textContent = "Deleting…";

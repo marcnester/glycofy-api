@@ -75,11 +75,13 @@
     card.appendChild(head);
 
     // Macro pills (computed)
-    const pillsWrap = document.createElement('div');
-    pillsWrap.className = 'targets';
-    ['TDEE 0 kcal', `P ${Math.round(totals.p)}g`, `C ${Math.round(totals.c)}g`, `F ${Math.round(totals.f)}g`]
-      .forEach(text => { const pill = document.createElement('span'); pill.className = 'pill'; pill.textContent = text; pillsWrap.appendChild(pill); });
-    card.appendChild(pillsWrap);
+    if (!plan?.missing) {
+      const pillsWrap = document.createElement('div');
+      pillsWrap.className = 'targets';
+      [`Total ${Math.round(totals.kcal)} kcal`, `P ${Math.round(totals.p)}g`, `C ${Math.round(totals.c)}g`, `F ${Math.round(totals.f)}g`]
+        .forEach(text => { const pill = document.createElement('span'); pill.className = 'pill'; pill.textContent = text; pillsWrap.appendChild(pill); });
+      card.appendChild(pillsWrap);
+    }
 
     // Meals
     const list = document.createElement('div'); list.className = 'meals';
