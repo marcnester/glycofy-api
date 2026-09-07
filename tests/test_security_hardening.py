@@ -413,6 +413,28 @@ def test_google_start_uses_login_scopes_without_offline_access(client: TestClien
     assert client.cookies.get(oauth_google.RETURN_COOKIE_NAME).strip('"') == "/ui/profile.html"
 
 
+def test_llm_rate_limit_is_atomic_across_user_and_ip(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routers.llm_recommend import _Rate
+
+    limiter = _Rate()
+    monkeypatch.setenv("LLM_RATE_MAX_PER_USER", "2")
+    monkeypatch.setenv("LLM_RATE_MAX_PER_IP", "1")
+    limiter.check_and_add(1, "one")
+    try:
+        limiter.check_and_add(1, "one")
+    except HTTPException as exc:
+        assert exc.status_code == 429
+        assert "ip" in exc.detail
+    else:
+        raise AssertionError("IP limit should reject the second request")
+    assert len(limiter.users[1]) == 1
+    limiter.clear()
+    assert limiter.users == {}
+    assert limiter.ips == {}
+
+
 def test_google_callback_rejects_unverified_email(client: TestClient, monkeypatch):
     monkeypatch.setattr(oauth_google, "GOOGLE_CLIENT_ID", "client-id")
     monkeypatch.setattr(oauth_google, "GOOGLE_CLIENT_SECRET", "client-secret")

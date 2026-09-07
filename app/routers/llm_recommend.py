@@ -2374,6 +2374,7 @@ class _Rate:
     def __init__(self) -> None:
         self.users: dict[int, list[float]] = {}
         self.ips: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
 
     def _limits(self) -> tuple[int, int, int]:
         try:
@@ -2391,17 +2392,23 @@ class _Rate:
 
     def check_and_add(self, user_id: int, ip: str) -> None:
         u_max, i_max, window = self._limits()
-        u_arr = self.users.setdefault(user_id, [])
-        self._trim(u_arr, window)
-        if len(u_arr) >= u_max:
-            raise HTTPException(status_code=429, detail="Rate limit exceeded (user)")
-        u_arr.append(time.time())
+        with self._lock:
+            u_arr = self.users.setdefault(user_id, [])
+            ip_arr = self.ips.setdefault(ip, [])
+            self._trim(u_arr, window)
+            self._trim(ip_arr, window)
+            if len(u_arr) >= u_max:
+                raise HTTPException(status_code=429, detail="Rate limit exceeded (user)")
+            if len(ip_arr) >= i_max:
+                raise HTTPException(status_code=429, detail="Rate limit exceeded (ip)")
+            now = time.time()
+            u_arr.append(now)
+            ip_arr.append(now)
 
-        ip_arr = self.ips.setdefault(ip, [])
-        self._trim(ip_arr, window)
-        if len(ip_arr) >= i_max:
-            raise HTTPException(status_code=429, detail="Rate limit exceeded (ip)")
-        ip_arr.append(time.time())
+    def clear(self) -> None:
+        with self._lock:
+            self.users.clear()
+            self.ips.clear()
 
 
 _RATE = _Rate()
