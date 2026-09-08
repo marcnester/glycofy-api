@@ -122,5 +122,8 @@ def test_login_page_exposes_recovery_controls(client_and_engine):
     assert "Forgot password?" in page
     assert "/auth/forgot-password" in script
     assert "/auth/reset-password" in script
+    assert 'requestedMode === "reset"' in script
+    assert "ok && !isPasswordReset" in script
+    assert "login.js?v=2026-09-08-reset-while-signed-in" in page
     assert 'id="delete_account"' in profile
     assert 'href="/users/me/export"' in profile

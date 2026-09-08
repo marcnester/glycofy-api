@@ -151,10 +151,13 @@
   // --- init ---
   document.addEventListener("DOMContentLoaded", async () => {
     const note = $("endpointNote"); if (note) note.textContent = location.origin;
+    const params = new URL(location.href).searchParams;
+    const requestedMode = params.get("mode");
+    const isPasswordReset = requestedMode === "reset" && Boolean(params.get("token"));
 
     try {
       const ok = await ensureAuth({ force: true });
-      if (ok) {
+      if (ok && !isPasswordReset) {
         flash("Already signed in. Redirecting…");
         setTimeout(() => redirectToReturn("/ui/index.html"), 250);
         return;
@@ -163,8 +166,6 @@
 
     await wireGoogle();
 
-    const params = new URL(location.href).searchParams;
-    const requestedMode = params.get("mode");
     setMode(["signup", "reset"].includes(requestedMode) ? requestedMode : "signin");
     if (params.get("verification") === "success") flash("Email verified. You can sign in now.");
     if (params.get("verification") === "invalid") flash("That verification link is invalid or expired. Sign in to request another.", "error");
