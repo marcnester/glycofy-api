@@ -166,6 +166,15 @@ def test_account_deletion_dialog_supports_escape_key():
     assert "dialog.close()" in script
 
 
+def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
+    page = Path("ui/plan.html").read_text(encoding="utf-8")
+    script = Path("ui/plan.js").read_text(encoding="utf-8")
+    assert "plan.js?v=2026-09-08-accurate-progress" in page
+    assert "Creating today's plan" in script
+    assert "Keep this page open while AI finishes." in script
+    assert "You can safely leave this page; planning will continue." in script
+
+
 def test_profile_exposes_complete_athlete_setup(client: TestClient):
     response = client.get("/ui/profile.html")
     assert response.status_code == 200

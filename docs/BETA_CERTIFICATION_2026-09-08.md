@@ -9,7 +9,7 @@
 ## Passed gates
 
 - Clean Git working tree at the production commit.
-- 121 Python tests passed.
+- 122 Python tests passed after the first certification correction.
 - Ruff passed.
 - GitHub Security and tests workflow passed.
 - GitHub CodeQL workflow passed.
@@ -20,6 +20,14 @@
 - An untrusted `Origin` received no `Access-Control-Allow-Origin` permission.
 - Unauthenticated requests to account, export, operations, analytics, and training endpoints were rejected.
 - Cloudflare reported the login response as dynamic rather than publicly cached.
+- Disposable email/password signup succeeded and sent a verification message.
+- New-athlete onboarding correctly began at 17% and reached 100% after required athlete fields were saved.
+- Empty training showed the standard-target warning; adding a 75-minute hard HYROX key session changed the status to partial context with one upcoming workout.
+- Today AI completed with personalized meals, ingredient quantities, and cooking guidance.
+
+## Certification corrections
+
+- Today AI incorrectly reused the durable weekly-job heading and told users they could leave the page. The candidate now labels this state “Creating today's plan” and asks users to keep the page open; weekly planning retains the safe-to-leave message.
 
 ## Pending gates
 

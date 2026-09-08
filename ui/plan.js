@@ -85,11 +85,13 @@
 
   // Busy overlay
   const busyEl = $('plan-busy');
+  const busyTitle = busyEl?.querySelector('.plan-busy__title');
   const busyMsg = $('plan-busy-msg');
   const busyMeta = $('plan-busy-meta');
   const busyCancel = $('plan-busy-cancel');
   let busyStartedAt = 0;
   let busyTimer = null;
+  let busyCanContinueInBackground = true;
   let activeWeeklyJobId = null;
 
   const WEEKLY_PROGRESS_STAGES = [
@@ -110,14 +112,18 @@
     );
     if (busyMsg) busyMsg.textContent = serverMessage || localStage[1];
     if (busyMeta) {
-      busyMeta.textContent = `${elapsed}s elapsed · You can safely leave this page; planning will continue.`;
+      busyMeta.textContent = busyCanContinueInBackground
+        ? `${elapsed}s elapsed · You can safely leave this page; planning will continue.`
+        : `${elapsed}s elapsed · Keep this page open while AI finishes.`;
     }
   }
 
-  function setBusy(on, msg) {
+  function setBusy(on, msg, options = {}) {
     if (!busyEl) return;
     busyEl.style.display = on ? 'flex' : 'none';
     if (on) {
+      busyCanContinueInBackground = options.background !== false;
+      if (busyTitle) busyTitle.textContent = options.title || 'Building your week';
       busyStartedAt = Date.now();
       updateBusyProgress(msg);
       clearInterval(busyTimer);
@@ -1267,7 +1273,10 @@
     btn.addEventListener('click', async () => {
       const d = getCurrentDate();
       setDate(d);
-      setBusy(true, 'Asking AI for today…');
+      setBusy(true, 'Asking AI for today…', {
+        title: "Creating today's plan",
+        background: false,
+      });
       try {
         await runAIForDate(d, true);
         flash('AI suggestions applied for today.');
