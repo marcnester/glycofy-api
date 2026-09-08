@@ -60,6 +60,7 @@ def test_dev_recipe_routes_are_not_mounted(client: TestClient):
 def test_login_page_does_not_expose_demo_credentials(client: TestClient):
     response = client.get("/ui/login.html")
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
     assert "demo credentials" not in response.text.lower()
     assert "demo@glycofy.app" not in response.text.lower()
 

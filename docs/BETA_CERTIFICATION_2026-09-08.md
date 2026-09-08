@@ -29,6 +29,7 @@
 
 - Today AI incorrectly reused the durable weekly-job heading and told users they could leave the page. The candidate now labels this state “Creating today's plan” and asks users to keep the page open; weekly planning retains the safe-to-leave message.
 - Password-reset links redirected an already signed-in recipient to Home before showing the reset form. Reset mode now takes precedence over an existing session when a token is present.
+- UI HTML relied on heuristic browser caching, which could briefly preserve an older account-flow script after deployment. HTML documents now explicitly use `Cache-Control: no-store`; versioned static assets remain cacheable.
 
 ## Pending gates
 

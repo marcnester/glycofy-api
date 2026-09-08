@@ -185,7 +185,10 @@ async def security_controls(request: Request, call_next):
         "form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
         "script-src 'self'; connect-src 'self'",
     )
-    if request.url.path.startswith(("/auth", "/oauth")):
+    is_ui_document = request.url.path.startswith("/ui/") and (
+        request.url.path.endswith(".html") or request.url.path.endswith("/")
+    )
+    if request.url.path.startswith(("/auth", "/oauth")) or is_ui_document:
         response.headers.setdefault("Cache-Control", "no-store")
     if settings.is_production:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
