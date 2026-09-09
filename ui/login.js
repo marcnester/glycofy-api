@@ -99,6 +99,7 @@
           msg = (j && (j.detail || j.message)) || msg;
         } else msg = (await res.text()) || msg;
       } catch {}
+      if (msg === "invalid_credentials") msg = "Email or password is incorrect.";
       throw new Error(msg);
     }
     return true;
