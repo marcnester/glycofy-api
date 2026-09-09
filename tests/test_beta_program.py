@@ -138,12 +138,16 @@ def test_feedback_control_is_present_on_every_authenticated_primary_page():
 def test_beta_shell_includes_tour_offline_state_and_accessibility_escape_hatch():
     script = Path("ui/beta.js").read_text(encoding="utf-8")
     styles = Path("ui/styles.css").read_text(encoding="utf-8")
+    theme = Path("ui/theme.css").read_text(encoding="utf-8")
     assert "glycofy.welcomeTour.v1" in script
     assert "TrainingPeaks CSV" in script
     assert "You’re offline" in script
     assert 'skip.href = "#" + main.id' in script
     assert "welcome-tour::backdrop" in styles
     assert "a:focus-visible" in styles
+    assert "prefers-reduced-motion: reduce" in theme
+    assert "animation-duration: .01ms !important" in theme
+    assert "transition-duration: .01ms !important" in theme
 
 
 def test_primary_pages_have_mobile_viewports_and_landmark_navigation():

@@ -36,6 +36,7 @@
 - UI HTML relied on heuristic browser caching, which could briefly preserve an older account-flow script after deployment. HTML documents now explicitly use `Cache-Control: no-store`; versioned static assets remain cacheable.
 - A rejected password displayed the internal code `invalid_credentials`. The sign-in form now presents “Email or password is incorrect.” while preserving the server's non-enumerating response.
 - Successful deletion redirected to the sign-in page without acknowledging completion. The redirect now displays an explicit confirmation that the account and Glycofy data were permanently deleted.
+- Reduced-motion mode previously stopped only the fixed background effect. It now suppresses interface animations and transitions globally, including planning progress motion and modal transitions.
 
 ## Pending gates
 
