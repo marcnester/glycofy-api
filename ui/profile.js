@@ -306,6 +306,8 @@
   const dietRadios = $$('input[name="diet"]');
   const allergenChecks = $$('input[name="allergen"]');
   const exclInput = $("#exclusions_input");
+  const snackCountInput = $("#daily_snack_count");
+  const snackTimeInputs = $$(".snack-time");
   let saveTimer = null;
 
   function setPrefStatus(msg, kind) {
@@ -323,6 +325,14 @@
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
+  }
+
+  function updateSnackTimeVisibility() {
+    const count = Number(snackCountInput?.value || 0);
+    snackTimeInputs.forEach((input, index) => {
+      input.hidden = index >= count;
+      input.disabled = index >= count;
+    });
   }
 
   async function loadPreferences() {
@@ -352,11 +362,22 @@
         exclInput.value = exclusionsList.join(", ");
       }
       allergenChecks.forEach((input) => { input.checked = allergens.has(input.value); });
+      if (snackCountInput) snackCountInput.value = String(prefs?.daily_snack_count ?? 1);
+      const snackTimes = Array.isArray(prefs?.snack_times) ? prefs.snack_times : ["15:00"];
+      snackTimeInputs.forEach((input, index) => {
+        input.value = snackTimes[index] || ["10:00", "15:00", "19:30"][index];
+      });
+      updateSnackTimeVisibility();
 
       // Wire change listeners once
       dietRadios.forEach((r) => r.addEventListener("change", requestSave));
       allergenChecks.forEach((input) => input.addEventListener("change", requestSave));
       exclInput?.addEventListener("input", requestSave);
+      snackCountInput?.addEventListener("change", () => {
+        updateSnackTimeVisibility();
+        requestSave();
+      });
+      snackTimeInputs.forEach((input) => input.addEventListener("change", requestSave));
 
       setPrefStatus("Auto-saves");
     } catch (e) {
@@ -373,6 +394,8 @@
       diet: dietVal,
       ingredient_exclusions: exclusionsStr,
       allergens: allergenChecks.filter((input) => input.checked).map((input) => input.value),
+      daily_snack_count: Number(snackCountInput?.value || 0),
+      snack_times: snackTimeInputs.filter((input) => !input.disabled).map((input) => input.value),
     };
   }
 

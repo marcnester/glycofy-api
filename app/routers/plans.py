@@ -44,7 +44,7 @@ def _parse_iso_date(value: str) -> date_cls:
 
 def _safe_meal_type(value: str | None) -> str:
     mt = (value or "").strip().lower()
-    if mt in {"breakfast", "lunch", "dinner", "snack"}:
+    if mt in {"breakfast", "lunch", "dinner", "snack", "snack_2", "snack_3"}:
         return mt
     return "snack"
 
@@ -76,10 +76,12 @@ def _parse_ingredient_quantity(raw_qty: Any, raw_unit: Any = None) -> tuple[floa
 
 def _default_meal_order(meal_type: str) -> int:
     return {
-        "breakfast": 1,
+        "breakfast": 0,
+        "snack": 1,
         "lunch": 2,
-        "dinner": 3,
-        "snack": 4,
+        "snack_2": 3,
+        "dinner": 4,
+        "snack_3": 5,
     }.get(_safe_meal_type(meal_type), 99)
 
 
@@ -1083,6 +1085,8 @@ def apply_recommendations(
                 )
 
             _apply_recipe_to_meal(meal, recipe)
+            meal.meal_type = slot
+            meal.order_index = _default_meal_order(slot)
 
             # WHY BUTTON FIX: persist the LLM explanation on the meal so
             # /v1/plan/{date} can return it and the UI Why? button can display it.

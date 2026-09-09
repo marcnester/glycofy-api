@@ -68,7 +68,8 @@ __all__ = ["router"]
 
 # Canonical slots for a day – we expect these to be present in weekly templates.
 SLOTS: tuple[str, ...] = ("breakfast", "lunch", "dinner", "snack")
-SLOT_ORDER: dict[str, int] = {"breakfast": 0, "lunch": 1, "dinner": 2, "snack": 3}
+ALL_SLOTS: tuple[str, ...] = (*SLOTS, "snack_2", "snack_3")
+SLOT_ORDER: dict[str, int] = {"breakfast": 0, "snack": 1, "lunch": 2, "snack_2": 3, "dinner": 4, "snack_3": 5}
 
 # Enforce day-level (within-day) variety across these slots (snack is exempt by default).
 _DAY_UNIQUE_SLOTS: set[str] = {"breakfast", "lunch", "dinner"}
@@ -79,7 +80,7 @@ _DAY_UNIQUE_SLOTS: set[str] = {"breakfast", "lunch", "dinner"}
 
 
 class MealTarget(BaseModel):
-    slot: str = Field(..., pattern=r"^(breakfast|lunch|dinner|snack)$")
+    slot: str = Field(..., pattern=r"^(breakfast|lunch|dinner|snack|snack_2|snack_3)$")
     kcal: float = Field(..., ge=0)
     protein_g: float = Field(..., ge=0)
     carbs_g: float = Field(..., ge=0)
@@ -191,7 +192,43 @@ class WeeklyJobStatusResponse(BaseModel):
 # ===========================
 
 _MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
-_MEAL_TARGET_SPLITS = {"breakfast": 0.25, "lunch": 0.30, "dinner": 0.30, "snack": 0.15}
+_MAIN_TARGET_SPLITS = {"breakfast": 0.25, "lunch": 0.30, "dinner": 0.30}
+
+
+def _snack_schedule(pref: UserPreference | None) -> list[tuple[str, str]]:
+    raw_count = getattr(pref, "daily_snack_count", None)
+    count = max(0, min(3, int(1 if raw_count is None else raw_count)))
+    defaults = ["10:00", "15:00", "19:30"]
+    raw_times = getattr(pref, "snack_times", None)
+    times = raw_times if isinstance(raw_times, list) else []
+    return [
+        (
+            ("snack" if index == 0 else f"snack_{index + 1}"),
+            str(times[index] if index < len(times) else defaults[index]),
+        )
+        for index in range(count)
+    ]
+
+
+def _targets_for_preferences(day: WeeklyDayRequest, pref: UserPreference | None) -> list[MealTarget]:
+    """Redistribute the same daily totals across the user's chosen eating schedule."""
+    totals = day.totals or {}
+    daily = {
+        name: _safe_float(totals.get(name), sum(_safe_float(getattr(meal, name, 0.0)) for meal in day.meals))
+        for name in _MACROS
+    }
+    if not all(value > 0 for value in daily.values()):
+        return day.meals
+    snacks = _snack_schedule(pref)
+    snack_share = 0.15 if snacks else 0.0
+    main_scale = (1.0 - snack_share) / sum(_MAIN_TARGET_SPLITS.values())
+    splits = {slot: share * main_scale for slot, share in _MAIN_TARGET_SPLITS.items()}
+    for slot, _ in snacks:
+        splits[slot] = snack_share / len(snacks)
+    return [
+        MealTarget(slot=slot, **{name: round(daily[name] * fraction, 1) for name in _MACROS})
+        for slot, fraction in splits.items()
+    ]
 
 
 def _balanced_weekly_targets(day: WeeklyDayRequest) -> list[MealTarget]:
@@ -209,7 +246,7 @@ def _balanced_weekly_targets(day: WeeklyDayRequest) -> list[MealTarget]:
             slot=slot,
             **{name: round(daily[name] * fraction, 1) for name in _MACROS},
         )
-        for slot, fraction in _MEAL_TARGET_SPLITS.items()
+        for slot, fraction in {**_MAIN_TARGET_SPLITS, "snack": 0.15}.items()
         if slot in existing
     ]
 
@@ -2598,7 +2635,7 @@ def _recommend_for_single_meal(
 
     candidates = _top_k_candidates(
         db=db,
-        slot=tgt.slot,
+        slot="snack" if slot_norm.startswith("snack") else tgt.slot,
         tgt=tgt,
         diet_tags=diet_tags,
         primary_diet=primary_diet,
@@ -2630,7 +2667,7 @@ def _recommend_for_single_meal(
         weekly_cap_relaxed = True
         candidates = _top_k_candidates(
             db=db,
-            slot=tgt.slot,
+            slot="snack" if slot_norm.startswith("snack") else tgt.slot,
             tgt=tgt,
             diet_tags=diet_tags,
             primary_diet=primary_diet,
@@ -2927,13 +2964,17 @@ def _get_or_create_plan(db: Session, user_id: int, day: date) -> Plan:
     return plan
 
 
-def _ensure_plan_meals(db: Session, plan: Plan) -> dict[str, PlanMeal]:
+def _ensure_plan_meals(db: Session, plan: Plan, requested_slots: list[str]) -> dict[str, PlanMeal]:
     existing = db.query(PlanMeal).filter(PlanMeal.plan_id == plan.id).all()
     by_slot: dict[str, PlanMeal] = {}
     for pm in existing:
-        by_slot[_normalize_slot(getattr(pm, "meal_type", ""))] = pm
+        slot = _normalize_slot(getattr(pm, "meal_type", ""))
+        if slot.startswith("snack") and slot not in requested_slots:
+            db.delete(pm)
+            continue
+        by_slot[slot] = pm
 
-    for slot in SLOTS:
+    for slot in requested_slots:
         if slot in by_slot:
             continue
         pm = PlanMeal(
@@ -3046,7 +3087,7 @@ def _create_recipe_from_ai_idea(
 
     r = Recipe(
         title=title,
-        meal_type=slot,
+        meal_type="snack" if slot.startswith("snack") else slot,
         kcal=_safe_float(approx.get("kcal", 0.0), 0.0),
         protein_g=_safe_float(approx.get("protein_g", 0.0), 0.0),
         carbs_g=_safe_float(approx.get("carbs_g", 0.0), 0.0),
@@ -3081,7 +3122,9 @@ def _persist_day_recommendations(
         logger.info("LLM weekly persist: date=%s plan is locked; skipping persist", day_iso)
         return {"date": day_iso, "skipped": True, "reason": "locked", "applied": 0, "created_recipes": 0}
 
-    by_slot = _ensure_plan_meals(db, plan)
+    requested_slots = [_normalize_slot(item.slot) for item in day_items]
+    by_slot = _ensure_plan_meals(db, plan, requested_slots)
+    snack_times = dict(_snack_schedule(db.query(UserPreference).filter(UserPreference.user_id == user.id).first()))
 
     applied = 0
     created = 0
@@ -3093,6 +3136,13 @@ def _persist_day_recommendations(
             continue
 
         pm = by_slot[slot]
+        pm.meal_type = slot
+        pm.order_index = SLOT_ORDER.get(slot, 99)
+        if slot in snack_times:
+            pm.meta = {
+                **(pm.meta or {}),
+                "preferred_time": snack_times[slot],
+            }
         pm.meta = {**(pm.meta or {}), "reason": it.reason} if it.reason else (pm.meta or {})
         generation_meta = it.meta or {}
         tracked_meta = {
@@ -3200,13 +3250,17 @@ def recommend_recipes(
     week_used_recipe_ids = _get_week_used_recipe_ids(db, user, target_date)
     week_used_meal_keys = _get_week_used_meal_keys(db, user, target_date)
     week_protein_counts = _get_week_protein_counts(db, user, target_date)
+    scheduled_meals = _targets_for_preferences(
+        WeeklyDayRequest(date=payload.date or target_date.isoformat(), totals=payload.totals, meals=payload.meals),
+        pref,
+    )
     nutrition = calculate_training_nutrition(
         db=db,
         user=user,
         plan_date=target_date,
-        baseline=_baseline_from_meals(payload.meals),
+        baseline=_baseline_from_meals(scheduled_meals),
     )
-    adjusted_meals = _apply_nutrition_targets(payload.meals, nutrition)
+    adjusted_meals = _apply_nutrition_targets(scheduled_meals, nutrition)
     athlete_feedback = feedback_context(db, user.id)
 
     # Weekly variety is mutable state. Include it in the cache key so an older
@@ -3214,7 +3268,7 @@ def recommend_recipes(
     key = _cache_key(
         user.id,
         payload,
-        pref_tags,
+        [*pref_tags, f"snack_schedule:{_snack_schedule(pref)}"],
         week_used_meal_keys,
         nutrition.cache_fingerprint(),
         athlete_feedback,
@@ -3281,7 +3335,7 @@ def recommend_recipes(
 # ---------- Weekly, training-aware API (persists) ----------
 
 
-def _weekly_batch_schema() -> dict[str, Any]:
+def _weekly_batch_schema(meals_per_day: int) -> dict[str, Any]:
     ingredient = {
         "type": "object",
         "additionalProperties": False,
@@ -3316,7 +3370,7 @@ def _weekly_batch_schema() -> dict[str, Any]:
             "reason",
         ],
         "properties": {
-            "slot": {"type": "string", "enum": list(SLOTS)},
+            "slot": {"type": "string", "enum": list(ALL_SLOTS)},
             "title": {"type": "string"},
             "ingredients": {"type": "array", "minItems": 4, "maxItems": 8, "items": ingredient},
             "instructions": {"type": "array", "minItems": 2, "maxItems": 6, "items": {"type": "string"}},
@@ -3351,7 +3405,12 @@ def _weekly_batch_schema() -> dict[str, Any]:
                         "required": ["date", "meals"],
                         "properties": {
                             "date": {"type": "string"},
-                            "meals": {"type": "array", "minItems": 4, "maxItems": 4, "items": meal},
+                            "meals": {
+                                "type": "array",
+                                "minItems": meals_per_day,
+                                "maxItems": meals_per_day,
+                                "items": meal,
+                            },
                         },
                     },
                 }
@@ -3376,13 +3435,15 @@ def _batch_week_recommendations(
     system = (
         f"PROMPT_VERSION={PROMPT_VERSION}. QUALITY_POLICY_VERSION={QUALITY_POLICY_VERSION}. "
         "You are Glycofy's elite sports-nutrition planner. Design the COMPLETE week as one coherent plan. "
-        "Return exactly one breakfast, lunch, dinner, and snack for every requested date. "
+        "Return exactly the meal slots supplied for every requested date, including every scheduled snack. "
         "Respect diet tags and ingredient exclusions as hard safety constraints. Keep every recipe practical, "
         "single-serving, and cookable in about 30 minutes with measured ingredients. Keep calories, protein, "
         "carbohydrates, and fat within 15% of each slot target; verify that the four macro values are internally "
         "plausible before responding. A day's training object can describe upcoming training. On those days, favor "
         "digestible carbohydrate before the workout and carbohydrate plus protein afterward, using next_workout_at "
-        "for timing; mention the workout in the reason without making medical claims. Never repeat a meal title "
+        "for timing. Each snack has a preferred_time: create a distinct, practical snack for that eating occasion, "
+        "describe its timing purpose in the reason, and never merge multiple snack slots. Mention the workout in "
+        "the reason without making medical claims. Never repeat a meal title "
         "during the week. Within each day, do not "
         "repeat a protein_item or carb_item across breakfast, lunch, and dinner. Across adjacent days, vary main "
         "proteins. Use no protein_group more than twice for the same slot during the week when alternatives exist. "
@@ -3410,8 +3471,16 @@ def _batch_week_recommendations(
         response = client.chat.completions.create(
             model=_openai_model(),
             temperature=0.2,
-            max_tokens=int(os.environ.get("OPENAI_WEEKLY_MAX_TOKENS", "12000")),
-            response_format={"type": "json_schema", "json_schema": _weekly_batch_schema()},
+            max_tokens=int(
+                os.environ.get(
+                    "OPENAI_WEEKLY_MAX_TOKENS",
+                    str(max(12000, len(days) * len(days[0].get("meals", [])) * 450)),
+                )
+            ),
+            response_format={
+                "type": "json_schema",
+                "json_schema": _weekly_batch_schema(len(days[0].get("meals", []))),
+            },
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -3469,7 +3538,7 @@ def _batch_week_recommendations(
                 diet=primary_diet,
             )
             invalid = (
-                slot not in SLOTS
+                slot not in ALL_SLOTS
                 or slot in slots
                 or not target
                 or not title_key
@@ -3599,10 +3668,11 @@ def recommend_weekly_apply(
     # the week globally. Missing/invalid cells fall through to the proven
     # per-slot recommender below as targeted repairs.
     batch_days: list[dict[str, Any]] = []
+    snack_times_by_slot = dict(_snack_schedule(pref))
     for requested_day in payload.days:
         if not requested_day.meals:
             continue
-        balanced_meals = _balanced_weekly_targets(requested_day)
+        balanced_meals = _targets_for_preferences(requested_day, pref)
         requested_date = _parse_iso_date(requested_day.date)
         requested_nutrition = calculate_training_nutrition(
             db=db,
@@ -3617,7 +3687,11 @@ def recommend_weekly_apply(
                 "training": requested_nutrition.to_dict()["training"],
                 "diet_tags": requested_day.diet_tags or [],
                 "meals": [
-                    {"slot": meal.slot, "target_macros": meal.model_dump(exclude={"slot"})}
+                    {
+                        "slot": meal.slot,
+                        "preferred_time": snack_times_by_slot.get(meal.slot),
+                        "target_macros": meal.model_dump(exclude={"slot"}),
+                    }
                     for meal in requested_targets
                 ],
             }
@@ -3662,7 +3736,7 @@ def recommend_weekly_apply(
         day_diet_tags = dedup or None
 
         plan_date = _parse_iso_date(date_iso)
-        balanced_meals = _balanced_weekly_targets(day)
+        balanced_meals = _targets_for_preferences(day, pref)
         nutrition = calculate_training_nutrition(
             db=db,
             user=user,

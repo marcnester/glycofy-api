@@ -215,23 +215,28 @@
     putStat("sC", t.carbs_g != null ? Math.round(t.carbs_g) : "—");
     putStat("sF", t.fat_g != null ? Math.round(t.fat_g) : "—");
 
-    const byType = { breakfast: null, lunch: null, dinner: null, snack: null };
+    const byType = { breakfast: [], lunch: [], dinner: [], snack: [] };
     for (const m of plan?.meals || []) {
-      if (m && byType[m.meal_type] == null) {
-        byType[m.meal_type] = m;
-      }
+      const type = String(m?.meal_type || '').startsWith('snack') ? 'snack' : m?.meal_type;
+      if (m && byType[type]) byType[type].push(m);
     }
 
-    const order = ["breakfast", "lunch", "dinner", "snack"];
+    const orderedMeals = ["breakfast", "lunch", "dinner"].flatMap((type) => byType[type]);
+    orderedMeals.push(...byType.snack);
     const list = $("todayList");
     if (!list) return;
     list.innerHTML = "";
 
-    for (const mt of order) {
-      const m = byType[mt];
+    for (const m of orderedMeals) {
+      const mt = String(m.meal_type || '').startsWith('snack') ? 'snack' : m.meal_type;
       const titleBase = mt.charAt(0).toUpperCase() + mt.slice(1);
+      const snackNumber = mt === 'snack' && byType.snack.length > 1 ? ` ${byType.snack.indexOf(m) + 1}` : '';
+      const preferredTime = m?.meta?.preferred_time;
+      const snackTime = preferredTime
+        ? ` · ${new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(`2000-01-01T${preferredTime}:00`))}`
+        : '';
       const title =
-        m && m.title ? `${titleBase}: ${m.title}` : titleBase;
+        m && m.title ? `${titleBase}${snackNumber}${snackTime}: ${m.title}` : `${titleBase}${snackNumber}${snackTime}`;
 
       const kcal = m?.kcal != null ? Math.round(m.kcal) : "—";
       const P = m?.protein_g != null ? Math.round(m.protein_g) : "—";

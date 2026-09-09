@@ -341,8 +341,34 @@
     return String(s || '').trim().toLowerCase();
   }
 
+  function snackLabel(meal, index) {
+    const raw = meal?.meta?.preferred_time;
+    if (!raw) return index > 0 ? `Snack ${index + 1}` : 'Snack';
+    const [hour, minute] = String(raw).split(':').map(Number);
+    const when = new Date(2000, 0, 1, hour, minute || 0);
+    const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(when);
+    return `Snack · ${time}`;
+  }
+
+  function syncSnackCards(meals) {
+    const template = document.querySelector('.meal-card[data-slot="snack"]');
+    if (!template) return;
+    document.querySelectorAll('.meal-card[data-slot="snack_2"], .meal-card[data-slot="snack_3"]').forEach((card) => card.remove());
+    const snacks = meals.filter((meal) => normalizeSlot(meal.meal_type).startsWith('snack'));
+    template.hidden = snacks.length === 0;
+    let previous = template;
+    snacks.slice(1).forEach((meal) => {
+      const card = template.cloneNode(true);
+      card.hidden = false;
+      card.setAttribute('data-slot', normalizeSlot(meal.meal_type));
+      previous.insertAdjacentElement('afterend', card);
+      previous = card;
+    });
+  }
+
   // Canonical slots we always want the AI to fill
   const CANONICAL_SLOTS = ['breakfast', 'lunch', 'dinner', 'snack'];
+  const ALLOWED_SLOTS = [...CANONICAL_SLOTS, 'snack_2', 'snack_3'];
 
   // ---------- Normalizers for ingredients, instructions, reasons ----------
 
@@ -826,7 +852,7 @@
     const freshPlan = await ensurePlan(d);
 
     // NEW: allow all canonical slots + whatever exists in the plan.
-    const validSlots = new Set(CANONICAL_SLOTS);
+    const validSlots = new Set(ALLOWED_SLOTS);
     (freshPlan?.meals || []).forEach((m) => {
       const s = normalizeSlot(m?.meal_type);
       if (s) validSlots.add(s);
@@ -866,11 +892,11 @@
     const rec = await llmRecommendAll(iso, plan);
     const itemsArr = normalizeItemsArray(rec);
     const applicableSlots = new Set(
-      toCleanItems(itemsArr, new Set(CANONICAL_SLOTS)).map((item) =>
+      toCleanItems(itemsArr, new Set(ALLOWED_SLOTS)).map((item) =>
         normalizeSlot(item.slot)
       )
     );
-    const missingSlots = CANONICAL_SLOTS.filter(
+    const missingSlots = ['breakfast', 'lunch', 'dinner'].filter(
       (slot) => !applicableSlots.has(slot)
     );
     if (missingSlots.length) {
@@ -917,6 +943,7 @@
       .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
 
     if (NEW_LAYOUT) {
+      syncSnackCards(sorted);
       const bySlot = {};
       for (const m of sorted) {
         const slot = normalizeSlot(m.meal_type);
@@ -941,8 +968,12 @@
 
         // slot label (e.g., Breakfast, Lunch)
         if (slotLabelEl) {
-          slotLabelEl.textContent =
-            slot.charAt(0).toUpperCase() + slot.slice(1);
+          const snackIndex = sorted
+            .filter((meal) => normalizeSlot(meal.meal_type).startsWith('snack'))
+            .indexOf(base);
+          slotLabelEl.textContent = slot.startsWith('snack')
+            ? snackLabel(base, snackIndex)
+            : slot.charAt(0).toUpperCase() + slot.slice(1);
         }
 
         // title (meal name)

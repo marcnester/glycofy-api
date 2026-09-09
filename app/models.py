@@ -558,6 +558,8 @@ class UserPreference(Base):
     # Newer explicit preference columns (present in your SQLite schema)
     ingredient_exclusions: Mapped[str | None] = mapped_column(String, nullable=True)
     diet_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    daily_snack_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    snack_times: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     def exclusions_list(self) -> list[str]:
         raw = (self.ingredient_exclusions or "").strip()

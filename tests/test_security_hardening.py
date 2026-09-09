@@ -142,6 +142,19 @@ def test_home_replaces_technical_account_details_with_training_summary(client: T
     assert "Support recovery with protein, carbohydrates" in script.text
 
 
+def test_profile_and_plan_expose_flexible_snack_schedule(client: TestClient):
+    profile = client.get("/ui/profile.html")
+    profile_script = client.get("/ui/profile.js")
+    plan_script = client.get("/ui/plan.js")
+
+    assert 'id="daily_snack_count"' in profile.text
+    assert profile.text.count('class="input snack-time"') == 3
+    assert "daily_snack_count:" in profile_script.text
+    assert "snack_times:" in profile_script.text
+    assert "syncSnackCards(sorted)" in plan_script.text
+    assert "preferred_time" in plan_script.text
+
+
 def test_plan_exposes_private_adaptive_meal_feedback(client: TestClient):
     page = client.get("/ui/plan.html")
     script = client.get("/ui/plan.js")
@@ -261,7 +274,7 @@ def test_profile_uses_official_strava_connect_asset(client: TestClient):
 def test_account_deletion_dialog_supports_escape_key():
     page = Path("ui/profile.html").read_text(encoding="utf-8")
     script = Path("ui/profile.js").read_text(encoding="utf-8")
-    assert "profile.js?v=2026-09-07-dialog-keyboard" in page
+    assert "profile.js?v=2026-09-08-snack-schedule" in page
     assert 'dialog?.addEventListener("cancel"' in script
     assert 'dialog?.addEventListener("keydown"' in script
     assert 'event.key === "Escape"' in script
@@ -272,7 +285,7 @@ def test_account_deletion_dialog_supports_escape_key():
 def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     page = Path("ui/plan.html").read_text(encoding="utf-8")
     script = Path("ui/plan.js").read_text(encoding="utf-8")
-    assert "plan.js?v=2026-09-08-legacy-meal-repair" in page
+    assert "plan.js?v=2026-09-08-snack-schedule" in page
     assert "Creating today's plan" in script
     assert "Keep this page open while AI finishes." in script
     assert "You can safely leave this page; planning will continue." in script

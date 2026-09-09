@@ -312,8 +312,26 @@
       <div class="field" style="margin-top:14px">
         <label>Other intolerances, dislikes, or ingredients to avoid (comma-separated)</label>
         <input id="exclusions_input" class="input input--wide" placeholder="e.g., lactose intolerant, mushrooms, cilantro" />
-        <div id="pref_status" class="muted save-hint" style="margin-top:6px">Auto-saves</div>
       </div>
+      <div class="athlete-grid" style="margin-top:14px">
+        <div class="field">
+          <label for="daily_snack_count">Snacks per day</label>
+          <select id="daily_snack_count" class="input">
+            <option value="0">No snacks</option><option value="1">1 snack</option>
+            <option value="2">2 snacks</option><option value="3">3 snacks</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Preferred snack times</label>
+          <div id="snack_times" class="radio-set">
+            <input class="input snack-time" type="time" aria-label="First snack time">
+            <input class="input snack-time" type="time" aria-label="Second snack time">
+            <input class="input snack-time" type="time" aria-label="Third snack time">
+          </div>
+        </div>
+      </div>
+      <p class="muted" style="margin:8px 0 0">AI uses these times with your training schedule and redistributes your daily targets across every meal and snack.</p>
+      <div id="pref_status" class="muted save-hint" style="margin-top:6px">Auto-saves</div>
     </section>
 
     <section class="card" style="margin-top:18px;padding:22px;">
@@ -391,7 +409,7 @@
   </main>
 
   <script src="/ui/core.js?v=2025-11-04"></script>
-  <script src="/ui/profile.js?v=2026-09-07-dialog-keyboard"></script>
+  <script src="/ui/profile.js?v=2026-09-08-snack-schedule"></script>
   <script src="/ui/beta.js?v=2026-09-06-tour" defer></script>
 </body>
 </html>

@@ -85,12 +85,36 @@ class PreferencesOut(BaseModel):
     diet: str  # 'omnivore'|'pescatarian'|'vegetarian'|'vegan'
     ingredient_exclusions: str  # comma-separated for the textbox
     allergens: list[str] = Field(default_factory=list)
+    daily_snack_count: int = Field(default=1, ge=0, le=3)
+    snack_times: list[str] = Field(default_factory=lambda: ["15:00"])
 
 
 class PreferencesIn(BaseModel):
     diet: str | None = None
     ingredient_exclusions: str | None = None
     allergens: list[str] | None = None
+    daily_snack_count: int | None = Field(default=None, ge=0, le=3)
+    snack_times: list[str] | None = Field(default=None, max_length=3)
+
+
+def _normalize_snack_times(values: list[str] | None, count: int) -> list[str]:
+    defaults = ["10:00", "15:00", "19:30"]
+    cleaned: list[str] = []
+    for value in values or []:
+        text = str(value).strip()
+        try:
+            parsed = datetime.strptime(text, "%H:%M")
+        except ValueError:
+            continue
+        normalized = parsed.strftime("%H:%M")
+        if normalized not in cleaned:
+            cleaned.append(normalized)
+    for value in defaults:
+        if len(cleaned) >= count:
+            break
+        if value not in cleaned:
+            cleaned.append(value)
+    return sorted(cleaned[:count])
 
 
 # ---------------------------
@@ -133,7 +157,16 @@ def _to_out(pref: UserPreference | None) -> PreferencesOut:
     )
 
     allergens = _coerce_list(getattr(pref, "allergies", None))
-    return PreferencesOut(diet=diet, ingredient_exclusions=excl_str, allergens=allergens)
+    raw_snack_count = getattr(pref, "daily_snack_count", None)
+    snack_count = max(0, min(3, int(1 if raw_snack_count is None else raw_snack_count)))
+    snack_times = _normalize_snack_times(getattr(pref, "snack_times", None), snack_count)
+    return PreferencesOut(
+        diet=diet,
+        ingredient_exclusions=excl_str,
+        allergens=allergens,
+        daily_snack_count=snack_count,
+        snack_times=snack_times,
+    )
 
 
 # ---------------------------
@@ -184,6 +217,8 @@ def upsert_preferences(
     diet = _normalize_diet(payload.diet)
     excl_list = _coerce_list(payload.ingredient_exclusions or "")
     allergens = _coerce_list(payload.allergens or [])
+    snack_count = payload.daily_snack_count if payload.daily_snack_count is not None else 1
+    snack_times = _normalize_snack_times(payload.snack_times, snack_count)
 
     logger.info(
         "Preferences PUT incoming: user_id=%s raw_diet=%r normalized_diet=%s raw_exclusions=%r -> excl_list=%r",
@@ -223,6 +258,8 @@ def upsert_preferences(
         pref.ingredient_exclusions = ", ".join(excl_list) if excl_list else ""
     if hasattr(pref, "allergies"):
         pref.allergies = allergens
+    pref.daily_snack_count = snack_count
+    pref.snack_times = snack_times
 
     if hasattr(pref, "updated_at"):
         pref.updated_at = now

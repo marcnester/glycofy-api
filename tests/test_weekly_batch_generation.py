@@ -63,6 +63,25 @@ def test_weekly_targets_rebalance_a_malformed_prior_meal_split():
     assert sum(meal.carbs_g for meal in targets.values()) == 240
 
 
+def test_preferred_snacks_split_existing_daily_targets_without_adding_calories():
+    day = llm_recommend.WeeklyDayRequest(
+        date="2026-09-01",
+        totals={"kcal": 2400, "protein_g": 180, "carbs_g": 300, "fat_g": 80},
+        meals=[
+            llm_recommend.MealTarget(slot=slot, kcal=600, protein_g=45, carbs_g=75, fat_g=20)
+            for slot in llm_recommend.SLOTS
+        ],
+    )
+    pref = SimpleNamespace(daily_snack_count=2, snack_times=["10:00", "15:00"])
+
+    targets = llm_recommend._targets_for_preferences(day, pref)
+
+    assert [target.slot for target in targets] == ["breakfast", "lunch", "dinner", "snack", "snack_2"]
+    assert sum(target.kcal for target in targets) == 2400
+    assert targets[-2].kcal == targets[-1].kcal == 180
+    assert llm_recommend._snack_schedule(pref) == [("snack", "10:00"), ("snack_2", "15:00")]
+
+
 def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeypatch):
     dates = ["2026-09-01", "2026-09-02"]
     response_body = {
