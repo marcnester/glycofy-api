@@ -204,10 +204,11 @@ def test_account_deletion_dialog_supports_escape_key():
 def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     page = Path("ui/plan.html").read_text(encoding="utf-8")
     script = Path("ui/plan.js").read_text(encoding="utf-8")
-    assert "plan.js?v=2026-09-08-accurate-progress" in page
+    assert "plan.js?v=2026-09-08-legacy-meal-repair" in page
     assert "Creating today's plan" in script
     assert "Keep this page open while AI finishes." in script
     assert "You can safely leave this page; planning will continue." in script
+    assert "Preparation details are missing from this older recommendation." in script
 
 
 def test_profile_exposes_complete_athlete_setup(client: TestClient):

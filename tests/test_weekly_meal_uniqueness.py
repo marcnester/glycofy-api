@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base
 from app.models import Plan, PlanItem, PlanMeal, Recipe, User
-from app.routers import llm_recommend
+from app.routers import llm_recommend, plans
 
 
 def test_ai_created_meal_retries_duplicate_weekly_title(monkeypatch):
@@ -167,6 +167,25 @@ def test_weekly_recipe_apply_replaces_placeholders_with_real_ingredients():
     assert [item.name for item in meal.items] == ["Greek yogurt", "Mixed berries", "chia seeds"]
     assert meal.items[0].qty == 1
     assert meal.items[0].unit == "cup"
+
+
+def test_legacy_mixed_snack_hides_placeholders_and_gets_useful_title():
+    meal = PlanMeal(meal_type="snack", title="Snack", order_index=4, instructions=None)
+    meal.items.extend(
+        [
+            PlanItem(name="Protein (lean)", qty=1, unit="serv", meta={}),
+            PlanItem(name="Complex carbs", qty=1, unit="serv", meta={}),
+            PlanItem(name="Fats (healthy)", qty=1, unit="serv", meta={}),
+            PlanItem(name="rice cakes", qty=2, unit="cakes", meta={}),
+            PlanItem(name="almond butter", qty=2, unit="tbsp", meta={}),
+        ]
+    )
+
+    shown = plans._display_ingredients_for_meal(meal)
+
+    assert [item.name for item in shown] == ["rice cakes", "almond butter"]
+    assert plans._display_title_for_meal(meal) == "Rice Cakes with Almond Butter"
+    assert plans._meal_needs_regeneration(meal) is True
 
 
 def test_generated_ingredients_require_amounts_and_units():

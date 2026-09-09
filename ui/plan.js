@@ -1082,6 +1082,11 @@
             details.appendChild(ol);
 
             bodyEl.appendChild(details);
+          } else if (base && base.id && base.meta && base.meta.needs_regeneration) {
+            const notice = document.createElement('p');
+            notice.className = 'meal-empty';
+            notice.textContent = 'Preparation details are missing from this older recommendation. Use Swap (AI) to replace it with a complete recipe.';
+            bodyEl.appendChild(notice);
           }
         }
       });
@@ -1151,6 +1156,8 @@
                        .join('')}
                    </ol>
                  </details>`
+              : view?.meta?.needs_regeneration
+              ? '<p class="meal-empty">Preparation details are missing from this older recommendation. Use Swap (AI) to replace it with a complete recipe.</p>'
               : ''
           }
         `;

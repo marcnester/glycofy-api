@@ -109,7 +109,7 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
             {
                 "id": m.id,
                 "meal_type": m.meal_type,
-                "title": m.title,
+                "title": _display_title_for_meal(m),
                 "kcal": m.kcal,
                 "protein_g": m.protein_g,
                 "carbs_g": m.carbs_g,
@@ -119,7 +119,10 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
                 "order_index": m.order_index,
                 "recipe_id": getattr(m, "recipe_id", None),
                 # WHY BUTTON FIX: return persisted AI explanation to the UI.
-                "meta": getattr(m, "meta", None) or {},
+                "meta": {
+                    **(getattr(m, "meta", None) or {}),
+                    **({"needs_regeneration": True} if _meal_needs_regeneration(m) else {}),
+                },
                 "feedback": (
                     {
                         "outcome": m.feedback.outcome,
@@ -180,13 +183,44 @@ def _display_ingredients_for_meal(meal: PlanMeal) -> list[Any]:
     items = list(getattr(meal, "items", []) or [])
     names = {str(getattr(item, "name", "")).strip().lower() for item in items}
     if names and not names.issubset(_HEURISTIC_INGREDIENT_NAMES):
-        return items
+        # Some early AI plans appended real ingredients without removing the
+        # three synthetic macro placeholders. Never show those as food.
+        return [
+            item for item in items if str(getattr(item, "name", "")).strip().lower() not in _HEURISTIC_INGREDIENT_NAMES
+        ]
 
     recipe = getattr(meal, "recipe", None)
     recipe_ingredients = _extract_recipe_ingredients(recipe) if recipe is not None else []
     if not recipe_ingredients:
         return items
     return [item if isinstance(item, dict) else {"name": str(item).strip()} for item in recipe_ingredients]
+
+
+_GENERIC_MEAL_TITLES = {"breakfast", "lunch", "dinner", "snack", "meal"}
+
+
+def _display_title_for_meal(meal: PlanMeal) -> str:
+    title = str(getattr(meal, "title", "") or "").strip()
+    if title.lower() not in _GENERIC_MEAL_TITLES:
+        return title or str(getattr(meal, "meal_type", "Meal")).title()
+
+    ingredient_names = [
+        str(getattr(item, "name", "") if not isinstance(item, dict) else item.get("name", "")).strip()
+        for item in _display_ingredients_for_meal(meal)
+    ]
+    ingredient_names = [name for name in ingredient_names if name]
+    if not ingredient_names:
+        return title or str(getattr(meal, "meal_type", "Meal")).title()
+    if len(ingredient_names) == 1:
+        return ingredient_names[0].title()
+    return f"{ingredient_names[0].title()} with {ingredient_names[1].title()}"
+
+
+def _meal_needs_regeneration(meal: PlanMeal) -> bool:
+    title = str(getattr(meal, "title", "") or "").strip().lower()
+    instructions = str(getattr(meal, "instructions", "") or "").strip()
+    item_names = {str(getattr(item, "name", "")).strip().lower() for item in (getattr(meal, "items", []) or [])}
+    return not instructions or title in _GENERIC_MEAL_TITLES or bool(item_names & _HEURISTIC_INGREDIENT_NAMES)
 
 
 def _coerce_tags(value) -> list[str]:
