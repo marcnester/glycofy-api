@@ -94,21 +94,29 @@
   let busyCanContinueInBackground = true;
   let activeWeeklyJobId = null;
 
+  const TODAY_PROGRESS_STAGES = [
+    [0, 'Reviewing today’s goals and training…'],
+    [5, 'Designing today’s meals and snacks…'],
+    [14, 'Balancing today’s macros…'],
+    [24, 'Checking diet and ingredient exclusions…'],
+    [34, 'Adding quantities and cooking instructions…'],
+  ];
   const WEEKLY_PROGRESS_STAGES = [
     [0, 'Reviewing your goals and training…'],
-    [5, 'Designing 28 meals as one balanced week…'],
+    [5, 'Designing your meals and snacks as one balanced week…'],
     [14, 'Balancing macros and weekly variety…'],
     [24, 'Checking diet and ingredient exclusions…'],
     [34, 'Adding quantities and cooking instructions…'],
     [45, 'Saving your personalized week…'],
   ];
+  let busyProgressStages = WEEKLY_PROGRESS_STAGES;
 
   function updateBusyProgress(serverMessage) {
     if (!busyStartedAt) return;
     const elapsed = Math.max(0, Math.floor((Date.now() - busyStartedAt) / 1000));
-    const localStage = WEEKLY_PROGRESS_STAGES.reduce(
+    const localStage = busyProgressStages.reduce(
       (current, stage) => (elapsed >= stage[0] ? stage : current),
-      WEEKLY_PROGRESS_STAGES[0]
+      busyProgressStages[0]
     );
     if (busyMsg) busyMsg.textContent = serverMessage || localStage[1];
     if (busyMeta) {
@@ -123,6 +131,7 @@
     busyEl.style.display = on ? 'flex' : 'none';
     if (on) {
       busyCanContinueInBackground = options.background !== false;
+      busyProgressStages = options.stages || WEEKLY_PROGRESS_STAGES;
       if (busyTitle) busyTitle.textContent = options.title || 'Building your week';
       busyStartedAt = Date.now();
       updateBusyProgress(msg);
@@ -1314,6 +1323,7 @@
       setBusy(true, 'Asking AI for today…', {
         title: "Creating today's plan",
         background: false,
+        stages: TODAY_PROGRESS_STAGES,
       });
       try {
         await runAIForDate(d, true);
