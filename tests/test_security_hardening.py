@@ -225,6 +225,17 @@ def test_profile_exposes_complete_athlete_setup(client: TestClient):
     assert "These details power your energy, recovery, and macro targets." in response.text
 
 
+def test_manual_training_defaults_after_latest_plan_and_clears_start_time():
+    page = Path("ui/activities.html").read_text(encoding="utf-8")
+    script = Path("ui/activities.js").read_text(encoding="utf-8")
+
+    assert "activities.js?v=2026-09-08-next-workout-defaults" in page
+    assert "latestPlannedDate?nextDayISO(latestPlannedDate)" in script
+    assert "latestPlannedDate=(items||[]).map(item=>item.workout_date)" in script
+    assert "if(trainingTime) trainingTime.value=''" in script
+    assert "prepareManualTrainingForm();showAddTraining('manual')" in script
+
+
 def test_athlete_setup_round_trips_through_user_profile(client: TestClient):
     signup = client.post(
         "/auth/signup",

@@ -67,11 +67,22 @@
   // state
   let page = 1, pageSize = 10, total = 0;
   let sumPage = 1, sumPageSize = 10, lastSummaryDays = [];
+  let latestPlannedDate = null;
   const API_MAX = 500;
 
   // utils
   function setErr(m){ if(!elErr) return; elErr.textContent=m||''; elErr.style.display=m?'':'none'; }
   function todayISO(d=new Date()){ const t=new Date(d.getTime()-d.getTimezoneOffset()*60000); return t.toISOString().slice(0,10); }
+  function nextDayISO(value){
+    const date=new Date(`${value}T12:00:00`);
+    date.setDate(date.getDate()+1);
+    return todayISO(date);
+  }
+  function prepareManualTrainingForm(){
+    const tomorrow=new Date(); tomorrow.setDate(tomorrow.getDate()+1);
+    if(trainingDate) trainingDate.value=latestPlannedDate?nextDayISO(latestPlannedDate):todayISO(tomorrow);
+    if(trainingTime) trainingTime.value='';
+  }
   function daysAgoISO(n){ const d=new Date(); d.setDate(d.getDate()-n); return todayISO(d); }
   function readDateISO(el, fb){ const raw=(el&&el.value)?String(el.value).trim():''; if(!raw) return fb; if(/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw; const t=Date.parse(raw); return isNaN(t)?fb:todayISO(new Date(t)); }
   function showStatus(t, cls){ if(!elSyncStatus) return; elSyncStatus.className='pill'+(cls?' '+cls:''); elSyncStatus.textContent=t; elSyncStatus.style.display=''; }
@@ -203,7 +214,7 @@
     sumPageSize = Number(elSumPs?.value||10)||10;
     if (elFrom && !elFrom.value) elFrom.value = daysAgoISO(30);
     if (elTo && !elTo.value) elTo.value = todayISO();
-    if (trainingDate && !trainingDate.value) trainingDate.value = todayISO(new Date(Date.now() + 86400000));
+    if (trainingDate && !trainingDate.value) prepareManualTrainingForm();
 
     // wire
     function selectTrainingTab(name){
@@ -227,7 +238,7 @@
     document.querySelectorAll('[data-training-tab]').forEach(tab=>tab.addEventListener('click',()=>selectTrainingTab(tab.dataset.trainingTab)));
     addTrainingToggle?.addEventListener('click',()=>addTrainingPanel?.hidden?showAddTraining():closeAddTraining());
     $('add_training_close')?.addEventListener('click',closeAddTraining);
-    $('choose_manual')?.addEventListener('click',()=>showAddTraining('manual'));
+    $('choose_manual')?.addEventListener('click',()=>{prepareManualTrainingForm();showAddTraining('manual');});
     $('choose_import')?.addEventListener('click',()=>showAddTraining('import'));
     document.querySelectorAll('.add-choice-back').forEach(button=>button.addEventListener('click',()=>showAddTraining()));
     $('open_import_from_connections')?.addEventListener('click',()=>{selectTrainingTab('upcoming');showAddTraining('import');});
@@ -307,6 +318,7 @@
     function renderTrainingEvents(items){
       if(!trainingList) return;
       trainingList.replaceChildren();
+      latestPlannedDate=(items||[]).map(item=>item.workout_date).filter(Boolean).sort().at(-1)||null;
       const count=$('planned_count'); if(count) count.textContent=`${items.length} planned`;
       if(!items.length){
         const empty=document.createElement('div'); empty.className='empty-training';
@@ -344,7 +356,7 @@
       try{
         if(trainingNotice) trainingNotice.textContent='Adding workout…';
         await fetchJSON('/v1/training-events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-        trainingNotes.value=''; trainingDistance.value='';
+        trainingNotes.value=''; trainingDistance.value=''; trainingTime.value='';
         closeAddTraining();
         await Promise.all([loadTrainingEvents(),loadCoverage()]);
       }catch(e){ if(trainingNotice) trainingNotice.textContent=e?.message||'Could not add workout.'; }
