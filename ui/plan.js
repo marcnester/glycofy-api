@@ -1002,7 +1002,6 @@
         const bodyEl = card.querySelector(
           '.meal-body, .meal__body, .meal-items, .meal__items'
         );
-        const badgeEl = card.querySelector('.meal-badge, .meal__badge, .chip');
         const titleEl = card.querySelector('.meal-title, .meal__title, h3');
         const slotLabelEl = card.querySelector('.meal-slot-label');
         const feedbackBtn = card.querySelector('[data-action="feedback"]');
@@ -1023,22 +1022,6 @@
           else if (base && base.title) titleEl.textContent = base.title;
           else if (base && base.meal_type)
             titleEl.textContent = base.meal_type;
-        }
-
-        // badge: AI pick if any LLM reason or freeform overlay
-        if (badgeEl) {
-          if (ff || getReasonForSlot(slot)) {
-            const fallback = base?.meta?.generation?.fallback;
-            badgeEl.textContent = fallback ? 'Verified fallback' : 'AI pick';
-            badgeEl.title = fallback
-              ? 'AI was temporarily unavailable, so Glycofy used its verified recipe library.'
-              : 'Selected by Glycofy AI';
-            badgeEl.classList.add('meal-badge--ai');
-            badgeEl.style.display = 'inline-flex';
-          } else {
-            badgeEl.textContent = '';
-            badgeEl.style.display = 'none';
-          }
         }
 
         if (feedbackBtn) {

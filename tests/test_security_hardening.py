@@ -337,15 +337,16 @@ def test_account_deletion_dialog_supports_escape_key():
 def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     page = Path("ui/plan.html").read_text(encoding="utf-8")
     script = Path("ui/plan.js").read_text(encoding="utf-8")
-    assert "plan.js?v=2026-09-08-ai-recovery" in page
+    assert "plan.js?v=2026-09-09-unified-recommendations" in page
     assert "Creating today's plan" in script
     assert "Designing today’s meals and snacks…" in script
     assert "Designing your meals and snacks as one balanced week…" in script
     assert "Designing 28 meals" not in script
     assert 'id="plan-busy-retry"' in page
     assert "Error reference:" in script
-    assert "Verified fallback" in script
-    assert "AI was temporarily unavailable, so Glycofy used its verified recipe library." in script
+    assert "Verified fallback" not in script
+    assert "AI pick" not in script
+    assert 'class="meal-badge"' not in page
     assert "Keep this page open while AI finishes." in script
     assert "You can safely leave this page; planning will continue." in script
     assert "Preparation details are missing from this older recommendation." in script
