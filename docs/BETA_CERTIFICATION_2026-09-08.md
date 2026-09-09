@@ -3,6 +3,7 @@
 ## Release candidate
 
 - Production commit at certification start: `ed34496`
+- Current certified candidate: `5f9673e`
 - Environment: `https://app.glycofy.ai`
 - Certification status: **In progress**
 
@@ -28,6 +29,8 @@
 - The weekly grocery view aggregated 77 shopping rows with package guidance and a single list-level approval action.
 - Disposable-account verification, password reset, old-password rejection, new-password login, data export, and permanent deletion passed.
 - Deleted credentials were rejected and the deleted session no longer authorized account access.
+- Production displays a clear confirmation that the disposable account and its Glycofy data were permanently deleted.
+- Authenticated Today, Weekly, Training, Profile, Grocery, feedback-dialog, and privacy-safe operations views were exercised during certification.
 
 ## Certification corrections
 
@@ -40,10 +43,9 @@
 
 ## Pending gates
 
-- End-to-end Google signup using the disposable account.
-- Authenticated Today, Weekly, Training, Profile, Grocery, feedback, and operations walkthrough on the final candidate.
+- End-to-end Google signup using a separate disposable Google account.
 - Exact iPhone Safari and Android Chrome viewport/device matrix.
-- Keyboard, screen reader, zoom, reduced-motion, slow/offline, and expired-session walkthroughs.
+- Keyboard, screen reader, zoom, slow/offline, and expired-session walkthroughs. Reduced-motion behavior is implemented and covered by the automated suite.
 - Render database restore drill and recovery-time evidence.
 - Qualified legal review of the Privacy Policy and Terms launch drafts.
 
