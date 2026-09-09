@@ -90,6 +90,40 @@ def test_login_page_exposes_clear_account_creation_flow(client: TestClient):
     assert "at least 12 characters" in script.text
 
 
+def test_public_legal_pages_cover_beta_health_and_ai_data_practices(client: TestClient):
+    privacy = client.get("/ui/privacy.html")
+    terms = client.get("/ui/terms.html")
+
+    assert privacy.status_code == 200
+    assert terms.status_code == 200
+    assert privacy.headers["cache-control"] == "no-store"
+    assert terms.headers["cache-control"] == "no-store"
+
+    for disclosure in (
+        "Consumer health data",
+        "Information from connected services",
+        "Information collected automatically",
+        "AI and service providers",
+        "Your privacy rights",
+        "OpenAI",
+        "Render",
+        "Cloudflare",
+        "Google",
+        "Strava",
+    ):
+        assert disclosure in privacy.text
+
+    for protection in (
+        "Nutrition and training—not medical care",
+        "AI and estimated information",
+        "Beta service, changes, and availability",
+        "Suspension, termination, and deletion",
+        "Limitation of liability",
+        "non-waivable consumer rights",
+    ):
+        assert protection in terms.text
+
+
 def test_home_replaces_technical_account_details_with_training_summary(client: TestClient):
     page = client.get("/ui/index.html")
     script = client.get("/ui/index.js")

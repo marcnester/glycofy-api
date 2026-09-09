@@ -9,30 +9,57 @@
     :root{color-scheme:dark;--bg:#0d1117;--panel:#111826;--border:#263247;--text:#e8eef5;--muted:#a8b7cb;--accent:#74dda9}
     *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
     main{width:min(800px,calc(100% - 32px));margin:48px auto;padding:clamp(24px,5vw,48px);background:var(--panel);border:1px solid var(--border);border-radius:18px}
-    h1,h2{line-height:1.25}h2{margin-top:2rem}a{color:var(--accent)}.muted{color:var(--muted)}
+    h1,h2,h3{line-height:1.25}h2{margin-top:2rem}h3{margin-top:1.4rem}a{color:var(--accent)}.muted{color:var(--muted)}li+li{margin-top:.45rem}
   </style>
   <link rel="stylesheet" href="/ui/theme.css?v=2026-09-03-unified" />
 </head>
 <body><main>
   <p><a href="/ui/login.html">← Back to Glycofy</a></p>
   <h1>Glycofy Privacy Policy</h1>
-  <p class="muted">Effective September 1, 2026 · Launch draft pending legal review</p>
-  <p>Glycofy provides nutrition and training-planning tools. This policy explains the information Glycofy collects, why it is used, and the choices available to you.</p>
+  <p class="muted">Effective September 8, 2026 · Beta policy · Pending review by qualified counsel</p>
+  <p>Glycofy provides athlete-aware nutrition and training-planning tools. This policy explains what information we process, where it comes from, why we use it, whom we disclose it to, and the controls available to you. Glycofy is currently operated in the United States.</p>
+
   <h2>Information we collect</h2>
-  <p>We collect account information such as your email address and display name; profile information you choose to provide, including dietary preferences, allergies, body measurements, goals, and unit preferences; generated meal plans and related activity; feedback you choose to send; privacy-safe product events; and technical security data such as request identifiers, timestamps, and privacy-preserving audit records.</p>
-  <p>Beta feedback automatically includes the Glycofy page path, coarse browser family, screen-size category, and request identifiers. It does not automatically include meal contents, macros, health profile fields, workouts, IP addresses, full browser identifiers, or URL query parameters. Product analytics uses a fixed set of journey events without free-form properties.</p>
-  <p>If you choose Google sign-in, we receive your Google account identifier, verified email address, name, and locale. Glycofy uses Google only to authenticate you and does not retain Google access or refresh tokens after sign-in. If you connect another service such as Strava, that service’s authorization screen describes the additional data requested.</p>
-  <h2>How we use information</h2>
-  <p>We use information to authenticate accounts, personalize nutrition and training plans, operate connected features you request, maintain security, diagnose failures, and improve reliability. Glycofy does not sell personal information or use health and dietary information for targeted advertising.</p>
-  <h2>Service providers and AI</h2>
-  <p>Information may be processed by vendors that provide hosting, database, authentication, connected-account, email, monitoring, and AI services. When you request AI-assisted planning, relevant preferences and planning context may be sent to the configured AI provider. Avoid entering information that is not needed for planning, and review AI output before use.</p>
-  <h2>Retention and security</h2>
-  <p>We retain account information while your account is active and retain limited security audit data according to our operational retention schedule. We use HTTPS, access controls, encrypted provider credentials, restricted production configuration, and security monitoring. No system can guarantee absolute security.</p>
-  <h2>Your choices</h2>
-  <p>You may decline Google sign-in and use another available sign-in method. From your Profile, you may disconnect connected services, download a copy of your Glycofy data, or permanently delete your account. Account deletion removes your profile, plans, training data, preferences, feedback, and locally stored connection credentials; Glycofy also attempts to revoke connected Strava access. You may additionally revoke access in the provider’s settings. Limited records may be retained when required for security, fraud prevention, or legal compliance.</p>
-  <h2>Health disclaimer and children</h2>
-  <p>Glycofy is a planning tool, not a medical service, and is not intended to diagnose or treat any condition. Glycofy is not directed to children under 13, and we do not knowingly collect their personal information.</p>
+  <h3>Information you provide</h3>
+  <ul>
+    <li><strong>Account data:</strong> email address, password hash or Google account identifier, display name, locale, and email-verification status.</li>
+    <li><strong>Athlete and consumer health data:</strong> age or date of birth, sex used for energy calculations, height, weight, goals, dietary pattern, allergies, ingredient exclusions, unit preferences, timezone, and other planning preferences you choose to provide.</li>
+    <li><strong>Nutrition and planning data:</strong> calorie and macronutrient targets, generated meal plans, recipes, grocery lists, meal completion, substitutions, ratings, hunger, energy, digestion, and preparation feedback.</li>
+    <li><strong>Training data:</strong> sports, workout dates, duration, distance, intensity, training load, calories, heart rate when available, and notes entered manually, imported from a file, or obtained from a service you connect.</li>
+    <li><strong>Communications:</strong> beta feedback and privacy, security, or support requests you send us.</li>
+  </ul>
+  <h3>Information from connected services</h3>
+  <p>If you use Google sign-in, Google provides an account identifier, verified email address, name, and locale. We use this information only for authentication and do not retain Google access or refresh tokens after sign-in. If you connect Strava, we receive the profile and activity information allowed by the permissions shown on Strava’s authorization screen. TrainingPeaks data is processed only when you choose to upload an export unless and until a direct integration is offered.</p>
+  <h3>Information collected automatically</h3>
+  <p>Our infrastructure processes IP address, request time, browser and device characteristics, requested page, security signals, cookies, and request identifiers to deliver and protect the service. Glycofy uses an HTTP-only session cookie for authentication and temporary cookies for secure connected-account authorization. We do not use advertising cookies.</p>
+  <p>Beta feedback automatically attaches only the Glycofy page path, coarse browser family, screen-size category, and request identifiers. It does not automatically attach meal contents, macros, health-profile fields, workouts, IP addresses, full browser identifiers, or URL query parameters. Product analytics uses a fixed set of journey events without free-form properties.</p>
+
+  <h2>How and why we use information</h2>
+  <p>We process information to create and secure your account; calculate planning targets; personalize meals, recipes, grocery lists, and training-aware fueling suggestions; import or synchronize information at your direction; deliver transactional messages; remember your choices; respond to requests; prevent abuse; diagnose failures; measure beta reliability; comply with law; and establish or defend legal claims.</p>
+  <p>Providing optional profile and connected-service information is your choice, but plans will be more general when relevant information is missing. Glycofy does not sell personal information, display third-party advertising, or use health, dietary, or training information for targeted advertising.</p>
+
+  <h2>Consumer health data</h2>
+  <p>The athlete, nutrition, and training information described above may be considered consumer health data or sensitive data. Its sources are you, files you upload, connected services you authorize, and calculations or inferences made to provide the planning service you request. We collect and use it to provide Glycofy’s planning features, protect the service, and meet legal obligations. We do not use it to determine eligibility for employment, insurance, credit, housing, or health care.</p>
+  <p>We disclose consumer health data only as necessary to providers that help deliver the service you request, as described below, or when legally required. You may access a copy from Profile, correct profile information, disconnect a service or withdraw future connected-data access, and request deletion. Email us if you want to exercise a right that is not available in Profile or to appeal our response.</p>
+
+  <h2>AI and service providers</h2>
+  <p>When you request AI planning, the preferences, targets, recent or upcoming training context, prior meal feedback, and other context needed for that request may be sent to OpenAI. Do not enter unrelated confidential information. AI output can be incomplete or inaccurate and should be reviewed before use.</p>
+  <p>We use service providers for functions such as application and database hosting (Render), traffic delivery and security (Cloudflare), AI generation (OpenAI), authentication (Google, when chosen), connected activities (Strava, when chosen), and transactional email. These providers process information under their own terms and privacy notices and only for the functions we enable. They may process information in the United States or other locations where they operate. We may also disclose information when required by law, to protect users or the service, or as part of a merger, financing, acquisition, or sale after appropriate safeguards and notice.</p>
+
+  <h2>Retention, deletion, and security</h2>
+  <p>Account, profile, plan, preference, and training records are generally kept while your account remains active. Weekly planning-job records are generally retained for up to 30 days, AI operational metrics for 90 days, product journey events for 180 days, and beta feedback and security audit events for up to 365 days. We may retain a record longer when reasonably necessary for security, fraud prevention, dispute resolution, or legal compliance.</p>
+  <p>From Profile, you may download your Glycofy data or permanently delete your account. Deletion removes active profile, plan, training, preference, feedback, and locally stored connection-credential records and ends your session. We also attempt to revoke connected Strava access. Backup copies are isolated from ordinary use and expire through the applicable backup lifecycle; where law requires, deletion will be propagated to processors and completed in backup systems within the legally permitted period. Some minimal security or legal records may remain when required or permitted by law.</p>
+  <p>We use HTTPS, access controls, secure cookies, encryption for stored provider credentials, restricted production configuration, rate limiting, dependency scanning, and security monitoring. No storage or transmission method is completely secure. If a reportable breach occurs, we will provide notices required by applicable law.</p>
+
+  <h2>Your privacy rights</h2>
+  <p>Depending on where you live, you may have rights to confirm processing; access, correct, obtain, or delete information; withdraw consent; obtain a list of recipients of consumer health data; opt out of certain sale, targeted-advertising, or profiling uses; appeal a denied request; and receive equal service when exercising a right. Glycofy does not currently sell personal information or use it for targeted advertising.</p>
+  <p>Use Profile for access, correction, export, connection controls, and deletion, or email <a href="mailto:marcnester@gmail.com">marcnester@gmail.com</a>. We may verify your identity before completing a request. Authorized agents may submit requests where applicable law permits. If we deny a request, you may appeal by replying with “Privacy appeal” in the subject line.</p>
+
+  <h2>Children and health disclaimer</h2>
+  <p>Glycofy is not directed to children under 13, and we do not knowingly collect their personal information. If you believe a child under 13 has provided information, contact us so we can delete it. Glycofy is a planning tool, not a medical provider, and is not intended to diagnose, treat, cure, or prevent any condition.</p>
+
   <h2>Changes and contact</h2>
-  <p>We may update this policy as the service evolves and will revise the effective date when we do. Questions or privacy requests can be sent to <a href="mailto:marcnester@gmail.com">marcnester@gmail.com</a>.</p>
+  <p>We may update this policy as the service evolves. We will revise the effective date and provide additional notice when a material change requires it. We will not materially expand the collection, use, or disclosure of consumer health data without the notice or consent required by applicable law.</p>
+  <p>Questions, privacy requests, and health-data requests can be sent to <a href="mailto:marcnester@gmail.com">marcnester@gmail.com</a>. Before a broader public launch, Glycofy will publish the operator’s complete legal name and business mailing address here.</p>
 </main></body>
 </html>
