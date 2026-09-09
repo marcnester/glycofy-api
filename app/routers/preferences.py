@@ -234,11 +234,9 @@ def upsert_preferences(
     now = datetime.utcnow()
 
     if not pref:
-        pref = UserPreference(user_id=user.id)
+        pref = UserPreference(user_id=user.id, created_at=now, updated_at=now)
         db.add(pref)
         db.flush()
-        if hasattr(pref, "created_at"):
-            pref.created_at = now
         logger.info(
             "Preferences PUT: created new row id=%s for user_id=%s",
             getattr(pref, "id", None),
@@ -261,8 +259,7 @@ def upsert_preferences(
     pref.daily_snack_count = snack_count
     pref.snack_times = snack_times
 
-    if hasattr(pref, "updated_at"):
-        pref.updated_at = now
+    pref.updated_at = now
 
     db.add(pref)
     db.commit()

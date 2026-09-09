@@ -181,6 +181,30 @@ def test_snack_schedule_preferences_save_and_reload(client: TestClient):
     assert client.get("/v1/preferences").json()["snack_times"] == ["15:00", "22:30"]
 
 
+def test_new_preference_row_has_required_timestamps(client: TestClient):
+    assert (
+        client.post(
+            "/auth/signup",
+            json={"email": "new-preferences@example.com", "password": "a-secure-password-123"},
+        ).status_code
+        == 200
+    )
+
+    saved = client.put(
+        "/v1/preferences",
+        json={
+            "diet": "omnivore",
+            "ingredient_exclusions": "",
+            "allergens": [],
+            "daily_snack_count": 2,
+            "snack_times": ["10:30", "15:00"],
+        },
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["snack_times"] == ["10:30", "15:00"]
+
+
 def test_plan_exposes_private_adaptive_meal_feedback(client: TestClient):
     page = client.get("/ui/plan.html")
     script = client.get("/ui/plan.js")

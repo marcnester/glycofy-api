@@ -307,8 +307,13 @@ class PlanMeal(Base):
     tags: Mapped[dict | None] = mapped_column(JSON)
     # Per-meal metadata, including the explanation returned by the AI planner.
     meta: Mapped[dict | None] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime | None] = mapped_column(DateTime)
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
 
     plan: Mapped[Plan] = relationship("Plan", back_populates="meals", foreign_keys=[plan_id])
 
