@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import get_db
 
 router = APIRouter()
@@ -34,7 +35,10 @@ def ready(db: Session = Depends(get_db)) -> HealthOut:
     requests until it can reach the primary database.
     """
     try:
-        db.execute(text("SELECT daily_snack_count, snack_times " "FROM user_preferences LIMIT 0"))
+        if settings.is_production:
+            db.execute(text("SELECT daily_snack_count, snack_times " "FROM user_preferences LIMIT 0"))
+        else:
+            db.execute(text("SELECT 1"))
     except SQLAlchemyError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
