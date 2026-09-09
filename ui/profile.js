@@ -7,7 +7,15 @@
   const getUser = api.getUser || (async () => ({}));
   const fetchJSON = async (url, init = {}) => {
     const res = await fetch(url, { credentials: "include", ...init });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      let detail = "";
+      try {
+        const payload = await res.json();
+        detail = typeof payload?.detail === "string" ? payload.detail : "";
+      } catch {}
+      const requestId = res.headers.get("x-request-id");
+      throw new Error([detail || `HTTP ${res.status}`, requestId ? `Reference: ${requestId}` : ""].filter(Boolean).join(" · "));
+    }
     try { return await res.json(); } catch { return {}; }
   };
   const redirectToReturn = api.redirectToReturn || ((p) => (window.location.href = p));
@@ -415,7 +423,7 @@
       setPrefStatus("Saved");
     } catch (e) {
       console.warn("savePreferences", e);
-      setPrefStatus("Could not save", "error");
+      setPrefStatus(`Could not save · ${e.message || "Please try again"}`, "error");
     }
   }
 

@@ -155,6 +155,32 @@ def test_profile_and_plan_expose_flexible_snack_schedule(client: TestClient):
     assert "preferred_time" in plan_script.text
 
 
+def test_snack_schedule_preferences_save_and_reload(client: TestClient):
+    assert (
+        client.post(
+            "/auth/signup",
+            json={"email": "snack-schedule@example.com", "password": "a-secure-password-123"},
+        ).status_code
+        == 200
+    )
+
+    saved = client.put(
+        "/v1/preferences",
+        json={
+            "diet": "omnivore",
+            "ingredient_exclusions": "",
+            "allergens": [],
+            "daily_snack_count": 2,
+            "snack_times": ["22:30", "15:00"],
+        },
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["daily_snack_count"] == 2
+    assert saved.json()["snack_times"] == ["15:00", "22:30"]
+    assert client.get("/v1/preferences").json()["snack_times"] == ["15:00", "22:30"]
+
+
 def test_plan_exposes_private_adaptive_meal_feedback(client: TestClient):
     page = client.get("/ui/plan.html")
     script = client.get("/ui/plan.js")
@@ -274,7 +300,7 @@ def test_profile_uses_official_strava_connect_asset(client: TestClient):
 def test_account_deletion_dialog_supports_escape_key():
     page = Path("ui/profile.html").read_text(encoding="utf-8")
     script = Path("ui/profile.js").read_text(encoding="utf-8")
-    assert "profile.js?v=2026-09-08-snack-schedule" in page
+    assert "profile.js?v=2026-09-08-snack-save" in page
     assert 'dialog?.addEventListener("cancel"' in script
     assert 'dialog?.addEventListener("keydown"' in script
     assert 'event.key === "Escape"' in script
