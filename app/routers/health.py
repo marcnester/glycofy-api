@@ -34,7 +34,7 @@ def ready(db: Session = Depends(get_db)) -> HealthOut:
     requests until it can reach the primary database.
     """
     try:
-        db.execute(text("SELECT 1"))
+        db.execute(text("SELECT daily_snack_count, snack_times " "FROM user_preferences LIMIT 0"))
     except SQLAlchemyError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

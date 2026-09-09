@@ -20,6 +20,7 @@ from app.observability import (
     new_request_id,
     request_id_context,
 )
+from app.schema_compat import ensure_snack_preference_columns
 
 configure_logging()
 from app.routers import user_profile, weekly_plans
@@ -109,6 +110,7 @@ def recover_interrupted_weekly_plans() -> None:
     # Importing lazily keeps application boot order deterministic and submits
     # recovered jobs only after the database migration pre-deploy step.
     if settings.is_production:
+        ensure_snack_preference_columns()
         llm_recommend_router.reconcile_weekly_jobs()
 
 
