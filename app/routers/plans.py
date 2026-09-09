@@ -972,14 +972,10 @@ def apply_recommendations(
 
     Semantics:
 
-      - The payload is treated as a **full-day replacement** for this date.
-      - If the plan is unlocked:
-          * We first validate all recipe_ids / pick_ids exist.
-          * We then delete ALL existing PlanMeals/PlanItems for this plan.
-          * We create new PlanMeals for each item (by slot), applying either
-            a catalog Recipe (recipe_id/pick_id) or a free-form AI idea
-            (ai_idea or new_recipe).
-          * Totals are recomputed and source is set to "llm".
+      - Each item replaces only its named meal slot. Unmentioned meals remain
+        untouched, making this safe for one-meal swaps and full-day applies.
+      - Recipe references are validated before mutation.
+      - Totals are recomputed and source is set to "llm".
 
       - If the plan does not yet exist, it is created.
       - If the plan is locked → 400 "Plan is locked".
@@ -1037,36 +1033,39 @@ def apply_recommendations(
                 detail=f"Recipe id(s) {missing} not found",
             )
 
-    # ---- Hard reset meals/items for this plan (we're doing a full-day rewrite) ----
-    subq = db.query(PlanMeal.id).filter(PlanMeal.plan_id == plan.id).subquery()
-    db.query(PlanItem).filter(PlanItem.meal_id.in_(subq)).delete(synchronize_session=False)
-    db.query(PlanMeal).filter(PlanMeal.plan_id == plan.id).delete(synchronize_session=False)
-    plan.meals = []
-    db.flush()
+    slots = [_safe_meal_type(it.slot) for it in payload.items]
+    if len(slots) != len(set(slots)):
+        raise HTTPException(status_code=400, detail="Each meal slot may be assigned only once")
 
-    # ---- Create new meals for each ApplyItem ----
+    meals_by_slot = {_safe_meal_type(meal.meal_type): meal for meal in list(plan.meals)}
+
+    # ---- Replace only explicitly requested meal slots ----
     created_any = False
     for it in payload.items:
         slot = _safe_meal_type(it.slot)
+        if not any(value is not None for value in (it.recipe_id, it.ai_idea, it.pick_id, it.new_recipe)):
+            continue
 
-        meal = PlanMeal(
-            plan_id=plan.id,
-            meal_type=slot,
-            title=None,
-            kcal=None,
-            protein_g=None,
-            carbs_g=None,
-            fat_g=None,
-            instructions=None,
-            tags=[],
-            order_index=_default_meal_order(slot),
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-            # NEW: default to no backing recipe until we know
-            recipe_id=None,
-        )
-        db.add(meal)
-        db.flush()
+        meal = meals_by_slot.get(slot)
+        if meal is None:
+            meal = PlanMeal(
+                plan=plan,
+                meal_type=slot,
+                title=None,
+                kcal=None,
+                protein_g=None,
+                carbs_g=None,
+                fat_g=None,
+                instructions=None,
+                tags=[],
+                order_index=_default_meal_order(slot),
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+                recipe_id=None,
+            )
+            db.add(meal)
+            db.flush()
+            meals_by_slot[slot] = meal
 
         # Determine effective recipe id (recipe_id or pick_id)
         effective_recipe_id: int | None = None
@@ -1118,8 +1117,6 @@ def apply_recommendations(
                 "reason": it.reason,
             }
             created_any = True
-
-        plan.meals.append(meal)
 
     if created_any:
         plan.totals = _aggregate_totals(plan.meals)

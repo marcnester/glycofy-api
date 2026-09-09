@@ -149,6 +149,69 @@ def test_plan_exposes_private_adaptive_meal_feedback(client: TestClient):
     assert "Glycofy will use it in future plans" in script.text
 
 
+def test_single_meal_ai_swap_preserves_every_other_meal(client: TestClient):
+    signup = client.post(
+        "/auth/signup",
+        json={"email": "atomic-swap@example.com", "password": "a-secure-password-123"},
+    )
+    assert signup.status_code == 200
+
+    original_meals = [
+        {
+            "meal_type": slot,
+            "title": title,
+            "kcal": 500,
+            "protein_g": 35,
+            "carbs_g": 55,
+            "fat_g": 15,
+            "instructions": "Prepare and serve.",
+            "ingredients": [{"name": f"{slot} ingredient", "qty": 1, "unit": "serving"}],
+        }
+        for slot, title in (
+            ("breakfast", "Chia Seed Pudding"),
+            ("lunch", "Pasta Salad with Tuna"),
+            ("dinner", "Shrimp Tacos"),
+            ("snack", "Apple and Almonds"),
+        )
+    ]
+    created = client.post("/v1/plan/2026-09-09", json={"meals": original_meals})
+    assert created.status_code == 200
+
+    swapped = client.post(
+        "/v1/plan/2026-09-09/apply_recommendations",
+        json={
+            "items": [
+                {
+                    "slot": "snack",
+                    "reason": "Portable fuel.",
+                    "ai_idea": {
+                        "title": "Peanut Butter Banana Rice Cakes",
+                        "ingredients": [
+                            {"name": "rice cakes", "amount": "3", "unit": "cakes"},
+                            {"name": "peanut butter", "amount": "3", "unit": "tbsp"},
+                            {"name": "banana", "amount": "1", "unit": "medium"},
+                        ],
+                        "instructions": ["Slice the banana.", "Top the rice cakes and serve."],
+                        "prep_time_min": 5,
+                        "cook_time_min": 0,
+                        "total_time_min": 5,
+                        "approx_macros": {"kcal": 450, "protein_g": 15, "carbs_g": 60, "fat_g": 18},
+                    },
+                }
+            ]
+        },
+    )
+
+    assert swapped.status_code == 200
+    meals = {meal["meal_type"]: meal for meal in swapped.json()["meals"]}
+    assert set(meals) == {"breakfast", "lunch", "dinner", "snack"}
+    assert meals["breakfast"]["title"] == "Chia Seed Pudding"
+    assert meals["lunch"]["title"] == "Pasta Salad with Tuna"
+    assert meals["dinner"]["title"] == "Shrimp Tacos"
+    assert meals["snack"]["title"] == "Peanut Butter Banana Rice Cakes"
+    assert meals["snack"]["instructions"]
+
+
 def test_grocery_page_exposes_package_and_pantry_preferences(client: TestClient):
     page = client.get("/ui/grocery.html")
     script = client.get("/ui/grocery.js")
