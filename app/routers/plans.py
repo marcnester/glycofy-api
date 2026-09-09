@@ -399,6 +399,7 @@ class ApplyItem(BaseModel):
 
     # WHY BUTTON FIX: AI explanation returned by /v1/llm/recommend.
     reason: str | None = None
+    fallback: str | None = Field(default=None, max_length=64)
 
     # Legacy AI idea path (front-end builds from LLM meta.ai_idea)
     ai_idea: AIIdeaPayload | None = Field(
@@ -1094,6 +1095,8 @@ def apply_recommendations(
                 **(getattr(meal, "meta", None) or {}),
                 "reason": it.reason,
             }
+            if it.fallback:
+                meal.meta = {**meal.meta, "generation": {"fallback": it.fallback}}
 
             created_any = True
         elif it.ai_idea is not None:
@@ -1102,6 +1105,8 @@ def apply_recommendations(
                 **(getattr(meal, "meta", None) or {}),
                 "reason": it.reason,
             }
+            if it.fallback:
+                meal.meta = {**meal.meta, "generation": {"fallback": it.fallback}}
             created_any = True
         elif it.new_recipe is not None:
             # Convert new_recipe into an AIIdeaPayload and reuse the same helper
@@ -1120,6 +1125,8 @@ def apply_recommendations(
                 **(getattr(meal, "meta", None) or {}),
                 "reason": it.reason,
             }
+            if it.fallback:
+                meal.meta = {**meal.meta, "generation": {"fallback": it.fallback}}
             created_any = True
 
     if created_any:

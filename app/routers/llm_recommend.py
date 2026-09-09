@@ -3949,7 +3949,7 @@ def _run_weekly_job(job_id: str, payload_data: dict[str, Any], user_id: int, ip:
                 {
                     WeeklyPlanningJob.status: "running",
                     WeeklyPlanningJob.stage: "generating",
-                    WeeklyPlanningJob.message: "Designing 28 meals with AI…",
+                    WeeklyPlanningJob.message: "Designing your weekly meals and snacks with AI…",
                     WeeklyPlanningJob.started_at: datetime.utcnow(),
                     WeeklyPlanningJob.updated_at: datetime.utcnow(),
                     WeeklyPlanningJob.worker_id: _WEEKLY_WORKER_ID,

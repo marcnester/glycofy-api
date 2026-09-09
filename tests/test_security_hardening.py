@@ -228,6 +228,7 @@ def test_single_meal_ai_swap_preserves_every_other_meal(client: TestClient):
                 {
                     "slot": "snack",
                     "reason": "Portable fuel.",
+                    "fallback": "deterministic_library",
                     "ai_idea": {
                         "title": "Peanut Butter Banana Rice Cakes",
                         "ingredients": [
@@ -254,6 +255,7 @@ def test_single_meal_ai_swap_preserves_every_other_meal(client: TestClient):
     assert meals["dinner"]["title"] == "Shrimp Tacos"
     assert meals["snack"]["title"] == "Peanut Butter Banana Rice Cakes"
     assert meals["snack"]["instructions"]
+    assert meals["snack"]["meta"]["generation"]["fallback"] == "deterministic_library"
 
 
 def test_grocery_page_exposes_package_and_pantry_preferences(client: TestClient):
@@ -311,11 +313,15 @@ def test_account_deletion_dialog_supports_escape_key():
 def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     page = Path("ui/plan.html").read_text(encoding="utf-8")
     script = Path("ui/plan.js").read_text(encoding="utf-8")
-    assert "plan.js?v=2026-09-08-progress-scope" in page
+    assert "plan.js?v=2026-09-08-ai-recovery" in page
     assert "Creating today's plan" in script
     assert "Designing today’s meals and snacks…" in script
     assert "Designing your meals and snacks as one balanced week…" in script
     assert "Designing 28 meals" not in script
+    assert 'id="plan-busy-retry"' in page
+    assert "Error reference:" in script
+    assert "Verified fallback" in script
+    assert "AI was temporarily unavailable, so Glycofy used its verified recipe library." in script
     assert "Keep this page open while AI finishes." in script
     assert "You can safely leave this page; planning will continue." in script
     assert "Preparation details are missing from this older recommendation." in script

@@ -89,10 +89,12 @@
   const busyMsg = $('plan-busy-msg');
   const busyMeta = $('plan-busy-meta');
   const busyCancel = $('plan-busy-cancel');
+  const busyRetry = $('plan-busy-retry');
   let busyStartedAt = 0;
   let busyTimer = null;
   let busyCanContinueInBackground = true;
   let activeWeeklyJobId = null;
+  let weeklyRetryAction = null;
 
   const TODAY_PROGRESS_STAGES = [
     [0, 'Reviewing today’s goals and training…'],
@@ -141,8 +143,34 @@
       clearInterval(busyTimer);
       busyTimer = null;
       busyStartedAt = 0;
+      if (busyRetry) busyRetry.hidden = true;
+      weeklyRetryAction = null;
     }
   }
+
+  function showWeeklyFailure(error, retryAction) {
+    clearInterval(busyTimer);
+    busyTimer = null;
+    busyStartedAt = 0;
+    activeWeeklyJobId = null;
+    sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
+    if (busyTitle) busyTitle.textContent = 'Weekly planning needs another try';
+    if (busyMsg) busyMsg.textContent = error.message || 'We couldn’t finish this week plan.';
+    if (busyMeta) {
+      busyMeta.textContent = error.errorReference
+        ? `Error reference: ${error.errorReference}`
+        : 'Your existing meal plan was not changed.';
+    }
+    if (busyCancel) busyCancel.hidden = true;
+    weeklyRetryAction = retryAction;
+    if (busyRetry) busyRetry.hidden = false;
+  }
+
+  busyRetry?.addEventListener('click', () => {
+    const retry = weeklyRetryAction;
+    setBusy(false);
+    retry?.();
+  });
 
   // Logout wiring for this page
   const logoutBtn =
@@ -560,7 +588,10 @@
       if (job.status === 'completed') return job.result;
       if (job.status === 'cancelled') throw new Error('Weekly planning was cancelled.');
       if (job.status === 'failed') {
-        throw new Error(job.error || 'Weekly AI planning failed.');
+        const error = new Error(job.error || 'Weekly AI planning failed.');
+        error.weeklyFailure = true;
+        error.errorReference = job.error_reference || null;
+        throw error;
       }
       updateBusyProgress(job.message || null);
       await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -820,6 +851,7 @@
       if (seen.has(slot)) continue;
 
       const payload = { slot };
+      if (it?.meta?.fallback) payload.fallback = String(it.meta.fallback);
 
       const recipeId =
         it.recipe_id ||
@@ -996,7 +1028,11 @@
         // badge: AI pick if any LLM reason or freeform overlay
         if (badgeEl) {
           if (ff || getReasonForSlot(slot)) {
-            badgeEl.textContent = 'AI pick';
+            const fallback = base?.meta?.generation?.fallback;
+            badgeEl.textContent = fallback ? 'Verified fallback' : 'AI pick';
+            badgeEl.title = fallback
+              ? 'AI was temporarily unavailable, so Glycofy used its verified recipe library.'
+              : 'Selected by Glycofy AI';
             badgeEl.classList.add('meal-badge--ai');
             badgeEl.style.display = 'inline-flex';
           } else {
@@ -1422,12 +1458,13 @@
         );
       } catch (err) {
         console.error(err);
-        flash(
-          String(err.message || 'Failed to plan the week with AI.'),
-          'error'
-        );
+        if (err.weeklyFailure) {
+          showWeeklyFailure(err, () => weekBtn.click());
+        } else {
+          flash(String(err.message || 'Failed to plan the week with AI.'), 'error');
+        }
       } finally {
-        setBusy(false);
+        if (!weeklyRetryAction) setBusy(false);
       }
     });
   }
@@ -1460,11 +1497,15 @@
       );
     } catch (err) {
       sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
-      flash(String(err.message || 'Failed to resume weekly planning.'), 'error');
+      if (err.weeklyFailure) {
+        showWeeklyFailure(err, () => weekBtn?.click());
+      } else {
+        flash(String(err.message || 'Failed to resume weekly planning.'), 'error');
+      }
     } finally {
       activeWeeklyJobId = null;
       if (busyCancel) busyCancel.hidden = true;
-      setBusy(false);
+      if (!weeklyRetryAction) setBusy(false);
     }
   })();
 
