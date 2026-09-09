@@ -2,7 +2,7 @@
 
 ## Release candidate
 
-- Production commit: `ed34496`
+- Production commit at certification start: `ed34496`
 - Environment: `https://app.glycofy.ai`
 - Certification status: **In progress**
 
@@ -24,6 +24,10 @@
 - New-athlete onboarding correctly began at 17% and reached 100% after required athlete fields were saved.
 - Empty training showed the standard-target warning; adding a 75-minute hard HYROX key session changed the status to partial context with one upcoming workout.
 - Today AI completed with personalized meals, ingredient quantities, and cooking guidance.
+- Weekly AI survived navigation away, reconnected to its durable job, and completed seven planned days.
+- The weekly grocery view aggregated 77 shopping rows with package guidance and a single list-level approval action.
+- Disposable-account verification, password reset, old-password rejection, new-password login, data export, and permanent deletion passed.
+- Deleted credentials were rejected and the deleted session no longer authorized account access.
 
 ## Certification corrections
 
@@ -31,10 +35,10 @@
 - Password-reset links redirected an already signed-in recipient to Home before showing the reset form. Reset mode now takes precedence over an existing session when a token is present.
 - UI HTML relied on heuristic browser caching, which could briefly preserve an older account-flow script after deployment. HTML documents now explicitly use `Cache-Control: no-store`; versioned static assets remain cacheable.
 - A rejected password displayed the internal code `invalid_credentials`. The sign-in form now presents “Email or password is incorrect.” while preserving the server's non-enumerating response.
+- Successful deletion redirected to the sign-in page without acknowledging completion. The redirect now displays an explicit confirmation that the account and Glycofy data were permanently deleted.
 
 ## Pending gates
 
-- Disposable-account email signup, verification, password recovery, data export, and deletion.
 - End-to-end Google signup using the disposable account.
 - Authenticated Today, Weekly, Training, Profile, Grocery, feedback, and operations walkthrough on the final candidate.
 - Exact iPhone Safari and Android Chrome viewport/device matrix.

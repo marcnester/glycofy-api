@@ -124,8 +124,10 @@ def test_login_page_exposes_recovery_controls(client_and_engine):
     assert "/auth/reset-password" in script
     assert 'requestedMode === "reset"' in script
     assert "ok && !isPasswordReset" in script
-    assert "login.js?v=2026-09-08-account-errors" in page
+    assert "login.js?v=2026-09-08-account-status" in page
     assert 'msg === "invalid_credentials"' in script
     assert "Email or password is incorrect." in script
+    assert 'params.get("account") === "deleted"' in script
+    assert "Your account and Glycofy data have been permanently deleted." in script
     assert 'id="delete_account"' in profile
     assert 'href="/users/me/export"' in profile

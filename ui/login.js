@@ -168,6 +168,9 @@
     await wireGoogle();
 
     setMode(["signup", "reset"].includes(requestedMode) ? requestedMode : "signin");
+    if (params.get("account") === "deleted") {
+      flash("Your account and Glycofy data have been permanently deleted.");
+    }
     if (params.get("verification") === "success") flash("Email verified. You can sign in now.");
     if (params.get("verification") === "invalid") flash("That verification link is invalid or expired. Sign in to request another.", "error");
     $("mode-switch")?.addEventListener("click", () => setMode(authMode === "signup" ? "signin" : "signup"));
