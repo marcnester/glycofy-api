@@ -130,11 +130,16 @@ def test_home_replaces_technical_account_details_with_training_summary(client: T
 
     assert "Today’s training &amp; fueling" in page.text
     assert 'id="trainingConfidence"' in page.text
+    assert 'id="workoutState"' in page.text
     assert 'id="fuelingFocus"' in page.text
     assert 'id="manageTraining"' in page.text
     assert "Cookie session" not in page.text
     assert "<h3>Account</h3>" not in page.text
     assert "/v1/training-events/context/" in script.text
+    assert 'label: "Next workout", phase: "future"' in script.text
+    assert 'label: "Earlier today", phase: "past"' in script.text
+    assert 'label: "Today’s workout", phase: "flexible"' in script.text
+    assert "Support recovery with protein, carbohydrates" in script.text
 
 
 def test_plan_exposes_private_adaptive_meal_feedback(client: TestClient):

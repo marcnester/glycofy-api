@@ -134,8 +134,36 @@
     return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(parsed);
   }
 
-  function fuelingFor(event) {
+  function workoutDisplayState(events, now = new Date()) {
+    if (!events.length) return { event: null, label: "Today’s workout", phase: "none" };
+
+    const timed = events
+      .map((event) => ({ event, startsAt: event.start_time ? new Date(event.start_time) : null }))
+      .filter(({ startsAt }) => startsAt && !Number.isNaN(startsAt.getTime()));
+    const future = timed
+      .filter(({ startsAt }) => startsAt > now)
+      .sort((a, b) => a.startsAt - b.startsAt);
+    if (future.length) return { event: future[0].event, label: "Next workout", phase: "future" };
+
+    const past = timed
+      .filter(({ startsAt }) => startsAt <= now)
+      .sort((a, b) => b.startsAt - a.startsAt);
+    if (past.length) return { event: past[0].event, label: "Earlier today", phase: "past" };
+
+    return { event: events[0], label: "Today’s workout", phase: "flexible" };
+  }
+
+  function fuelingFor(event, phase) {
     if (!event) return "Follow today’s calorie and macro targets; no workout-specific timing is needed.";
+    if (phase === "past") {
+      if (event.intensity === "race" || event.intensity === "hard" || event.priority === "key" || event.duration_min >= 90) {
+        return "Prioritize recovery now with carbohydrates, protein, fluids, and electrolytes.";
+      }
+      if (event.intensity === "moderate" || event.duration_min >= 60) {
+        return "Support recovery with protein, carbohydrates, and steady hydration through the rest of today.";
+      }
+      return "Keep protein distributed through today and rehydrate after your session.";
+    }
     if (event.intensity === "race" || event.intensity === "hard" || event.priority === "key" || event.duration_min >= 90) {
       return "Prioritize carbohydrate availability before training and protein with carbohydrates afterward.";
     }
@@ -148,12 +176,14 @@
   function renderTrainingSummary(summary) {
     const events = summary?.events || [];
     const context = summary?.context || {};
-    const event = events[0] || null;
+    const workout = workoutDisplayState(events);
+    const event = workout.event;
+    $("workoutState").textContent = workout.label;
     $("workoutTitle").textContent = event ? event.sport : "No workout scheduled today";
     $("workoutMeta").textContent = event
       ? `${workoutTime(event.start_time)} · ${event.duration_min} min · ${event.intensity}${events.length > 1 ? ` · +${events.length - 1} more today` : ""}`
       : "Recovery or rest day";
-    $("fuelingFocus").textContent = fuelingFor(event);
+    $("fuelingFocus").textContent = fuelingFor(event, workout.phase);
     $("trainingContext").textContent = context.message || "Training context is unavailable right now.";
     const confidence = $("trainingConfidence");
     if (context.state === "complete") {
@@ -169,6 +199,7 @@
   }
 
   function renderTrainingUnavailable() {
+    $("workoutState").textContent = "Today’s workout";
     $("workoutTitle").textContent = "Training details unavailable";
     $("workoutMeta").textContent = "Open Training to review your schedule";
     $("fuelingFocus").textContent = "Today’s meals still follow your athlete profile and macro targets.";
