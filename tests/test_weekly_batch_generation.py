@@ -102,7 +102,7 @@ def test_preferred_snacks_split_existing_daily_targets_without_adding_calories()
     assert llm_recommend._snack_schedule(pref) == [("snack", "10:00"), ("snack_2", "15:00")]
 
 
-def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeypatch):
+def test_weekly_batch_parallelizes_bounded_day_calls_and_accepts_complete_week(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.6-luna")
     dates = ["2026-09-01", "2026-09-02"]
     response_body = {
@@ -140,7 +140,7 @@ def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeyp
 
     monkeypatch.setattr(llm_recommend, "_circuit_open", lambda: False)
     monkeypatch.setattr(llm_recommend, "_daily_budget_usd", lambda: 100.0)
-    recommendations, meta = llm_recommend._batch_week_recommendations(
+    recommendations, meta = llm_recommend._parallel_week_recommendations(
         client,
         days=days,
         primary_diet="omnivore",
@@ -149,7 +149,7 @@ def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeyp
         athlete_feedback={"feedback_count": 3, "favorite_meals": ["Salmon rice bowl"]},
     )
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert calls[0]["response_format"]["type"] == "json_schema"
     assert calls[0]["model"] == "gpt-5.6-luna"
     assert calls[0]["reasoning_effort"] == "none"
@@ -158,6 +158,9 @@ def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeyp
     assert "max_tokens" not in calls[0]
     sent_payload = json.loads(calls[0]["messages"][1]["content"])
     assert sent_payload["athlete_feedback"]["favorite_meals"] == ["Salmon rice bowl"]
+    assert len(sent_payload["days"]) == 1
+    assert len(sent_payload["week_context"]) == 2
+    assert sent_payload["days"][0]["variety_assignment"] in llm_recommend._DAY_THEMES
     system_prompt = calls[0]["messages"][0]["content"]
     assert "never copy target_macros into macros" in system_prompt
     ingredient_schema = calls[0]["response_format"]["json_schema"]["schema"]["properties"]["days"]["items"][

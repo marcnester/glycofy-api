@@ -3494,6 +3494,7 @@ def _batch_week_recommendations(
     diet_tags: list[str],
     exclusions: list[str],
     athlete_feedback: dict[str, Any] | None = None,
+    week_context: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
     """Generate the whole week in one model round-trip and discard unsafe cells."""
     if not client or not days or _circuit_open() or _BUDGET.spent_usd >= _daily_budget_usd():
@@ -3530,6 +3531,9 @@ def _batch_week_recommendations(
         "avoid one-off ingredients; and target no more than about 40 unique non-pantry grocery products for the week. "
         "Create variety through preparation and seasoning rather than a completely different ingredient set every day. "
         "Plan globally first so variety is intentional, then emit only the requested structured data."
+        " When variety_assignment is present, use that culinary direction to distinguish the day's meals while still "
+        "respecting the athlete's diet, safety constraints, targets, and practical grocery reuse. Use week_context to "
+        "coordinate fueling across the week, but return meals only for the dates in days."
         " Use athlete_feedback as a bounded preference signal: avoid poorly rated or skipped meals, favor useful "
         "patterns from favorites, and respond to repeated portion, digestion, or practicality signals without "
         "inferring medical conditions."
@@ -3539,6 +3543,7 @@ def _batch_week_recommendations(
         "diet_tags": diet_tags,
         "ingredient_exclusions": exclusions,
         "athlete_feedback": athlete_feedback or {"feedback_count": 0},
+        "week_context": week_context or days,
         "days": days,
     }
     started = time.perf_counter()
@@ -3719,6 +3724,74 @@ def _batch_week_recommendations(
     return output, meta
 
 
+_DAY_THEMES = (
+    "Mediterranean",
+    "Latin American",
+    "East Asian",
+    "Middle Eastern",
+    "Modern American",
+    "South Asian",
+    "European bistro",
+)
+
+
+def _parallel_week_recommendations(
+    client: ClientType,
+    *,
+    days: list[dict[str, Any]],
+    primary_diet: str,
+    diet_tags: list[str],
+    exclusions: list[str],
+    athlete_feedback: dict[str, Any] | None = None,
+) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
+    """Generate bounded daily payloads concurrently while retaining full-week context."""
+    if len(days) <= 1:
+        return _batch_week_recommendations(
+            client,
+            days=days,
+            primary_diet=primary_diet,
+            diet_tags=diet_tags,
+            exclusions=exclusions,
+            athlete_feedback=athlete_feedback,
+            week_context=days,
+        )
+
+    themed_days = [
+        {**day, "variety_assignment": _DAY_THEMES[index % len(_DAY_THEMES)]} for index, day in enumerate(days)
+    ]
+    output: dict[str, dict[str, SlotRecommendation]] = {}
+    metas: list[dict[str, Any]] = []
+    started = time.perf_counter()
+
+    def generate(day: dict[str, Any]):
+        return _batch_week_recommendations(
+            client,
+            days=[day],
+            primary_diet=primary_diet,
+            diet_tags=diet_tags,
+            exclusions=exclusions,
+            athlete_feedback=athlete_feedback,
+            week_context=themed_days,
+        )
+
+    with ThreadPoolExecutor(max_workers=min(7, len(themed_days)), thread_name_prefix="weekly-day") as executor:
+        futures = [executor.submit(generate, day) for day in themed_days]
+        for future in futures:
+            day_output, day_meta = future.result()
+            output.update(day_output)
+            metas.append(day_meta)
+
+    return output, {
+        "mode": "parallel_days",
+        "latency_ms": round((time.perf_counter() - started) * 1000),
+        "accepted": sum(int(meta.get("accepted") or 0) for meta in metas),
+        "rejected": sum(int(meta.get("rejected") or 0) for meta in metas),
+        "day_generations": len(metas),
+        "prompt_version": PROMPT_VERSION,
+        "quality_policy_version": QUALITY_POLICY_VERSION,
+    }
+
+
 @router.post("/recommend/weekly/apply_payload", tags=["llm"])
 def recommend_weekly_apply(
     request: Request,
@@ -3797,7 +3870,7 @@ def recommend_weekly_apply(
             }
         )
 
-    batch_items, batch_meta = _batch_week_recommendations(
+    batch_items, batch_meta = _parallel_week_recommendations(
         client,
         days=batch_days,
         primary_diet=primary_diet,
