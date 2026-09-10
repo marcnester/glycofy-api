@@ -1010,7 +1010,14 @@ def _get_openai_client() -> ClientType | None:
 
 
 def _openai_model() -> str:
-    return os.environ.get("OPENAI_MODEL", "gpt-4o-mini-2024-07-18")
+    return os.environ.get("OPENAI_MODEL", "gpt-5.6-luna")
+
+
+def _chat_generation_options(model: str) -> dict[str, Any]:
+    """Use parameters supported by both legacy chat models and GPT-5.6."""
+    if model.startswith("gpt-5.6"):
+        return {"reasoning_effort": os.environ.get("OPENAI_REASONING_EFFORT", "none")}
+    return {"temperature": 0.2}
 
 
 class _Budget:
@@ -1074,8 +1081,8 @@ def _estimate_cost_from_usage(usage: dict[str, Any] | None) -> float:
     try:
         input_tokens = float(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
         output_tokens = float(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
-        p_in = float(os.environ.get("OPENAI_PRICE_PER_1K_INPUT", "0.0005"))
-        p_out = float(os.environ.get("OPENAI_PRICE_PER_1K_OUTPUT", "0.0015"))
+        p_in = float(os.environ.get("OPENAI_PRICE_PER_1K_INPUT", "0.0002"))
+        p_out = float(os.environ.get("OPENAI_PRICE_PER_1K_OUTPUT", "0.0012"))
         return (input_tokens / 1000.0) * p_in + (output_tokens / 1000.0) * p_out
     except Exception:
         return 0.0
@@ -1159,7 +1166,7 @@ def _safe_openai_json_pick(
             )
             resp = client.chat.completions.create(
                 model=model,
-                temperature=0.2,
+                **_chat_generation_options(model),
                 response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": system},
@@ -3476,10 +3483,11 @@ def _batch_week_recommendations(
     }
     started = time.perf_counter()
     try:
+        model = _openai_model()
         response = client.chat.completions.create(
-            model=_openai_model(),
-            temperature=0.2,
-            max_tokens=int(
+            model=model,
+            **_chat_generation_options(model),
+            max_completion_tokens=int(
                 os.environ.get(
                     "OPENAI_WEEKLY_MAX_TOKENS",
                     str(max(12000, len(days) * len(days[0].get("meals", [])) * 450)),

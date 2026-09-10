@@ -83,6 +83,7 @@ def test_preferred_snacks_split_existing_daily_targets_without_adding_calories()
 
 
 def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeypatch):
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.6-luna")
     dates = ["2026-09-01", "2026-09-02"]
     response_body = {
         "days": [
@@ -130,6 +131,11 @@ def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeyp
 
     assert len(calls) == 1
     assert calls[0]["response_format"]["type"] == "json_schema"
+    assert calls[0]["model"] == "gpt-5.6-luna"
+    assert calls[0]["reasoning_effort"] == "none"
+    assert "temperature" not in calls[0]
+    assert "max_completion_tokens" in calls[0]
+    assert "max_tokens" not in calls[0]
     sent_payload = json.loads(calls[0]["messages"][1]["content"])
     assert sent_payload["athlete_feedback"]["favorite_meals"] == ["Salmon rice bowl"]
     assert meta["accepted"] == 8
