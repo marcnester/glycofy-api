@@ -8,6 +8,7 @@ from app.services.meal_quality import (
     PROMPT_VERSION,
     QUALITY_POLICY_VERSION,
     evaluate_plan,
+    ingredient_nutrition_totals,
     validate_meal,
 )
 
@@ -69,6 +70,99 @@ def test_nutrition_plausibility_checks_macro_energy_and_single_meal_bounds():
     assert "implausible_macros" in validate_meal(extreme).codes()
 
 
+def test_itemized_nutrition_is_required_and_must_equal_meal_totals():
+    candidate = meal()
+    assert "missing_ingredient_nutrition" in validate_meal(candidate, require_ingredient_nutrition=True).codes()
+
+    candidate["ingredients"] = [
+        {
+            "name": "tofu",
+            "amount": "6",
+            "unit": "oz",
+            "nutrition": {"kcal": 250, "protein_g": 30, "carbs_g": 10, "fat_g": 10},
+        },
+        {
+            "name": "rice",
+            "amount": "1",
+            "unit": "cup",
+            "nutrition": {"kcal": 250, "protein_g": 5, "carbs_g": 55, "fat_g": 3},
+        },
+    ]
+    assert ingredient_nutrition_totals(candidate) == {
+        "kcal": 500.0,
+        "protein_g": 35.0,
+        "carbs_g": 65.0,
+        "fat_g": 13.0,
+    }
+    assert "ingredient_macro_mismatch" not in validate_meal(candidate, require_ingredient_nutrition=True).codes()
+    candidate["macros"]["protein_g"] = 55
+    assert "ingredient_macro_mismatch" in validate_meal(candidate, require_ingredient_nutrition=True).codes()
+
+
+@pytest.mark.parametrize(
+    ("ingredients", "macros", "expected_issue"),
+    [
+        (
+            [
+                {
+                    "name": "grilled chicken",
+                    "amount": "6",
+                    "unit": "oz",
+                    "nutrition": {"kcal": 300, "protein_g": 45, "carbs_g": 0, "fat_g": 13},
+                },
+                {
+                    "name": "romaine lettuce",
+                    "amount": "2",
+                    "unit": "cups",
+                    "nutrition": {"kcal": 180, "protein_g": 0, "carbs_g": 45, "fat_g": 0},
+                },
+            ],
+            {"kcal": 480, "protein_g": 45, "carbs_g": 45, "fat_g": 13},
+            "missing_carb_source",
+        ),
+        (
+            [
+                {
+                    "name": "mixed vegetables",
+                    "amount": "2",
+                    "unit": "cups",
+                    "nutrition": {"kcal": 220, "protein_g": 30, "carbs_g": 25, "fat_g": 0},
+                },
+                {
+                    "name": "coconut milk",
+                    "amount": "1/2",
+                    "unit": "cup",
+                    "nutrition": {"kcal": 180, "protein_g": 0, "carbs_g": 5, "fat_g": 20},
+                },
+            ],
+            {"kcal": 400, "protein_g": 30, "carbs_g": 30, "fat_g": 20},
+            "missing_protein_source",
+        ),
+        (
+            [
+                {
+                    "name": "shrimp",
+                    "amount": "6",
+                    "unit": "oz",
+                    "nutrition": {"kcal": 250, "protein_g": 40, "carbs_g": 0, "fat_g": 20},
+                },
+                {
+                    "name": "corn tortillas",
+                    "amount": "2",
+                    "unit": "items",
+                    "nutrition": {"kcal": 200, "protein_g": 5, "carbs_g": 45, "fat_g": 0},
+                },
+            ],
+            {"kcal": 450, "protein_g": 45, "carbs_g": 45, "fat_g": 20},
+            "missing_fat_source",
+        ),
+    ],
+)
+def test_claimed_macros_require_real_food_sources(ingredients, macros, expected_issue):
+    candidate = meal(ingredients=ingredients, macros=macros)
+    assert expected_issue in validate_meal(candidate, require_ingredient_nutrition=True).codes()
+
+
 def test_recipe_timing_and_safe_doneness_are_consistent():
     salmon = meal(
         title="Baked Salmon and Rice",
@@ -93,7 +187,7 @@ def test_complete_meal_passes_every_evaluation_profile_and_versions_are_reported
         assert result["quality_policy_version"] == QUALITY_POLICY_VERSION
 
 
-def test_questionable_ai_meal_is_replaced_with_safe_fallback(monkeypatch):
+def test_questionable_ai_meal_fails_closed_without_verified_fallback(monkeypatch):
     monkeypatch.setattr(
         llm_recommend,
         "_safe_openai_json_pick",
@@ -136,7 +230,7 @@ def test_questionable_ai_meal_is_replaced_with_safe_fallback(monkeypatch):
         allow_new_recipe=True,
     )
 
-    assert mode == "create"
-    assert idea is not None and idea["title"] != "Mystery Performance Bowl"
+    assert mode == "empty"
+    assert idea is None
     assert meta["fallback"] == "quality_validation"
     assert "incomplete_instructions" in meta["quality"]["issues"]

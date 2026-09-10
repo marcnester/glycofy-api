@@ -250,7 +250,7 @@ def test_same_date_writes_create_only_the_callers_records(authorization_app):
     owner_plan = owner.get(f"/v1/plan/{day}").json()
     owner_energy = owner.get(f"/v1/energy/{day}").json()
     owner_grocery = owner.get("/v1/plan/grocery-list/preferences").json()["preferences"]
-    assert owner_plan["totals"] == {"kcal": 700}
+    assert owner_plan["totals"] == {"kcal": 700.0, "protein_g": 50.0, "carbs_g": 80.0, "fat_g": 20.0}
     assert owner_plan["meals"][0]["title"] == "Owner private dinner"
     assert owner_energy["target_kcal"] == 2700
     assert owner_energy["meta"] == {"private": "owner"}

@@ -5,8 +5,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-PROMPT_VERSION = "meal-planner-2026-09-09-v2"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-09-v2"
+PROMPT_VERSION = "meal-planner-2026-09-10-v3"
+QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-10-v3"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 ANIMAL_MEAT = {"beef", "chicken", "cod", "fish", "lamb", "pork", "salmon", "shrimp", "steak", "turkey", "tuna"}
@@ -40,6 +40,69 @@ DONENESS_MARKERS = {
     "°c",
 }
 NONFOOD_HAZARDS = {"bleach", "borax", "detergent", "dish soap", "rubbing alcohol"}
+PROTEIN_SOURCE_MARKERS = {
+    "beef",
+    "chicken",
+    "cod",
+    "cottage cheese",
+    "edamame",
+    "egg",
+    "eggs",
+    "greek yogurt",
+    "lentil",
+    "lentils",
+    "pork",
+    "protein",
+    "salmon",
+    "seitan",
+    "shrimp",
+    "tempeh",
+    "tofu",
+    "tuna",
+    "turkey",
+    "whey",
+}
+CARB_SOURCE_MARKERS = {
+    "bagel",
+    "banana",
+    "barley",
+    "bean",
+    "beans",
+    "bread",
+    "carb",
+    "couscous",
+    "fruit",
+    "granola",
+    "honey",
+    "lentil",
+    "oat",
+    "oats",
+    "pasta",
+    "pita",
+    "plantain",
+    "potato",
+    "quinoa",
+    "rice",
+    "tortilla",
+    "tortillas",
+    "wrap",
+}
+FAT_SOURCE_MARKERS = {
+    "almond",
+    "avocado",
+    "butter",
+    "cheese",
+    "chia",
+    "coconut",
+    "egg",
+    "oil",
+    "peanut",
+    "salmon",
+    "seed",
+    "seeds",
+    "tahini",
+    "walnut",
+}
 
 
 @dataclass(frozen=True)
@@ -67,6 +130,26 @@ def _number(value: Any) -> float | None:
         return result if result >= 0 else None
     except (TypeError, ValueError):
         return None
+
+
+def ingredient_nutrition_totals(meal: dict[str, Any]) -> dict[str, float] | None:
+    """Sum itemized nutrition evidence, or return None when any ingredient lacks it."""
+    ingredients = meal.get("ingredients")
+    if not isinstance(ingredients, list) or not ingredients:
+        return None
+    totals = {name: 0.0 for name in MACROS}
+    for item in ingredients:
+        if not isinstance(item, dict):
+            return None
+        nutrition = item.get("nutrition")
+        if not isinstance(nutrition, dict):
+            return None
+        values = {name: _number(nutrition.get(name)) for name in MACROS}
+        if any(value is None for value in values.values()):
+            return None
+        for name, value in values.items():
+            totals[name] += float(value or 0.0)
+    return {name: round(value, 1) for name, value in totals.items()}
 
 
 def _words(value: Any) -> str:
@@ -124,6 +207,7 @@ def validate_meal(
     target: dict[str, Any] | None = None,
     exclusions: list[str] | None = None,
     diet: str | None = None,
+    require_ingredient_nutrition: bool = False,
 ) -> MealQualityReport:
     report = MealQualityReport()
     title = str(meal.get("title") or "").strip()
@@ -147,6 +231,15 @@ def validate_meal(
                     QualityIssue("unmeasured_ingredient", "Every ingredient needs a name, amount, and unit.")
                 )
                 break
+
+    evidence = ingredient_nutrition_totals(meal)
+    if require_ingredient_nutrition and evidence is None:
+        report.issues.append(
+            QualityIssue(
+                "missing_ingredient_nutrition",
+                "Every ingredient needs an itemized calorie and macronutrient contribution.",
+            )
+        )
     if not isinstance(instructions, list) or len([step for step in instructions if str(step).strip()]) < 2:
         report.issues.append(QualityIssue("incomplete_instructions", "At least two preparation steps are required."))
 
@@ -169,12 +262,34 @@ def validate_meal(
             report.issues.append(
                 QualityIssue("macro_energy_mismatch", "Calories are inconsistent with protein, carbohydrate, and fat.")
             )
+        if evidence is not None:
+            tolerances = {"kcal": 25.0, "protein_g": 2.0, "carbs_g": 2.0, "fat_g": 2.0}
+            if any(abs(float(values[name] or 0.0) - evidence[name]) > tolerances[name] for name in MACROS):
+                report.issues.append(
+                    QualityIssue(
+                        "ingredient_macro_mismatch",
+                        "Meal nutrition does not equal the sum of its ingredient nutrition.",
+                    )
+                )
+            ingredient_names = _words(" ".join(str(item.get("name") or "") for item in ingredients))
+            if protein >= 25 and not any(_contains(ingredient_names, marker) for marker in PROTEIN_SOURCE_MARKERS):
+                report.issues.append(
+                    QualityIssue("missing_protein_source", "Claimed protein has no adequate ingredient source.")
+                )
+            if carbs >= 35 and not any(_contains(ingredient_names, marker) for marker in CARB_SOURCE_MARKERS):
+                report.issues.append(
+                    QualityIssue("missing_carb_source", "Claimed carbohydrate has no adequate ingredient source.")
+                )
+            if fat >= 15 and not any(_contains(ingredient_names, marker) for marker in FAT_SOURCE_MARKERS):
+                report.issues.append(
+                    QualityIssue("missing_fat_source", "Claimed fat has no adequate ingredient source.")
+                )
         if target:
             for name in MACROS:
                 target_value = _number(target.get(name))
                 actual = values[name]
-                if target_value and actual is not None and abs(actual - target_value) / target_value > 0.25:
-                    report.issues.append(QualityIssue("target_miss", f"{name} is more than 25% from its target."))
+                if target_value and actual is not None and abs(actual - target_value) / target_value > 0.18:
+                    report.issues.append(QualityIssue("target_miss", f"{name} is more than 18% from its target."))
                     break
 
     prep = _number(meal.get("prep_time_min"))

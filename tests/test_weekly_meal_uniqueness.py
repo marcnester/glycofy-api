@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from unittest.mock import MagicMock
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -19,9 +20,24 @@ def test_ai_created_meal_retries_duplicate_weekly_title(monkeypatch):
                     "new_recipe": {
                         "title": "  Savory Quinoa and Spinach Bowl  ",
                         "ingredients": [
-                            {"name": "quinoa", "amount": "1", "unit": "cup"},
-                            {"name": "spinach", "amount": "2", "unit": "cups"},
-                            {"name": "salmon", "amount": "6", "unit": "oz"},
+                            {
+                                "name": "quinoa",
+                                "amount": "1",
+                                "unit": "cup",
+                                "nutrition": {"kcal": 220, "protein_g": 8, "carbs_g": 39, "fat_g": 4},
+                            },
+                            {
+                                "name": "spinach",
+                                "amount": "2",
+                                "unit": "cups",
+                                "nutrition": {"kcal": 30, "protein_g": 4, "carbs_g": 6, "fat_g": 0},
+                            },
+                            {
+                                "name": "salmon",
+                                "amount": "6",
+                                "unit": "oz",
+                                "nutrition": {"kcal": 250, "protein_g": 28, "carbs_g": 10, "fat_g": 10},
+                            },
                         ],
                         "instructions": ["Cook quinoa.", "Cook salmon until it flakes easily, then serve."],
                         "prep_time_min": 8,
@@ -42,9 +58,24 @@ def test_ai_created_meal_retries_duplicate_weekly_title(monkeypatch):
                     "new_recipe": {
                         "title": "Smoked Salmon Sweet Potato Hash",
                         "ingredients": [
-                            {"name": "sweet potato", "amount": "8", "unit": "oz"},
-                            {"name": "spinach", "amount": "2", "unit": "cups"},
-                            {"name": "salmon", "amount": "6", "unit": "oz"},
+                            {
+                                "name": "sweet potato",
+                                "amount": "8",
+                                "unit": "oz",
+                                "nutrition": {"kcal": 230, "protein_g": 8, "carbs_g": 43, "fat_g": 4},
+                            },
+                            {
+                                "name": "spinach",
+                                "amount": "2",
+                                "unit": "cups",
+                                "nutrition": {"kcal": 30, "protein_g": 4, "carbs_g": 6, "fat_g": 0},
+                            },
+                            {
+                                "name": "salmon",
+                                "amount": "6",
+                                "unit": "oz",
+                                "nutrition": {"kcal": 250, "protein_g": 29, "carbs_g": 8, "fat_g": 10},
+                            },
                         ],
                         "instructions": ["Cook the sweet potato.", "Cook salmon until it flakes easily, then serve."],
                         "prep_time_min": 8,
@@ -156,7 +187,12 @@ def test_weekly_recipe_apply_replaces_placeholders_with_real_ingredients():
         carbs_g=52,
         fat_g=14,
         ingredients=[
-            {"name": "Greek yogurt", "qty": 1, "unit": "cup"},
+            {
+                "name": "Greek yogurt",
+                "qty": 1,
+                "unit": "cup",
+                "nutrition": {"kcal": 180, "protein_g": 24, "carbs_g": 12, "fat_g": 3},
+            },
             {"name": "Mixed berries", "quantity": "1/2", "unit": "cup"},
             "chia seeds",
         ],
@@ -167,6 +203,9 @@ def test_weekly_recipe_apply_replaces_placeholders_with_real_ingredients():
     assert [item.name for item in meal.items] == ["Greek yogurt", "Mixed berries", "chia seeds"]
     assert meal.items[0].qty == 1
     assert meal.items[0].unit == "cup"
+    assert meal.items[0].kcal == 180
+    assert meal.items[0].protein_g == 24
+    assert meal.items[0].meta["nutrition_basis"] == "ingredient_quantity_estimate"
 
 
 def test_legacy_mixed_snack_hides_placeholders_and_gets_useful_title():
@@ -199,6 +238,35 @@ def test_generated_ingredients_require_amounts_and_units():
     assert llm_recommend._ingredients_have_quantities(["1 cup quinoa", "6 oz salmon"])
     assert not llm_recommend._ingredients_have_quantities(["tuna", "sweet potato"])
     assert not llm_recommend._ingredients_have_quantities([{"name": "spinach", "amount": "2", "unit": ""}])
+
+
+def test_catalog_recipe_requires_reconciled_ingredient_nutrition():
+    recipe = Recipe(
+        title="Measured rice bowl",
+        meal_type="lunch",
+        kcal=500,
+        protein_g=35,
+        carbs_g=65,
+        fat_g=13,
+        ingredients=[
+            {
+                "name": "tofu",
+                "amount": "6",
+                "unit": "oz",
+                "nutrition": {"kcal": 250, "protein_g": 30, "carbs_g": 10, "fat_g": 10},
+            },
+            {
+                "name": "rice",
+                "amount": "1",
+                "unit": "cup",
+                "nutrition": {"kcal": 250, "protein_g": 5, "carbs_g": 55, "fat_g": 3},
+            },
+        ],
+    )
+
+    assert llm_recommend._recipe_has_reconciled_nutrition(recipe)
+    recipe.ingredients[0].pop("nutrition")
+    assert not llm_recommend._recipe_has_reconciled_nutrition(recipe)
 
 
 def test_catalog_quantities_embedded_in_names_and_pantry_items_are_cookable():
@@ -291,7 +359,7 @@ def test_structured_allergens_are_merged_with_custom_exclusions():
     assert llm_recommend._text_violates_exclusions("1 cup mushrooms", exclusions)
 
 
-def test_offline_fallback_respects_structured_allergies():
+def test_offline_generation_fails_closed_without_verified_meal():
     pref = MagicMock()
     pref.ingredient_exclusions = ""
     pref.allergies = ["soy", "wheat", "sesame", "tree_nuts"]
@@ -312,11 +380,10 @@ def test_offline_fallback_respects_structured_allergies():
         allow_new_recipe=True,
     )
 
-    assert mode == "create"
+    assert mode == "empty"
     assert recipe is None
-    assert idea is not None
-    assert meta["fallback"] == "deterministic_library"
-    assert not llm_recommend._text_violates_exclusions(str(idea), pref.allergies)
+    assert idea is None
+    assert meta["fallback"] == "no_client"
 
 
 def test_weekly_persistence_saves_ai_reason(monkeypatch):
@@ -543,7 +610,7 @@ def test_weekly_generation_carries_protein_history_into_the_next_day(monkeypatch
     assert breakfast_history[2][1] == ["protein-5", "protein-6", "protein-7", "protein-8"]
 
 
-def test_weekly_generation_is_complete_and_unique_without_ai(monkeypatch):
+def test_weekly_generation_fails_closed_without_ai_or_verified_catalog(monkeypatch):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -572,13 +639,8 @@ def test_weekly_generation_is_complete_and_unique_without_ai(monkeypatch):
         )
         request = MagicMock()
         request.client.host = "127.0.0.1"
-        response = llm_recommend.recommend_weekly_apply(request, payload, db, user)
+        with pytest.raises(llm_recommend.HTTPException) as exc_info:
+            llm_recommend.recommend_weekly_apply(request, payload, db, user)
 
-    assert len(response["days"]) == 7
-    assert all(len(day["items"]) == 4 for day in response["days"])
-    titles = [(item.get("recipe") or item.get("ai_idea"))["title"] for day in response["days"] for item in day["items"]]
-    assert len(set(titles)) == 28
-    for previous, current in zip(response["days"], response["days"][1:], strict=False):
-        previous_proteins = {item["meta"]["protein_item"] for item in previous["items"] if item["slot"] != "snack"}
-        current_proteins = {item["meta"]["protein_item"] for item in current["items"] if item["slot"] != "snack"}
-        assert previous_proteins.isdisjoint(current_proteins)
+    assert exc_info.value.status_code == 422
+    assert "nutrition-safe" in str(exc_info.value.detail)

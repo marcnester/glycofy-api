@@ -62,6 +62,7 @@
   const fuelingContext = $('fueling-context');
   const fuelingContextTitle = $('fueling-context-title');
   const fuelingContextDetails = $('fueling-context-details');
+  const nutritionConfidence = $('nutrition-confidence');
 
   const totalsEl =
     $('totals') || $('plan-totals') || document.getElementById('totals');
@@ -1224,12 +1225,19 @@
       if (mealsRoot && !NEW_LAYOUT) mealsRoot.innerHTML = '';
       if (emptyEl) emptyEl.style.display = '';
       if (totalsEl) totalsEl.style.display = 'none';
+      if (nutritionConfidence) nutritionConfidence.hidden = true;
       return;
     }
 
     if (emptyEl) emptyEl.style.display = 'none';
     if (totalsEl) totalsEl.style.display = '';
     renderTotals(plan);
+    if (nutritionConfidence) {
+      nutritionConfidence.hidden = plan.nutrition_verified !== false;
+      nutritionConfidence.textContent = plan.nutrition_verified === false
+        ? 'This older plan contains nutrition estimates that were not checked ingredient by ingredient. Use Plan Today or Plan My Week to replace it with a nutrition-checked plan.'
+        : '';
+    }
     renderMeals(plan);
   }
 

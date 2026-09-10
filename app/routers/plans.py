@@ -95,6 +95,28 @@ def _aggregate_totals(meals) -> dict[str, float]:
     return totals
 
 
+def _plan_nutrition_verified(meals) -> bool:
+    """Return true only when every meal reconciles to item-level nutrition."""
+    tolerances = {"kcal": 25.0, "protein_g": 2.0, "carbs_g": 2.0, "fat_g": 2.0}
+    if not meals:
+        return False
+    for meal in meals:
+        items = list(getattr(meal, "items", []) or [])
+        if not items:
+            return False
+        item_totals = {key: 0.0 for key in tolerances}
+        for item in items:
+            for key in tolerances:
+                value = getattr(item, key, None)
+                if value is None:
+                    return False
+                item_totals[key] += float(value)
+        for key, tolerance in tolerances.items():
+            if abs(float(getattr(meal, key, None) or 0) - item_totals[key]) > tolerance:
+                return False
+    return True
+
+
 def _plan_to_dict(plan: Plan) -> dict[str, Any]:
     meals = sorted(
         list(getattr(plan, "meals", []) or []),
@@ -105,7 +127,11 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
         "id": plan.id,
         "date": plan.date.isoformat() if getattr(plan, "date", None) else None,
         "locked": bool(getattr(plan, "locked", False)),
-        "totals": getattr(plan, "totals", None) or _aggregate_totals(meals),
+        # Meal rows are authoritative. Stored totals can become stale after a
+        # partial swap or an older deployment, so never display them instead
+        # of the current meal sum.
+        "totals": _aggregate_totals(meals),
+        "nutrition_verified": _plan_nutrition_verified(meals),
         "source": getattr(plan, "source", None),
         "meals": [
             {
@@ -545,6 +571,7 @@ def _apply_ai_idea_to_meal(meal: PlanMeal, ai: AIIdeaPayload, slot: str) -> None
         name = "Item"
         amount: str | None = None
         explicit_unit: str | None = None
+        nutrition: dict[str, Any] = {}
 
         # ✅ HANDLE DICT FIRST (CRITICAL)
         if isinstance(ing, dict):
@@ -554,6 +581,7 @@ def _apply_ai_idea_to_meal(meal: PlanMeal, ai: AIIdeaPayload, slot: str) -> None
             amount = ing.get("amount") or ing.get("qty") or ing.get("quantity") or ""
             amount = str(amount).strip() or None
             explicit_unit = str(ing.get("unit") or ing.get("units") or "").strip() or None
+            nutrition = ing.get("nutrition") if isinstance(ing.get("nutrition"), dict) else {}
 
         # ✅ HANDLE Pydantic objects
         elif hasattr(ing, "name") and not isinstance(ing, dict):
@@ -582,11 +610,11 @@ def _apply_ai_idea_to_meal(meal: PlanMeal, ai: AIIdeaPayload, slot: str) -> None
                 name=name,
                 qty=qty_val,
                 unit=unit_val,
-                kcal=None,
-                protein_g=None,
-                carbs_g=None,
-                fat_g=None,
-                meta={},
+                kcal=float(nutrition["kcal"]) if nutrition.get("kcal") is not None else None,
+                protein_g=float(nutrition["protein_g"]) if nutrition.get("protein_g") is not None else None,
+                carbs_g=float(nutrition["carbs_g"]) if nutrition.get("carbs_g") is not None else None,
+                fat_g=float(nutrition["fat_g"]) if nutrition.get("fat_g") is not None else None,
+                meta={"nutrition_basis": "ingredient_quantity_estimate"} if nutrition else {},
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
             )

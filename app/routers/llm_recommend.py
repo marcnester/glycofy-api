@@ -35,7 +35,12 @@ from app.models import (
 )
 from app.services.ai_operations import record_ai_operation
 from app.services.meal_feedback import feedback_context
-from app.services.meal_quality import PROMPT_VERSION, QUALITY_POLICY_VERSION, validate_meal
+from app.services.meal_quality import (
+    PROMPT_VERSION,
+    QUALITY_POLICY_VERSION,
+    ingredient_nutrition_totals,
+    validate_meal,
+)
 from app.services.training_nutrition import (
     MacroTargets,
     TrainingNutritionResult,
@@ -640,6 +645,16 @@ def _filter_by_diet_tags(
     return out
 
 
+def _recipe_has_reconciled_nutrition(recipe: Recipe) -> bool:
+    evidence = ingredient_nutrition_totals({"ingredients": getattr(recipe, "ingredients", None)})
+    if evidence is None:
+        return False
+    tolerances = {"kcal": 25.0, "protein_g": 2.0, "carbs_g": 2.0, "fat_g": 2.0}
+    return all(
+        abs(_safe_float(getattr(recipe, name, None), -1.0) - evidence[name]) <= tolerances[name] for name in _MACROS
+    )
+
+
 def _top_k_candidates(
     db: Session,
     slot: str,
@@ -665,6 +680,19 @@ def _top_k_candidates(
     )
 
     items = _filter_by_diet_tags(all_items, diet_tags, primary_diet)
+
+    # Legacy catalog macros were not derived from itemized ingredient
+    # nutrition. Do not use those rows as a nutrition-safe fallback. Newly
+    # created recipes carry reconcilable evidence and remain eligible.
+    before_verified = len(items)
+    items = [recipe for recipe in items if _recipe_has_reconciled_nutrition(recipe)]
+    if before_verified != len(items):
+        logger.info(
+            "LLM top_k_candidates: slot=%s excluded_unverified_nutrition=%d remaining=%d",
+            slot,
+            before_verified - len(items),
+            len(items),
+        )
 
     if ingredient_exclusions:
         before = len(items)
@@ -1909,7 +1937,10 @@ def _llm_pick_or_create(
         "- Snacks are flexible and MAY repeat if needed.\n\n"
         "RECIPE CREATION RULES (GUARDRAILS):\n"
         "- Use 5–7 main ingredients MAX (excluding pantry staples like salt, pepper, water, cooking oil).\n"
-        "- EVERY ingredient must include a practical single-serving quantity and unit.\n"
+        "- EVERY ingredient must include a practical single-serving quantity, unit, and its nutrition contribution "
+        "for that exact quantity: kcal, protein_g, carbs_g, and fat_g.\n"
+        "- Calculate the meal macros by summing the ingredient nutrition values. Never copy the target macros into "
+        "the result. Adjust ingredient quantities until the ingredient sum is within 15% of the target.\n"
         "- Prefer grams or ounces for proteins/starches and cups, tablespoons, teaspoons, or item counts where natural.\n"
         "- Never return a bare ingredient name such as 'spinach' or 'olive oil'.\n"
         "- Prefer meals ready within 30 minutes, but never inflate a simple assembly-only meal.\n"
@@ -1931,7 +1962,7 @@ def _llm_pick_or_create(
         '  "pick_id": <int or null>,\n'
         '  "new_recipe": {\n'
         '    "title": "<string>",\n'
-        '    "ingredients": [{"name": "<ingredient>", "amount": "<number or fraction>", "unit": "<g|oz|cup|tbsp|tsp|can|item>"}],\n'
+        '    "ingredients": [{"name": "<ingredient>", "amount": "<number or fraction>", "unit": "<g|oz|cup|tbsp|tsp|can|item>", "nutrition": {"kcal": <number>, "protein_g": <number>, "carbs_g": <number>, "fat_g": <number>}}],\n'
         '    "instructions": ["<step 1>", "<step 2>", "..."],\n'
         '    "prep_time_min": <integer minutes>,\n'
         '    "cook_time_min": <integer minutes; 0 for assembly-only>,\n'
@@ -2013,28 +2044,8 @@ def _llm_pick_or_create(
         if best_r is not None:
             meta.setdefault("mode", "pick")
             return "pick", best_r, best_deltas, "default: lowest macro delta", meta, None
-        fallback_idea = _deterministic_fallback_idea(
-            slot=slot_norm,
-            tgt=tgt,
-            primary_diet=primary_diet,
-            ingredient_exclusions=ingredient_exclusions,
-            used_protein_items=used_protein_set,
-            used_carb_items=used_carb_set,
-            used_meal_keys=used_meal_keys or set(),
-            banned_protein_groups=banned_groups,
-        )
-        if fallback_idea is not None:
-            meta.update({"mode": "create", "fallback": "deterministic_library"})
-            return (
-                "create",
-                None,
-                None,
-                "Reliable offline meal selected while AI generation was unavailable.",
-                meta,
-                fallback_idea,
-            )
         meta.setdefault("mode", "empty")
-        return "empty", None, None, "No recipes or AI ideas available.", meta, None
+        return "empty", None, None, "No nutrition-verified meal is available.", meta, None
 
     # --- parse ---
     mode = str(data.get("mode") or "").strip().lower()
@@ -2281,19 +2292,22 @@ def _llm_pick_or_create(
                 meta["mode"] = "empty"
                 return "empty", None, None, "Unable to satisfy day variety rule.", meta, None
 
+        quality_candidate = {
+            "title": title,
+            "ingredients": ingredients,
+            "instructions": instructions,
+            "prep_time_min": new_recipe.get("prep_time_min"),
+            "cook_time_min": new_recipe.get("cook_time_min"),
+            "total_time_min": new_recipe.get("total_time_min"),
+            "macro_estimate": macro_est,
+        }
+        reconciled_macros = ingredient_nutrition_totals(quality_candidate)
         quality_report = validate_meal(
-            {
-                "title": title,
-                "ingredients": ingredients,
-                "instructions": instructions,
-                "prep_time_min": new_recipe.get("prep_time_min"),
-                "cook_time_min": new_recipe.get("cook_time_min"),
-                "total_time_min": new_recipe.get("total_time_min"),
-                "macro_estimate": macro_est,
-            },
+            quality_candidate,
             target=tgt.model_dump(exclude={"slot"}),
             exclusions=ingredient_exclusions,
             diet=primary_diet,
+            require_ingredient_nutrition=True,
         )
         meta["quality"] = {"policy_version": QUALITY_POLICY_VERSION, "issues": quality_report.codes()}
         if not quality_report.safe:
@@ -2301,21 +2315,13 @@ def _llm_pick_or_create(
             if best_r is not None:
                 meta["mode"] = "pick"
                 return "pick", best_r, best_deltas, "default: quality-safe catalog recipe", meta, None
-            fallback_idea = _deterministic_fallback_idea(
-                slot=slot_norm,
-                tgt=tgt,
-                primary_diet=primary_diet,
-                ingredient_exclusions=ingredient_exclusions,
-                used_protein_items=used_protein_set,
-                used_carb_items=used_carb_set,
-                used_meal_keys=used_meal_keys or set(),
-                banned_protein_groups=banned_groups,
-            )
-            if fallback_idea is not None:
-                meta["mode"] = "create"
-                return "create", None, None, "Reliable quality-safe fallback meal.", meta, fallback_idea
             meta["mode"] = "empty"
             return "empty", None, None, "Unable to produce a nutrition-safe meal.", meta, None
+
+        if reconciled_macros is None:
+            meta["mode"] = "empty"
+            return "empty", None, None, "Ingredient nutrition could not be reconciled.", meta, None
+        macro_est = reconciled_macros
 
         deltas: dict[str, float] = {}
         for m in _MACROS:
@@ -3035,10 +3041,12 @@ def _apply_recipe_to_planmeal(pm: PlanMeal, rec: Recipe) -> None:
         name = ""
         qty = None
         unit = None
+        nutrition: dict[str, Any] = {}
         if isinstance(raw, dict):
             name = str(raw.get("name") or raw.get("ingredient") or raw.get("item") or "").strip()
             raw_qty = raw.get("qty", raw.get("quantity", raw.get("amount")))
             unit = raw.get("unit")
+            nutrition = raw.get("nutrition") if isinstance(raw.get("nutrition"), dict) else {}
             try:
                 qty = float(raw_qty) if raw_qty not in (None, "") else None
             except (TypeError, ValueError):
@@ -3052,7 +3060,11 @@ def _apply_recipe_to_planmeal(pm: PlanMeal, rec: Recipe) -> None:
                     name=name,
                     qty=qty,
                     unit=unit,
-                    meta={},
+                    kcal=_safe_float(nutrition.get("kcal")) if nutrition else None,
+                    protein_g=_safe_float(nutrition.get("protein_g")) if nutrition else None,
+                    carbs_g=_safe_float(nutrition.get("carbs_g")) if nutrition else None,
+                    fat_g=_safe_float(nutrition.get("fat_g")) if nutrition else None,
+                    meta={"nutrition_basis": "ingredient_quantity_estimate"} if nutrition else {},
                     created_at=datetime.utcnow(),
                     updated_at=datetime.utcnow(),
                 )
@@ -3348,21 +3360,22 @@ def recommend_recipes(
 
 
 def _weekly_batch_schema(meals_per_day: int) -> dict[str, Any]:
-    ingredient = {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["name", "amount", "unit"],
-        "properties": {
-            "name": {"type": "string"},
-            "amount": {"type": "string"},
-            "unit": {"type": "string"},
-        },
-    }
     macros = {
         "type": "object",
         "additionalProperties": False,
         "required": ["kcal", "protein_g", "carbs_g", "fat_g"],
-        "properties": {name: {"type": "number"} for name in _MACROS},
+        "properties": {name: {"type": "number", "minimum": 0} for name in _MACROS},
+    }
+    ingredient = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["name", "amount", "unit", "nutrition"],
+        "properties": {
+            "name": {"type": "string"},
+            "amount": {"type": "string"},
+            "unit": {"type": "string"},
+            "nutrition": macros,
+        },
     }
     meal = {
         "type": "object",
@@ -3452,9 +3465,12 @@ def _batch_week_recommendations(
         "chemicals or unsafe food-handling directions. "
         "Return exactly the meal slots supplied for every requested date, including every scheduled snack. "
         "Respect diet tags and ingredient exclusions as hard safety constraints. Keep every recipe practical, "
-        "single-serving, and cookable in about 30 minutes with measured ingredients. Keep calories, protein, "
-        "carbohydrates, and fat within 15% of each slot target; verify that the four macro values are internally "
-        "plausible before responding. A day's training object can describe upcoming training. On those days, favor "
+        "single-serving, and cookable in about 30 minutes with measured ingredients. For every ingredient, calculate "
+        "the kcal, protein_g, carbs_g, and fat_g contributed by its exact stated quantity. Then sum those ingredient "
+        "values to produce the meal macros. Never copy target_macros into macros and never invent macro values merely "
+        "to satisfy the target. Adjust actual ingredient quantities until the ingredient sum is within 15% of each "
+        "slot target. Before responding, independently re-add all ingredient nutrition and ensure it equals the meal "
+        "macros. A day's training object can describe upcoming training. On those days, favor "
         "digestible carbohydrate before the workout and carbohydrate plus protein afterward, using next_workout_at "
         "for timing. Each snack has a preferred_time: create a distinct, practical snack for that eating occasion, "
         "describe its timing purpose in the reason, and never merge multiple snack slots. Mention the workout in "
@@ -3547,11 +3563,14 @@ def _batch_week_recommendations(
             macros = meal.get("macros") or {}
             protein_group = str(meal.get("protein_group") or "unknown").strip().lower()
             title_key = _meal_similarity_key(title)
+            reconciled_macros = ingredient_nutrition_totals({"ingredients": ingredients})
+            quality_candidate = {**meal, "macros": macros}
             quality_report = validate_meal(
-                meal,
+                quality_candidate,
                 target=target,
                 exclusions=exclusions,
                 diet=primary_diet,
+                require_ingredient_nutrition=True,
             )
             invalid = (
                 slot not in ALL_SLOTS
@@ -3565,6 +3584,7 @@ def _batch_week_recommendations(
                 or not 1 <= total_time_min <= 240
                 or not 1 <= prep_time_min <= 240
                 or not 0 <= cook_time_min <= 240
+                or reconciled_macros is None
                 or not quality_report.safe
             )
             if slot in _DAY_UNIQUE_SLOTS:
@@ -3572,6 +3592,7 @@ def _batch_week_recommendations(
             if invalid:
                 rejected += 1
                 continue
+            macros = reconciled_macros or {}
             ai_idea = {
                 "title": title,
                 "ingredients": ingredients,
@@ -3862,7 +3883,7 @@ def recommend_weekly_apply(
             raise HTTPException(
                 status_code=422,
                 detail={
-                    "message": "Unable to generate a complete weekly meal plan without duplicates",
+                    "message": "Unable to generate a complete, nutrition-safe weekly meal plan",
                     "date": date_iso,
                     "missing_slots": missing_slots,
                 },

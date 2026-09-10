@@ -295,6 +295,43 @@ def test_single_meal_ai_swap_preserves_every_other_meal(client: TestClient):
     assert meals["snack"]["meta"]["generation"]["fallback"] == "deterministic_library"
 
 
+def test_plan_response_recomputes_stale_totals_from_current_meals(client: TestClient):
+    signup = client.post(
+        "/auth/signup",
+        json={"email": "authoritative-totals@example.com", "password": "a-secure-password-123"},
+    )
+    assert signup.status_code == 200
+    created = client.post(
+        "/v1/plan/2026-09-10",
+        json={
+            "totals": {"kcal": 9999, "protein_g": 999, "carbs_g": 999, "fat_g": 999},
+            "meals": [
+                {
+                    "meal_type": "breakfast",
+                    "title": "Measured breakfast",
+                    "kcal": 500,
+                    "protein_g": 35,
+                    "carbs_g": 60,
+                    "fat_g": 15,
+                    "ingredients": [{"name": "oats", "qty": 1, "unit": "cup"}],
+                },
+                {
+                    "meal_type": "lunch",
+                    "title": "Measured lunch",
+                    "kcal": 700,
+                    "protein_g": 45,
+                    "carbs_g": 90,
+                    "fat_g": 20,
+                    "ingredients": [{"name": "rice", "qty": 1, "unit": "cup"}],
+                },
+            ],
+        },
+    )
+
+    assert created.status_code == 200
+    assert created.json()["totals"] == {"kcal": 1200.0, "protein_g": 80.0, "carbs_g": 150.0, "fat_g": 35.0}
+
+
 def test_grocery_page_exposes_package_and_pantry_preferences(client: TestClient):
     page = client.get("/ui/grocery.html")
     script = client.get("/ui/grocery.js")
@@ -350,7 +387,10 @@ def test_account_deletion_dialog_supports_escape_key():
 def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     page = Path("ui/plan.html").read_text(encoding="utf-8")
     script = Path("ui/plan.js").read_text(encoding="utf-8")
-    assert "plan.js?v=2026-09-09-unified-recommendations" in page
+    assert "plan.js?v=2026-09-10-nutrition-integrity" in page
+    assert 'id="nutrition-confidence"' in page
+    assert "plan.nutrition_verified" in script
+    assert "nutrition-checked plan" in script
     assert "Creating today's plan" in script
     assert "Designing today’s meals and snacks…" in script
     assert "Designing your meals and snacks as one balanced week…" in script

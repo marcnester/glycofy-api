@@ -21,10 +21,30 @@ def _meal(slot: str, day: int) -> dict:
         "slot": slot,
         "title": f"Day {day} {dish}",
         "ingredients": [
-            {"name": protein, "amount": "150", "unit": "g"},
-            {"name": carb, "amount": "1", "unit": "cup"},
-            {"name": "spinach", "amount": "2", "unit": "cups"},
-            {"name": "olive oil", "amount": "1", "unit": "tbsp"},
+            {
+                "name": protein,
+                "amount": "150",
+                "unit": "g",
+                "nutrition": {"kcal": 220, "protein_g": 30, "carbs_g": 10, "fat_g": 6},
+            },
+            {
+                "name": carb,
+                "amount": "1",
+                "unit": "cup",
+                "nutrition": {"kcal": 200, "protein_g": 6, "carbs_g": 35, "fat_g": 4},
+            },
+            {
+                "name": "spinach",
+                "amount": "2",
+                "unit": "cups",
+                "nutrition": {"kcal": 30, "protein_g": 4, "carbs_g": 5, "fat_g": 0},
+            },
+            {
+                "name": "olive oil",
+                "amount": "1",
+                "unit": "tbsp",
+                "nutrition": {"kcal": 50, "protein_g": 0, "carbs_g": 0, "fat_g": 5},
+            },
         ],
         "instructions": ["Cook the protein and carbohydrate.", "Combine and serve."],
         "prep_time_min": 10,
@@ -138,6 +158,12 @@ def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeyp
     assert "max_tokens" not in calls[0]
     sent_payload = json.loads(calls[0]["messages"][1]["content"])
     assert sent_payload["athlete_feedback"]["favorite_meals"] == ["Salmon rice bowl"]
+    system_prompt = calls[0]["messages"][0]["content"]
+    assert "Never copy target_macros into macros" in system_prompt
+    ingredient_schema = calls[0]["response_format"]["json_schema"]["schema"]["properties"]["days"]["items"][
+        "properties"
+    ]["meals"]["items"]["properties"]["ingredients"]["items"]
+    assert "nutrition" in ingredient_schema["required"]
     assert meta["accepted"] == 8
     assert meta["rejected"] == 0
     assert all(set(recommendations[date]) == set(llm_recommend.SLOTS) for date in dates)
@@ -276,4 +302,40 @@ def test_weekly_batch_rejects_a_meal_with_bad_macros(monkeypatch):
 
     assert "breakfast" not in recommendations[date]
     assert meta["accepted"] == 3
+    assert meta["rejected"] == 1
+
+
+def test_weekly_batch_rejects_macros_not_supported_by_ingredient_sum(monkeypatch):
+    date = "2026-09-01"
+    meals = [_meal(slot, 1) for slot in llm_recommend.SLOTS]
+    meals[0]["ingredients"][0]["nutrition"]["protein_g"] = 2
+    response_body = {"days": [{"date": date, "meals": meals}]}
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response_body)))],
+                usage=None,
+            )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    days = [
+        {
+            "date": date,
+            "training": {},
+            "diet_tags": [],
+            "meals": [
+                {"slot": slot, "target_macros": {"kcal": 500, "protein_g": 40, "carbs_g": 50, "fat_g": 15}}
+                for slot in llm_recommend.SLOTS
+            ],
+        }
+    ]
+    monkeypatch.setattr(llm_recommend, "_circuit_open", lambda: False)
+    monkeypatch.setattr(llm_recommend, "_daily_budget_usd", lambda: 100.0)
+
+    recommendations, meta = llm_recommend._batch_week_recommendations(
+        client, days=days, primary_diet="omnivore", diet_tags=[], exclusions=[]
+    )
+
+    assert "breakfast" not in recommendations[date]
     assert meta["rejected"] == 1
