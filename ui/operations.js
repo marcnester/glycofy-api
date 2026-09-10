@@ -66,7 +66,23 @@ async function loadSecurity() {
   } catch (_) { /* Other operations data remains available during partial failure. */ }
 }
 
+async function loadNutritionSource() {
+  const source = document.getElementById("nutritionSource");
+  const detail = document.getElementById("nutritionSourceDetail");
+  try {
+    const response = await fetch("/v1/operations/nutrition-source-health", {credentials:"same-origin"});
+    if (!response.ok) throw new Error("Unavailable");
+    const data = await response.json();
+    source.textContent = data.status === "ok" && data.required ? "USDA verified" : "Needs attention";
+    detail.textContent = `${data.data_type} · FDC ${data.fdc_id} · ${data.nutrients_present.join(", ")}`;
+  } catch (_) {
+    source.textContent = "Unavailable";
+    detail.textContent = "Authoritative nutrition validation is not responding.";
+  }
+}
+
 document.getElementById("window").addEventListener("change", () => { loadOperations(); loadSecurity(); });
 loadOperations();
 loadBeta();
 loadSecurity();
+loadNutritionSource();

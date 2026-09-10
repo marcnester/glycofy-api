@@ -171,3 +171,6 @@ def test_operator_dashboard_has_latency_failure_cost_and_job_states():
     assert "Failure rate" in page
     assert "Estimated cost" in page
     assert "/v1/operations/ai-summary" in script
+    assert "/v1/operations/nutrition-source-health" in script
+    assert "USDA verified" in script
+    assert "operations.js?v=2026-09-10-usda-health" in page
