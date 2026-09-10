@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import settings
 from app.observability import (
@@ -96,6 +97,56 @@ except Exception as _e:
 APP_DIR = Path(__file__).resolve().parent
 UI_DIR = APP_DIR.parent / "ui"
 
+
+class RequestBodyTooLarge(Exception):
+    """Raised when a streamed request body exceeds the configured limit."""
+
+
+class RequestBodyLimitMiddleware:
+    """Enforce request limits even when Content-Length is absent or dishonest."""
+
+    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        received = 0
+        response_started = False
+        too_large = False
+
+        async def limited_receive() -> Message:
+            nonlocal received, too_large
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    too_large = True
+                    raise RequestBodyTooLarge
+            return message
+
+        async def tracked_send(message: Message) -> None:
+            nonlocal response_started
+            if too_large:
+                return
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracked_send)
+        except RequestBodyTooLarge:
+            too_large = True
+        if too_large:
+            if response_started:
+                raise RuntimeError("Request body limit exceeded after response started")
+            response = PlainTextResponse("Request body too large", status_code=413)
+            await response(scope, receive, send)
+
+
 app = FastAPI(
     title="Glycofy API",
     version="0.1",
@@ -103,6 +154,7 @@ app = FastAPI(
     redoc_url=None if settings.is_production else "/redoc",
     openapi_url=None if settings.is_production else "/openapi.json",
 )
+app.add_middleware(RequestBodyLimitMiddleware, max_bytes=settings.MAX_REQUEST_BODY_BYTES)
 
 
 @app.on_event("startup")
@@ -183,7 +235,7 @@ async def security_controls(request: Request, call_next):
     response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; "
+        "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
         "form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
         "script-src 'self'; connect-src 'self'",
     )

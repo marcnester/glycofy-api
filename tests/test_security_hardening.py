@@ -61,6 +61,7 @@ def test_login_page_does_not_expose_demo_credentials(client: TestClient):
     response = client.get("/ui/login.html")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
+    assert "object-src 'none'" in response.headers["content-security-policy"]
     assert "demo credentials" not in response.text.lower()
     assert "demo@glycofy.app" not in response.text.lower()
 
@@ -422,6 +423,15 @@ def test_oversized_request_is_rejected(client: TestClient):
         "/auth/login",
         content=b"{}",
         headers={"Content-Length": "2000000", "Content-Type": "application/json"},
+    )
+    assert response.status_code == 413
+
+
+def test_chunked_oversized_request_is_rejected(client: TestClient):
+    response = client.post(
+        "/auth/login",
+        content=iter([b"x" * 600_000, b"x" * 600_000]),
+        headers={"Transfer-Encoding": "chunked", "Content-Type": "application/json"},
     )
     assert response.status_code == 413
 
