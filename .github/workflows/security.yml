@@ -76,15 +76,6 @@ jobs:
         run: docker build --tag glycofy:${{ github.sha }} .
       - name: Verify the image runs as the unprivileged app user
         run: test "$(docker image inspect glycofy:${{ github.sha }} --format '{{.Config.User}}')" = "glycofy"
-      - name: Scan the image and fail on fixable high or critical vulnerabilities
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
-        with:
-          image-ref: glycofy:${{ github.sha }}
-          scanners: vuln,secret
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-          format: table
       - name: Generate the production image SBOM
         uses: anchore/sbom-action@006b7ce8314066bdf1765b4500370d40fa6917a3 # v0.24.2
         with:
@@ -94,3 +85,12 @@ jobs:
           artifact-name: glycofy-${{ github.sha }}-sbom.spdx.json
           upload-artifact: true
           upload-artifact-retention: 30
+      - name: Scan the image and fail on fixable high or critical vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: glycofy:${{ github.sha }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table

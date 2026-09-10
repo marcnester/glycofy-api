@@ -11,7 +11,13 @@ RUN groupadd --system glycofy \
     && useradd --system --gid glycofy --home-dir /app glycofy
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir --requirement requirements.txt
+RUN pip install --no-cache-dir --upgrade \
+        pip==26.2.1 \
+        setuptools==84.0.0 \
+        wheel==0.48.0 \
+    && pip install --no-cache-dir --requirement requirements.txt \
+    && pip uninstall --yes pip setuptools wheel \
+    && python -c "import fastapi, sqlalchemy, uvicorn"
 
 COPY alembic.ini ./
 COPY alembic ./alembic
