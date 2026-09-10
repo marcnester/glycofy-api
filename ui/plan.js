@@ -54,7 +54,6 @@
   const prevBtn = $('prev_day') || $('plan-prev');
   const nextBtn = $('next_day') || $('plan-next');
   const lockBtn = $('lock_toggle') || $('plan-lock');
-  const regenBtn = $('regen_btn') || $('plan-regen');
   const weekBtn = $('plan-ai-week') || $('week_ai_btn');
   const dlTxt = $('dl_txt');
   const dlCsv = $('dl_csv');
@@ -687,18 +686,6 @@
     return r.json();
   }
 
-  async function regenerate(d, engine = 'heuristic') {
-    const r = await fetch(
-      `/v1/plan/${d}/regenerate?engine=${encodeURIComponent(engine)}`,
-      {
-        method: 'POST',
-        credentials: 'include',
-      }
-    );
-    if (!r.ok) throw new Error(`Regenerate failed: ${r.status}`);
-    return r.json();
-  }
-
   // ----- LLM calls -----
   async function llmRecommendAll(d, plan) {
     // NEW: always include all 4 canonical meals for this date
@@ -1293,18 +1280,6 @@
     });
   }
 
-  if (regenBtn) {
-    regenBtn.addEventListener('click', async () => {
-      const d = getCurrentDate();
-      setDate(d);
-      const plan = await regenerate(d, 'heuristic');
-      AI_REASONS = {};
-      AI_FREEFORM = {};
-      renderPlan(plan);
-      flash('Plan regenerated (heuristic).');
-    });
-  }
-
   if (createBtn) {
     createBtn.addEventListener('click', async () => {
       const d = getCurrentDate();
@@ -1317,21 +1292,21 @@
     });
   }
 
-  // ----- "Today (AI)" -----
+  // ----- Plan the selected day -----
   (function ensureAIButton() {
     const existing = $('plan-ai-all') || $('ai_apply_btn');
     const btn = existing || document.createElement('button');
 
-    if (!existing && regenBtn) {
+    if (!existing && lockBtn) {
       btn.id = 'ai_apply_btn';
       btn.className = 'btn';
-      regenBtn.insertAdjacentElement('afterend', btn);
+      lockBtn.insertAdjacentElement('afterend', btn);
     }
 
     if (!btn) return;
 
-    btn.textContent = 'Today (AI)';
-    btn.title = "Use AI to update today's meals only";
+    btn.textContent = 'Plan Today';
+    btn.title = 'Create a personalized meal plan for the selected day';
 
     if (btn.__aiBound) return;
     btn.__aiBound = true;
@@ -1339,14 +1314,14 @@
     btn.addEventListener('click', async () => {
       const d = getCurrentDate();
       setDate(d);
-      setBusy(true, 'Asking AI for today…', {
+      setBusy(true, 'Personalizing today’s meals…', {
         title: "Creating today's plan",
         background: false,
         stages: TODAY_PROGRESS_STAGES,
       });
       try {
         await runAIForDate(d, true);
-        flash('AI suggestions applied for today.');
+        flash('Today’s personalized plan is ready.');
       } catch (err) {
         console.error(err);
         flash(

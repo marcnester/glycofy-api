@@ -193,3 +193,14 @@ def test_primary_pages_have_mobile_viewports_and_landmark_navigation():
         assert 'name="viewport"' in page
         assert "<main" in page
         assert 'aria-label="Primary"' in page
+
+
+def test_plan_page_exposes_clear_ai_planning_actions_without_heuristic_regenerate():
+    page = Path("ui/plan.html").read_text(encoding="utf-8")
+    script = Path("ui/plan.js").read_text(encoding="utf-8")
+
+    assert ">Plan Today</button>" in page
+    assert 'title="Create a personalized meal plan for the selected day"' in page
+    assert 'id="plan-regen"' not in page
+    assert "Plan regenerated (heuristic)." not in script
+    assert "btn.textContent = 'Plan Today'" in script
