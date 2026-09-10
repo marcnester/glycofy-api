@@ -85,6 +85,10 @@ services:
         sync: false
       - key: BETA_FEEDBACK_ENABLED
         value: "true"
+      - key: BETA_FEEDBACK_EMAIL_ENABLED
+        value: "true"
+      - key: BETA_FEEDBACK_EMAIL_COOLDOWN_SECONDS
+        value: "300"
       - key: BETA_ANALYTICS_ENABLED
         value: "true"
       - key: FEATURE_FLAGS

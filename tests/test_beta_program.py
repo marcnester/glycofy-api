@@ -75,6 +75,35 @@ def test_feedback_attaches_safe_context_without_health_payload(beta_app):
     assert rejected.status_code == 422
 
 
+def test_feedback_queues_privacy_safe_email_notification(beta_app, monkeypatch):
+    client, _engine = beta_app
+    queued = []
+    monkeypatch.setattr("app.routers.beta.queue_feedback_notification", queued.append)
+
+    response = client.post(
+        "/v1/beta/feedback",
+        headers={"X-Request-ID": "feedback-request-789"},
+        json={
+            "category": "idea",
+            "rating": 5,
+            "message": "Private written feedback that must not be emailed.",
+            "page_path": "/ui/index.html",
+            "viewport": "mobile",
+        },
+    )
+
+    assert response.status_code == 201
+    assert queued == [
+        {
+            "category": "idea",
+            "rating": 5,
+            "page_path": "/ui/index.html",
+            "request_id": "feedback-request-789",
+        }
+    ]
+    assert "Private written feedback" not in str(queued)
+
+
 def test_analytics_accepts_only_allowlisted_events_and_hashes_session(beta_app):
     client, engine = beta_app
     payload = {

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.auth_utils import get_current_user
 from app.config import settings
 from app.db import get_db
+from app.feedback_email import queue_feedback_notification
 from app.models import BetaFeedback, ProductEvent, User
 from app.observability import request_id
 
@@ -148,4 +149,12 @@ def submit_feedback(
     db.add(row)
     db.commit()
     db.refresh(row)
+    queue_feedback_notification(
+        {
+            "category": row.category,
+            "rating": row.rating,
+            "page_path": row.page_path,
+            "request_id": row.related_request_id or row.request_id,
+        }
+    )
     return {"feedback_id": row.id, "status": row.status}

@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     BETA_FEEDBACK_RETENTION_DAYS: int = 365
     BETA_FEEDBACK_ENABLED: bool = True
     BETA_ANALYTICS_ENABLED: bool = True
+    BETA_FEEDBACK_EMAIL_ENABLED: bool = False
+    BETA_FEEDBACK_EMAIL_COOLDOWN_SECONDS: int = 300
     FEATURE_FLAGS: str = "beta_feedback,beta_analytics"
     SECURITY_ALERT_EMAIL_TO: str = ""
     SECURITY_ALERT_EMAIL_ENABLED: bool = False
@@ -186,6 +188,13 @@ class Settings(BaseSettings):
                 errors.append("SMTP_FROM_EMAIL is required when alert email is enabled")
             if not self.SECURITY_ALERT_EMAIL_TO:
                 errors.append("SECURITY_ALERT_EMAIL_TO is required when alert email is enabled")
+        if self.BETA_FEEDBACK_EMAIL_ENABLED:
+            if not self.SMTP_HOST:
+                errors.append("SMTP_HOST is required when feedback email is enabled")
+            if not self.SMTP_FROM_EMAIL:
+                errors.append("SMTP_FROM_EMAIL is required when feedback email is enabled")
+            if not self.ADMIN_EMAILS:
+                errors.append("ADMIN_EMAILS is required when feedback email is enabled")
         if errors:
             raise ValueError("Unsafe production configuration: " + "; ".join(errors))
         return self
