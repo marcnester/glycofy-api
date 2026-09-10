@@ -5,8 +5,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-PROMPT_VERSION = "meal-planner-2026-09-03-v1"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-03-v1"
+PROMPT_VERSION = "meal-planner-2026-09-09-v2"
+QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-09-v2"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 ANIMAL_MEAT = {"beef", "chicken", "cod", "fish", "lamb", "pork", "salmon", "shrimp", "steak", "turkey", "tuna"}
@@ -39,6 +39,7 @@ DONENESS_MARKERS = {
     "°f",
     "°c",
 }
+NONFOOD_HAZARDS = {"bleach", "borax", "detergent", "dish soap", "rubbing alcohol"}
 
 
 @dataclass(frozen=True)
@@ -76,8 +77,21 @@ def _contains(text: str, marker: str) -> bool:
     return bool(re.search(rf"\b{re.escape(marker)}\b", text))
 
 
+def recipe_text(meal: dict[str, Any]) -> str:
+    """Flatten every model-controlled recipe field used for safety checks."""
+    fields = (
+        meal.get("title", ""),
+        meal.get("ingredients") or [],
+        meal.get("instructions") or [],
+        meal.get("protein_item", ""),
+        meal.get("carb_item", ""),
+    )
+    return _words(" ".join(json.dumps(value, default=str) for value in fields))
+
+
 def ingredient_text(meal: dict[str, Any]) -> str:
-    return _words(f"{meal.get('title', '')} {json.dumps(meal.get('ingredients') or [], default=str)}")
+    """Backward-compatible name for the complete safety-relevant recipe text."""
+    return recipe_text(meal)
 
 
 def violates_exclusions(meal: dict[str, Any], exclusions: list[str]) -> list[str]:
@@ -191,6 +205,11 @@ def validate_meal(
 
     text = ingredient_text(meal)
     instruction_text = _words(" ".join(str(step) for step in instructions or []))
+    hazards = sorted(marker for marker in NONFOOD_HAZARDS if _contains(text, marker))
+    if hazards:
+        report.issues.append(
+            QualityIssue("unsafe_nonfood_ingredient", f"Recipe contains a non-food hazard: {', '.join(hazards)}.")
+        )
     contains_animal_protein = any(_contains(text, marker) for marker in RAW_PROTEIN_MARKERS)
     explicitly_raw = _contains(text, "raw") and contains_animal_protein
     needs_doneness = contains_animal_protein and bool(cook and cook > 0) or explicitly_raw
@@ -198,6 +217,26 @@ def validate_meal(
         report.issues.append(QualityIssue("uncooked_raw_protein", "Raw animal protein cannot have zero cooking time."))
     if needs_doneness and not any(marker in instruction_text for marker in DONENESS_MARKERS):
         report.issues.append(QualityIssue("missing_doneness_cue", "Cooked animal protein needs a clear doneness cue."))
+    internal_temp = re.search(
+        r"internal temperature(?: of)?\s*(\d{2,3}(?:\.\d+)?)\s*°?\s*([fc])\b",
+        instruction_text,
+    )
+    if internal_temp and contains_animal_protein:
+        stated = float(internal_temp.group(1))
+        fahrenheit = stated * 9 / 5 + 32 if internal_temp.group(2) == "c" else stated
+        if any(_contains(text, marker) for marker in ("chicken", "turkey")):
+            minimum_f = 165
+        elif any(_contains(text, marker) for marker in ("egg", "eggs")):
+            minimum_f = 160
+        else:
+            minimum_f = 145
+        if fahrenheit < minimum_f:
+            report.issues.append(
+                QualityIssue(
+                    "unsafe_internal_temperature",
+                    f"Stated internal temperature is below the {minimum_f}°F safety minimum.",
+                )
+            )
     return report
 
 
