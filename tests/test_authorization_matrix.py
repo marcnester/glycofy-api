@@ -274,6 +274,7 @@ def test_self_service_and_admin_surfaces_do_not_cross_accounts(authorization_app
 
     for path in (
         "/v1/operations/ai-summary",
+        "/v1/operations/nutrition-source-health",
         "/v1/operations/beta-summary",
         "/v1/operations/feedback",
         "/v1/operations/failed-jobs",

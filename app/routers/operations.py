@@ -12,6 +12,7 @@ from app.auth_utils import get_current_user
 from app.config import settings
 from app.db import get_db
 from app.models import AIOperationMetric, BetaFeedback, ProductEvent, SecurityAuditEvent, User, WeeklyPlanningJob
+from app.services.usda_nutrition import USDANutritionError, lookup_food
 
 router = APIRouter()
 
@@ -32,6 +33,23 @@ def _percentile(values: list[int], fraction: float) -> int | None:
         return None
     ordered = sorted(values)
     return ordered[min(len(ordered) - 1, math.ceil(len(ordered) * fraction) - 1)]
+
+
+@router.get("/nutrition-source-health", tags=["operations"])
+def nutrition_source_health(_admin: User = Depends(_require_admin)):
+    """Admin-only live check that validates the configured USDA key and parser."""
+    try:
+        match = lookup_food("chicken breast meat only cooked roasted")
+    except USDANutritionError as exc:
+        raise HTTPException(status_code=503, detail="Authoritative nutrition source unavailable") from exc
+    return {
+        "status": "ok",
+        "provider": "USDA FoodData Central",
+        "required": settings.USDA_FDC_REQUIRED,
+        "fdc_id": match.fdc_id,
+        "data_type": match.data_type,
+        "nutrients_present": sorted(match.nutrients_per_100g),
+    }
 
 
 @router.get("/security-summary", tags=["operations"])

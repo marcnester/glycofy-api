@@ -140,6 +140,30 @@ def test_operations_endpoint_is_hidden_from_non_admin(monkeypatch):
     assert exc.value.status_code == 404
 
 
+def test_nutrition_source_health_is_privacy_safe(monkeypatch):
+    monkeypatch.setattr(operations.settings, "USDA_FDC_REQUIRED", True)
+    monkeypatch.setattr(
+        operations,
+        "lookup_food",
+        lambda query: SimpleNamespace(
+            fdc_id=171477,
+            data_type="SR Legacy",
+            nutrients_per_100g={"kcal": 165.0, "protein_g": 31.0, "carbs_g": 0.0, "fat_g": 3.57},
+        ),
+    )
+
+    result = operations.nutrition_source_health(_admin=SimpleNamespace(email="admin@example.com"))
+
+    assert result == {
+        "status": "ok",
+        "provider": "USDA FoodData Central",
+        "required": True,
+        "fdc_id": 171477,
+        "data_type": "SR Legacy",
+        "nutrients_present": ["carbs_g", "fat_g", "kcal", "protein_g"],
+    }
+
+
 def test_operator_dashboard_has_latency_failure_cost_and_job_states():
     page = Path("ui/operations.html").read_text(encoding="utf-8")
     script = Path("ui/operations.js").read_text(encoding="utf-8")
