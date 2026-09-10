@@ -22,9 +22,20 @@
     anchor.href = u.pathname + "?" + u.searchParams.toString();
   }
 
+  function redirectToSignIn() {
+    const ret = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.replace(`/ui/login.html?return=${ret}`);
+  }
+
   async function getMe() {
     const r = await fetch("/users/me", { credentials: "include" });
-    if (!r.ok) throw new Error("unauth");
+    if (r.status === 401) {
+      redirectToSignIn();
+      const err = new Error("unauth");
+      err.status = 401;
+      throw err;
+    }
+    if (!r.ok) throw new Error("account unavailable");
     return r.json();
   }
 
@@ -120,11 +131,11 @@
       $("heroSub").textContent = "Your plan for today is ready to tune.";
   }
 
-  function renderSignedOut() {
+  function renderDashboardUnavailable() {
     if ($("heroTitle"))
-      $("heroTitle").textContent = "Eat with intent. Train with data.";
+      $("heroTitle").textContent = "We couldn’t load your dashboard.";
     if ($("heroSub"))
-      $("heroSub").textContent = "Sign in to build meals that match your goals.";
+      $("heroSub").textContent = "Refresh the page to try again. Your saved plans are safe.";
   }
 
   function workoutTime(value) {
@@ -305,8 +316,16 @@
     // Bind the topbar logout action.
     bindLogout(document.querySelector("#logout_btn,[data-nav='logout']"));
 
+    let me;
     try {
-      const me = await getMe();
+      me = await getMe();
+    } catch (error) {
+      if (error?.status === 401) return;
+      renderDashboardUnavailable();
+      return;
+    }
+
+    try {
       renderUser(me);
       renderPlanningStatus().catch(() => {});
 
@@ -338,8 +357,7 @@
         $("dlCsv").style.display = "";
       }
     } catch {
-      // not signed in
-      renderSignedOut();
+      renderDashboardUnavailable();
     }
   }
 

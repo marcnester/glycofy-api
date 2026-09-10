@@ -143,6 +143,18 @@ def test_home_replaces_technical_account_details_with_training_summary(client: T
     assert "Support recovery with protein, carbohydrates" in script.text
 
 
+def test_home_redirects_expired_sessions_instead_of_rendering_empty_dashboard(client: TestClient):
+    page = client.get("/ui/index.html")
+    script = client.get("/ui/index.js")
+
+    assert "index.js?v=2026-09-10-session-redirect" in page.text
+    assert "if (r.status === 401)" in script.text
+    assert "window.location.replace(`/ui/login.html?return=${ret}`)" in script.text
+    assert "if (error?.status === 401) return" in script.text
+    assert "renderSignedOut" not in script.text
+    assert "Your saved plans are safe" in script.text
+
+
 def test_profile_and_plan_expose_flexible_snack_schedule(client: TestClient):
     profile = client.get("/ui/profile.html")
     profile_script = client.get("/ui/profile.js")
