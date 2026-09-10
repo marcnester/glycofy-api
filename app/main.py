@@ -22,6 +22,7 @@ from app.observability import (
     request_id_context,
 )
 from app.schema_compat import ensure_snack_preference_columns
+from app.services.usda_nutrition import USDANutritionError, lookup_food
 
 configure_logging()
 from app.routers import user_profile, weekly_plans
@@ -164,6 +165,17 @@ def recover_interrupted_weekly_plans() -> None:
     if settings.is_production:
         ensure_snack_preference_columns()
         llm_recommend_router.reconcile_weekly_jobs()
+        try:
+            match = lookup_food("chicken breast meat only cooked roasted")
+            logging.getLogger("glycofy.startup").info(
+                "usda_startup_probe",
+                extra={"status": "ok", "provider": "usda_fdc", "fdc_id": match.fdc_id},
+            )
+        except USDANutritionError:
+            logging.getLogger("glycofy.startup").error(
+                "usda_startup_probe",
+                extra={"status": "unavailable", "provider": "usda_fdc"},
+            )
 
 
 # -----------------------------

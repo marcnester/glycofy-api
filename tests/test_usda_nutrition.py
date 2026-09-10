@@ -66,6 +66,34 @@ def test_verify_ingredients_replaces_model_values_with_usda(monkeypatch):
     assert ingredients[0]["nutrition_source"]["provider"] == "USDA FoodData Central"
 
 
+def test_lookup_reports_rejected_key_without_logging_url_or_query(monkeypatch, caplog):
+    usda_nutrition.lookup_food.cache_clear()
+
+    class RejectedClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, *_args, **_kwargs):
+            request = usda_nutrition.httpx.Request("POST", usda_nutrition.FDC_API_URL)
+            response = usda_nutrition.httpx.Response(403, request=request)
+            raise usda_nutrition.httpx.HTTPStatusError("forbidden", request=request, response=response)
+
+    monkeypatch.setattr(usda_nutrition.settings, "USDA_FDC_API_KEY", "super-secret")
+    monkeypatch.setattr(usda_nutrition.httpx, "Client", RejectedClient)
+
+    with pytest.raises(USDANutritionError, match="rejected"):
+        usda_nutrition.lookup_food("private food query")
+
+    assert "super-secret" not in caplog.text
+    assert "private food query" not in caplog.text
+
+
 def test_resolve_foods_deduplicates_queries_and_reuses_results(monkeypatch):
     calls = []
     match = FDCMatch(

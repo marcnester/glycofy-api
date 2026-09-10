@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from typing import Any
 import httpx
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 FDC_API_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
 FDC_DATA_TYPES = ["Foundation", "SR Legacy"]
@@ -109,7 +112,14 @@ def lookup_food(query: str) -> FDCMatch:
                 },
             )
             response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "usda_request_rejected",
+            extra={"provider": "usda_fdc", "status_code": exc.response.status_code},
+        )
+        raise USDANutritionError("USDA FoodData Central rejected the request") from exc
     except httpx.HTTPError as exc:
+        logger.warning("usda_request_unavailable", extra={"provider": "usda_fdc"})
         raise USDANutritionError("USDA FoodData Central is temporarily unavailable") from exc
     return select_match(query, response.json().get("foods", []))
 
