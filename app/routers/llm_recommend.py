@@ -2321,6 +2321,7 @@ def _llm_pick_or_create(
             meta["mode"] = "empty"
             return "empty", None, None, str(exc), meta, None
 
+        reconciled_macros = ingredient_nutrition_totals({"ingredients": ingredients})
         quality_candidate = {
             "title": title,
             "ingredients": ingredients,
@@ -2328,9 +2329,10 @@ def _llm_pick_or_create(
             "prep_time_min": new_recipe.get("prep_time_min"),
             "cook_time_min": new_recipe.get("cook_time_min"),
             "total_time_min": new_recipe.get("total_time_min"),
-            "macro_estimate": macro_est,
+            # USDA is authoritative. The model estimate only guides ingredient
+            # quantities and must not override or invalidate the verified sum.
+            "macro_estimate": reconciled_macros or macro_est,
         }
-        reconciled_macros = ingredient_nutrition_totals(quality_candidate)
         quality_report = validate_meal(
             quality_candidate,
             target=tgt.model_dump(exclude={"slot"}),
@@ -3631,7 +3633,12 @@ def _batch_week_recommendations(
             protein_group = str(meal.get("protein_group") or "unknown").strip().lower()
             title_key = _meal_similarity_key(title)
             reconciled_macros = ingredient_nutrition_totals({"ingredients": ingredients})
-            quality_candidate = {**meal, "ingredients": ingredients, "macros": macros}
+            quality_candidate = {
+                **meal,
+                "ingredients": ingredients,
+                # Validate USDA-derived totals, not the discarded AI estimate.
+                "macros": reconciled_macros or macros,
+            }
             quality_report = validate_meal(
                 quality_candidate,
                 target=target,

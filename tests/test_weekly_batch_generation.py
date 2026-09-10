@@ -265,7 +265,7 @@ def test_weekly_job_status_includes_the_planned_date_range():
     assert result["end_date"] == "2026-09-04"
 
 
-def test_weekly_batch_rejects_a_meal_with_bad_macros(monkeypatch):
+def test_weekly_batch_ignores_bad_model_macros_when_ingredient_evidence_is_valid(monkeypatch):
     date = "2026-09-01"
     meals = [_meal(slot, 1) for slot in llm_recommend.SLOTS]
     meals[0]["macros"]["carbs_g"] = 2
@@ -304,9 +304,9 @@ def test_weekly_batch_rejects_a_meal_with_bad_macros(monkeypatch):
         exclusions=[],
     )
 
-    assert "breakfast" not in recommendations[date]
-    assert meta["accepted"] == 3
-    assert meta["rejected"] == 1
+    assert recommendations[date]["breakfast"].ai_idea["approx_macros"]["carbs_g"] == 50
+    assert meta["accepted"] == 4
+    assert meta["rejected"] == 0
 
 
 def test_weekly_batch_rejects_macros_not_supported_by_ingredient_sum(monkeypatch):
@@ -343,3 +343,45 @@ def test_weekly_batch_rejects_macros_not_supported_by_ingredient_sum(monkeypatch
 
     assert "breakfast" not in recommendations[date]
     assert meta["rejected"] == 1
+
+
+def test_weekly_batch_uses_authoritative_ingredient_sum_instead_of_model_macros(monkeypatch):
+    date = "2026-09-01"
+    meals = [_meal(slot, 1) for slot in llm_recommend.SLOTS]
+    meals[0]["macros"] = {"kcal": 999, "protein_g": 99, "carbs_g": 99, "fat_g": 99}
+    response_body = {"days": [{"date": date, "meals": meals}]}
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response_body)))],
+                usage=None,
+            )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    days = [
+        {
+            "date": date,
+            "training": {},
+            "diet_tags": [],
+            "meals": [
+                {"slot": slot, "target_macros": {"kcal": 500, "protein_g": 40, "carbs_g": 50, "fat_g": 15}}
+                for slot in llm_recommend.SLOTS
+            ],
+        }
+    ]
+    monkeypatch.setattr(llm_recommend, "_circuit_open", lambda: False)
+    monkeypatch.setattr(llm_recommend, "_daily_budget_usd", lambda: 100.0)
+
+    recommendations, meta = llm_recommend._batch_week_recommendations(
+        client, days=days, primary_diet="omnivore", diet_tags=[], exclusions=[]
+    )
+
+    breakfast = recommendations[date]["breakfast"]
+    assert breakfast.ai_idea["approx_macros"] == {
+        "kcal": 500.0,
+        "protein_g": 40.0,
+        "carbs_g": 50.0,
+        "fat_g": 15.0,
+    }
+    assert meta["rejected"] == 0
