@@ -27,6 +27,12 @@
       <article class="card wide"><div class="label">Weekly jobs</div><div class="value" id="jobs">—</div><div class="muted" id="jobDetail"></div></article>
     </section>
     <p id="state" class="muted">Loading operational data…</p>
+    <div class="head" style="margin-top:38px"><div><h2>Security pulse</h2><div class="muted">Privacy-safe audit volume and alert references for incident triage.</div></div></div>
+    <section class="metrics">
+      <article class="card"><div class="label">Security events</div><div class="value" id="securityEvents">—</div></article>
+      <article class="card"><div class="label">Alerts</div><div class="value" id="securityAlerts">—</div></article>
+      <article class="card wide"><div class="label">Recent alerts</div><div id="recentAlerts" class="muted" style="margin-top:12px">Loading…</div></article>
+    </section>
     <div class="head" style="margin-top:38px"><div><h2>Beta pulse</h2><div class="muted">Adoption signals and actionable feedback without private health data.</div></div></div>
     <section class="metrics">
       <article class="card"><div class="label">Active testers</div><div class="value" id="activeUsers">—</div></article>
@@ -37,7 +43,7 @@
       <article class="card wide"><div class="label">Failed jobs</div><div id="failedJobs" class="muted" style="margin-top:12px">Loading…</div></article>
     </section>
   </main>
-  <script src="/ui/operations.js" defer></script>
+  <script src="/ui/operations.js?v=2026-09-09-incident-response" defer></script>
   <script src="/ui/beta.js?v=2026-09-06-tour" defer></script>
 </body>
 </html>

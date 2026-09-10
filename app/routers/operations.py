@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.auth_utils import get_current_user
 from app.config import settings
 from app.db import get_db
-from app.models import AIOperationMetric, BetaFeedback, ProductEvent, User, WeeklyPlanningJob
+from app.models import AIOperationMetric, BetaFeedback, ProductEvent, SecurityAuditEvent, User, WeeklyPlanningJob
 
 router = APIRouter()
 
@@ -32,6 +32,45 @@ def _percentile(values: list[int], fraction: float) -> int | None:
         return None
     ordered = sorted(values)
     return ordered[min(len(ordered) - 1, math.ceil(len(ordered) * fraction) - 1)]
+
+
+@router.get("/security-summary", tags=["operations"])
+def security_summary(
+    hours: int = Query(24, ge=1, le=24 * 30),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    since = datetime.utcnow() - timedelta(hours=hours)
+    rows = db.query(SecurityAuditEvent).filter(SecurityAuditEvent.occurred_at >= since).all()
+    by_severity: dict[str, int] = {}
+    by_event: dict[str, int] = {}
+    for row in rows:
+        by_severity[row.severity] = by_severity.get(row.severity, 0) + 1
+        key = f"{row.event_type}:{row.outcome}"
+        by_event[key] = by_event.get(key, 0) + 1
+    recent_alerts = (
+        db.query(SecurityAuditEvent)
+        .filter(SecurityAuditEvent.occurred_at >= since, SecurityAuditEvent.severity == "alert")
+        .order_by(SecurityAuditEvent.occurred_at.desc())
+        .limit(25)
+        .all()
+    )
+    return {
+        "window_hours": hours,
+        "events": len(rows),
+        "by_severity": by_severity,
+        "by_event": by_event,
+        "recent_alerts": [
+            {
+                "event_type": row.event_type,
+                "outcome": row.outcome,
+                "request_id": row.request_id,
+                "occurred_at": row.occurred_at.isoformat(),
+            }
+            for row in recent_alerts
+        ],
+        "privacy": "Aggregates and request IDs only; no emails, IP addresses, meals, workouts, or health data.",
+    }
 
 
 @router.get("/ai-summary", tags=["operations"])

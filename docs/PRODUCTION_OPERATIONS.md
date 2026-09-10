@@ -16,6 +16,12 @@ The same dashboard includes privacy-safe beta funnel totals, the feedback queue,
 
 Recommended beta alerts are failure rate above 5%, p95 weekly latency above 120 seconds, any exhausted recovery, or sustained readiness failure.
 
+The admin-only `GET /v1/operations/security-summary?hours=24` view aggregates
+security events and exposes recent alert request IDs without emails, IP
+addresses, user identifiers, meals, workouts, or health data. Follow
+[Incident response](INCIDENT_RESPONSE.md) for severity, containment, evidence,
+recovery, and communication procedures.
+
 ## Backup restore drill
 
 A backup is not proven until restored. At least monthly:

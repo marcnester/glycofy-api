@@ -50,6 +50,23 @@ async function loadBeta() {
   } catch (_) { /* AI operations remain useful if beta metrics are unavailable */ }
 }
 
-document.getElementById("window").addEventListener("change", loadOperations);
+async function loadSecurity() {
+  try {
+    const hours = document.getElementById("window").value;
+    const response = await fetch(`/v1/operations/security-summary?hours=${hours}`, {credentials:"same-origin"});
+    if (!response.ok) return;
+    const summary = await response.json();
+    document.getElementById("securityEvents").textContent = number.format(summary.events);
+    document.getElementById("securityAlerts").textContent = number.format(summary.by_severity.alert || 0);
+    document.getElementById("recentAlerts").innerHTML = rows(
+      summary.recent_alerts,
+      item => `<strong>${item.event_type}</strong> · ${item.outcome}<br><small>${new Date(item.occurred_at).toLocaleString()} · Request ${item.request_id || "unavailable"}</small>`,
+      "No security alerts in this window."
+    );
+  } catch (_) { /* Other operations data remains available during partial failure. */ }
+}
+
+document.getElementById("window").addEventListener("change", () => { loadOperations(); loadSecurity(); });
 loadOperations();
 loadBeta();
+loadSecurity();
