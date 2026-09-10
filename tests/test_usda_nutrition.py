@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.services import usda_nutrition
-from app.services.usda_nutrition import FDCMatch, USDANutritionError, select_match, verify_ingredients
+from app.services.usda_nutrition import FDCMatch, USDANutritionError, resolve_foods, select_match, verify_ingredients
 
 
 def _food(fdc_id: int, description: str, *, data_type: str = "Foundation") -> dict:
@@ -64,6 +64,22 @@ def test_verify_ingredients_replaces_model_values_with_usda(monkeypatch):
     assert ingredients[0]["nutrition"] == {"kcal": 247.5, "protein_g": 46.5, "carbs_g": 0.0, "fat_g": 5.4}
     assert ingredients[0]["food_ref_id"] == "171077"
     assert ingredients[0]["nutrition_source"]["provider"] == "USDA FoodData Central"
+
+
+def test_resolve_foods_deduplicates_queries_and_reuses_results(monkeypatch):
+    calls = []
+    match = FDCMatch(
+        fdc_id=1,
+        description="Bananas, raw",
+        data_type="Foundation",
+        nutrients_per_100g={"kcal": 89.0, "protein_g": 1.1, "carbs_g": 22.8, "fat_g": 0.3},
+    )
+    monkeypatch.setattr(usda_nutrition, "lookup_food", lambda query: calls.append(query) or match)
+
+    resolved = resolve_foods(["Banana raw", "banana raw", " Banana raw "])
+
+    assert calls == ["banana raw"]
+    assert resolved["banana raw"] == match
 
 
 @pytest.mark.parametrize("amount_g", [None, 0, -1, "not-a-number"])

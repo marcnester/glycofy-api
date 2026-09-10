@@ -159,11 +159,12 @@ def test_weekly_batch_uses_one_structured_call_and_accepts_complete_week(monkeyp
     sent_payload = json.loads(calls[0]["messages"][1]["content"])
     assert sent_payload["athlete_feedback"]["favorite_meals"] == ["Salmon rice bowl"]
     system_prompt = calls[0]["messages"][0]["content"]
-    assert "Never copy target_macros into macros" in system_prompt
+    assert "never copy target_macros into macros" in system_prompt
     ingredient_schema = calls[0]["response_format"]["json_schema"]["schema"]["properties"]["days"]["items"][
         "properties"
     ]["meals"]["items"]["properties"]["ingredients"]["items"]
-    assert "nutrition" in ingredient_schema["required"]
+    assert "nutrition" not in ingredient_schema["properties"]
+    assert "Do not calculate or return nutrition for individual ingredients" in system_prompt
     assert meta["accepted"] == 8
     assert meta["rejected"] == 0
     assert all(set(recommendations[date]) == set(llm_recommend.SLOTS) for date in dates)

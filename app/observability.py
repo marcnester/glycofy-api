@@ -74,6 +74,9 @@ def configure_logging() -> None:
     # Our middleware emits correlated JSON access events; suppress Uvicorn's
     # duplicate unstructured access line.
     logging.getLogger("uvicorn.access").disabled = True
+    # httpx logs complete request URLs at INFO. Third-party APIs commonly put
+    # credentials in query parameters, so never emit those URLs in production.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def new_request_id(candidate: str | None) -> str:

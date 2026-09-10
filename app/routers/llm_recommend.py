@@ -46,7 +46,7 @@ from app.services.training_nutrition import (
     TrainingNutritionResult,
     calculate_training_nutrition,
 )
-from app.services.usda_nutrition import USDANutritionError, verify_ingredients
+from app.services.usda_nutrition import FDCMatch, USDANutritionError, resolve_foods, verify_ingredients
 
 # Optional OpenAI client (lazy import so dev works without the package)
 ClientType = Any
@@ -56,10 +56,14 @@ logger = logging.getLogger(__name__)
 _WEEKLY_JOB_CONTEXT = threading.local()
 
 
-def _verify_ingredient_nutrition(ingredients: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _verify_ingredient_nutrition(
+    ingredients: list[dict[str, Any]],
+    *,
+    resolved_foods: dict[str, FDCMatch | USDANutritionError] | None = None,
+) -> list[dict[str, Any]]:
     """Replace model nutrition with USDA data whenever authoritative mode is configured."""
     if settings.USDA_FDC_API_KEY:
-        return verify_ingredients(ingredients)
+        return verify_ingredients(ingredients, resolved_foods=resolved_foods)
     if settings.USDA_FDC_REQUIRED:
         raise USDANutritionError("USDA FoodData Central is required but not configured")
     return ingredients
@@ -1044,7 +1048,13 @@ def _get_openai_client() -> ClientType | None:
     except Exception as e:
         logger.exception("LLM: failed to import OpenAI client: %s", e)
         return None
-    return OpenAI(api_key=api_key)
+    # Weekly planning must have a firm UX ceiling. Disable SDK-level retries;
+    # Glycofy owns retries at the job level and can preserve the old plan.
+    return OpenAI(
+        api_key=api_key,
+        timeout=float(os.environ.get("OPENAI_REQUEST_TIMEOUT_SECONDS", "40")),
+        max_retries=0,
+    )
 
 
 def _openai_model() -> str:
@@ -3400,14 +3410,13 @@ def _weekly_batch_schema(meals_per_day: int) -> dict[str, Any]:
     ingredient = {
         "type": "object",
         "additionalProperties": False,
-        "required": ["name", "amount", "unit", "amount_g", "usda_search_query", "nutrition"],
+        "required": ["name", "amount", "unit", "amount_g", "usda_search_query"],
         "properties": {
             "name": {"type": "string"},
             "amount": {"type": "number", "exclusiveMinimum": 0, "maximum": 5000},
             "unit": {"type": "string", "const": "g"},
             "amount_g": {"type": "number", "exclusiveMinimum": 0, "maximum": 5000},
             "usda_search_query": {"type": "string"},
-            "nutrition": macros,
         },
     }
     meal = {
@@ -3502,12 +3511,10 @@ def _batch_week_recommendations(
         "amount is the edible gram weight, unit is g, and amount_g is the identical numeric value. Also include "
         "usda_search_query as a concise generic USDA food description "
         "including the relevant raw/cooked preparation state. Never use a branded food or an unmeasured serving. "
-        "For every ingredient, calculate "
-        "the kcal, protein_g, carbs_g, and fat_g contributed by its exact stated quantity. Then sum those ingredient "
-        "values to produce the meal macros. Never copy target_macros into macros and never invent macro values merely "
-        "to satisfy the target. Adjust actual ingredient quantities until the ingredient sum is within 15% of each "
-        "slot target. Before responding, independently re-add all ingredient nutrition and ensure it equals the meal "
-        "macros. A day's training object can describe upcoming training. On those days, favor "
+        "Do not calculate or return nutrition for individual ingredients; Glycofy computes it authoritatively from "
+        "USDA FoodData Central after generation. Estimate meal macros from the stated foods and quantities, never copy "
+        "target_macros into macros, and adjust actual ingredient quantities until the estimate is close to each slot "
+        "target. A day's training object can describe upcoming training. On those days, favor "
         "digestible carbohydrate before the workout and carbohydrate plus protein afterward, using next_workout_at "
         "for timing. Each snack has a preferred_time: create a distinct, practical snack for that eating occasion, "
         "describe its timing purpose in the reason, and never merge multiple snack slots. Mention the workout in "
@@ -3579,6 +3586,19 @@ def _batch_week_recommendations(
     week_titles: set[str] = set()
     rejected = 0
 
+    # A full week can contain hundreds of ingredient rows. Resolve each unique
+    # USDA description once and in parallel, then perform the deterministic
+    # quantity math locally. This keeps authoritative validation from becoming
+    # hundreds of sequential network round-trips.
+    usda_queries = [
+        str(ingredient.get("usda_search_query") or ingredient.get("name") or "")
+        for day in parsed.get("days", [])
+        for meal in day.get("meals", [])
+        for ingredient in (meal.get("ingredients") or [])
+        if isinstance(ingredient, dict)
+    ]
+    resolved_usda = resolve_foods(usda_queries) if settings.USDA_FDC_API_KEY else None
+
     for day in parsed.get("days", []):
         date_iso = str(day.get("date") or "")
         if date_iso not in valid_dates:
@@ -3595,7 +3615,7 @@ def _batch_week_recommendations(
             ingredients = meal.get("ingredients") or []
             usda_error = None
             try:
-                ingredients = _verify_ingredient_nutrition(ingredients)
+                ingredients = _verify_ingredient_nutrition(ingredients, resolved_foods=resolved_usda)
             except USDANutritionError as exc:
                 usda_error = str(exc)
             instructions = meal.get("instructions") or []
@@ -3839,24 +3859,14 @@ def recommend_weekly_apply(
             slot = _normalize_slot(scaled.slot)
             rec = batch_items.get(date_iso, {}).get(slot)
             if rec is None:
-                rec = _recommend_for_single_meal(
-                    client=client,
-                    db=db,
-                    date=date_iso,
-                    tgt=scaled,
-                    diet_tags=day_diet_tags,
-                    primary_diet=primary_diet,
-                    pref=pref,
-                    provider=provider,
-                    used_protein_items=used_protein_items,
-                    used_carb_items=used_carb_items,
-                    used_recipe_ids=used_recipe_ids,
-                    used_meal_keys=used_meal_keys,
-                    allow_new_recipe=allow_new,
-                    week_protein_counts=week_protein_counts,
-                    protein_cap_per_slot=2,
-                    prefer_fast_catalog=True,
-                    athlete_feedback=athlete_feedback,
+                # Do not turn a partial batch into as many as 105 additional
+                # model attempts. The weekly job is atomic: preserve the old
+                # plan and let one bounded retry regenerate the compact batch.
+                rec = SlotRecommendation(
+                    slot=slot,
+                    target=scaled.model_dump(exclude={"slot"}),
+                    reason="Weekly batch did not produce a verified meal.",
+                    meta={"provider": provider, "mode": "empty", "batch": True},
                 )
             else:
                 meta = rec.meta or {}

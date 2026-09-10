@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -113,7 +114,30 @@ def lookup_food(query: str) -> FDCMatch:
     return select_match(query, response.json().get("foods", []))
 
 
-def verify_ingredients(ingredients: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def resolve_foods(queries: list[str], *, max_workers: int = 12) -> dict[str, FDCMatch | USDANutritionError]:
+    """Resolve unique USDA descriptions concurrently for a whole planning request."""
+    normalized = sorted({query.strip().lower() for query in queries if query.strip()})
+    if not normalized:
+        return {}
+    resolved: dict[str, FDCMatch | USDANutritionError] = {}
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(normalized))) as executor:
+        futures = {executor.submit(lookup_food, query): query for query in normalized}
+        for future in as_completed(futures):
+            query = futures[future]
+            try:
+                resolved[query] = future.result()
+            except USDANutritionError as exc:
+                resolved[query] = exc
+            except Exception:  # defensive boundary around third-party data
+                resolved[query] = USDANutritionError("USDA FoodData Central is temporarily unavailable")
+    return resolved
+
+
+def verify_ingredients(
+    ingredients: list[dict[str, Any]],
+    *,
+    resolved_foods: dict[str, FDCMatch | USDANutritionError] | None = None,
+) -> list[dict[str, Any]]:
     verified: list[dict[str, Any]] = []
     if not ingredients:
         raise USDANutritionError("Recipe has no ingredients")
@@ -133,7 +157,12 @@ def verify_ingredients(ingredients: list[dict[str, Any]]) -> list[dict[str, Any]
             or not 0 < amount_g <= 5000
         ):
             raise USDANutritionError(f"Ingredient {name!r} cannot be verified")
-        match = lookup_food(query.lower())
+        normalized_query = query.lower()
+        match = resolved_foods.get(normalized_query) if resolved_foods is not None else lookup_food(normalized_query)
+        if isinstance(match, USDANutritionError):
+            raise match
+        if match is None:
+            raise USDANutritionError(f"No USDA result was resolved for {query!r}")
         factor = amount_g / 100.0
         nutrition = {key: round(value * factor, 1) for key, value in match.nutrients_per_100g.items()}
         verified.append(

@@ -540,40 +540,16 @@ def test_missing_slot_detection_covers_snacks_and_main_meals():
     assert llm_recommend._missing_recommendation_slots(items) == ["snack"]
 
 
-def test_weekly_generation_carries_protein_history_into_the_next_day(monkeypatch):
+def test_incomplete_weekly_batch_fails_atomically_without_slow_per_slot_repairs(monkeypatch):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    breakfast_history: list[tuple[str, list[str]]] = []
-    recommendation_number = 0
 
     def fake_recommendation(**kwargs):
-        nonlocal recommendation_number
-        recommendation_number += 1
-        slot = kwargs["tgt"].slot
-        if slot == "breakfast":
-            breakfast_history.append((kwargs["date"], list(kwargs["used_protein_items"])))
-        protein = f"protein-{recommendation_number}"
-        carb = f"carb-{recommendation_number}"
-        kwargs["used_protein_items"].append(protein)
-        kwargs["used_carb_items"].append(carb)
-        return llm_recommend.SlotRecommendation(
-            slot=slot,
-            target={},
-            ai_idea={
-                "title": f"Unique meal {recommendation_number}",
-                "ingredients": [{"name": "food", "amount": "1", "unit": "cup"}],
-                "instructions": ["Cook."],
-                "approx_macros": {"kcal": 500, "protein_g": 40, "carbs_g": 50, "fat_g": 15},
-                "protein_group": "plant",
-                "protein_item": protein,
-                "carb_item": carb,
-            },
-            meta={"mode": "create", "protein_group": "plant", "protein_item": protein, "carb_item": carb},
-        )
+        raise AssertionError("an incomplete weekly batch must not trigger per-slot AI calls")
 
     monkeypatch.setattr(llm_recommend, "_recommend_for_single_meal", fake_recommendation)
     monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", lambda *_args, **_kwargs: ({}, {"mode": "test"}))
@@ -603,11 +579,11 @@ def test_weekly_generation_carries_protein_history_into_the_next_day(monkeypatch
         )
         request = MagicMock()
         request.client.host = "127.0.0.1"
-        llm_recommend.recommend_weekly_apply(request, payload, db, user)
+        with pytest.raises(llm_recommend.HTTPException) as exc_info:
+            llm_recommend.recommend_weekly_apply(request, payload, db, user)
 
-    assert breakfast_history[0][1] == []
-    assert breakfast_history[1][1] == ["protein-1", "protein-2", "protein-3", "protein-4"]
-    assert breakfast_history[2][1] == ["protein-5", "protein-6", "protein-7", "protein-8"]
+    assert exc_info.value.status_code == 422
+    assert "nutrition-safe" in str(exc_info.value.detail)
 
 
 def test_weekly_generation_fails_closed_without_ai_or_verified_catalog(monkeypatch):
