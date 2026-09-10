@@ -135,6 +135,14 @@ def test_feedback_control_is_present_on_every_authenticated_primary_page():
     assert "beta-feedback-button" in script
 
 
+def test_feedback_close_does_not_submit_required_form() -> None:
+    script = Path("ui/beta.js").read_text()
+
+    assert 'class="beta-feedback-close" type="button"' in script
+    assert 'querySelector(".beta-feedback-close").addEventListener("click", () => dialog.close())' in script
+    assert 'class="btn beta-feedback-submit" type="submit"' in script
+
+
 def test_beta_shell_includes_tour_offline_state_and_accessibility_escape_hatch():
     script = Path("ui/beta.js").read_text(encoding="utf-8")
     styles = Path("ui/styles.css").read_text(encoding="utf-8")
