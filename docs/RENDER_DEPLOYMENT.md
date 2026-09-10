@@ -29,12 +29,13 @@ Use the first value for `JWT_SECRET` and the second for
    optional for the initial deployment, but AI meal generation requires it.
 4. Apply the Blueprint and wait for both the pre-deploy migration and web
    service deploy to succeed.
-5. Verify `https://glycofy-api.onrender.com/health`, then `/ready`, then
-   `/ui/login.html`.
+5. After the custom domain is verified, check `https://app.glycofy.ai/health`,
+   then `/ready`, then `/ui/login.html`.
 
-If Render assigns a different `onrender.com` hostname, add that exact HTTPS
-origin to `ALLOWED_ORIGINS`. The host is already accepted by the restricted
-`*.onrender.com` host pattern.
+The Blueprint disables Render's public `onrender.com` subdomain once the
+verified custom domain exists. This prevents bypassing Cloudflare's edge
+security controls. Do not add an `onrender.com` hostname to `ALLOWED_ORIGINS`
+or `ALLOWED_HOSTS` in production.
 
 ## Connect the production domain
 

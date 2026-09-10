@@ -8,6 +8,10 @@ services:
     dockerContext: .
     preDeployCommand: alembic upgrade head
     healthCheckPath: /ready
+    # Prevent clients from bypassing Cloudflare security controls through the
+    # service's default public hostname. Render health checks use a verified
+    # custom domain as Host when one is configured.
+    renderSubdomainPolicy: disabled
     autoDeployTrigger: checksPass
     maxShutdownDelaySeconds: 30
     envVars:
@@ -24,9 +28,9 @@ services:
       - key: PUBLIC_BASE_URL
         value: https://app.glycofy.ai
       - key: ALLOWED_ORIGINS
-        value: https://app.glycofy.ai,https://glycofy-api.onrender.com
+        value: https://app.glycofy.ai
       - key: ALLOWED_HOSTS
-        value: app.glycofy.ai,*.onrender.com
+        value: app.glycofy.ai
       - key: COOKIE_SECURE
         value: "true"
       - key: ENABLE_DEV_ROUTES
