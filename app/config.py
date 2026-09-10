@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     # ─── Units & Defaults ─────────────────────────────────────────────────────
     DEFAULT_UNITS: str = "us"
 
+    # ─── Authoritative nutrition ─────────────────────────────────────────────
+    USDA_FDC_API_KEY: str | None = None
+    USDA_FDC_REQUIRED: bool = False
+    USDA_FDC_TIMEOUT_SECONDS: float = 10.0
+
     # ─── OAuth: Strava ────────────────────────────────────────────────────────
     STRAVA_CLIENT_ID: str | None = None
     STRAVA_CLIENT_SECRET: str | None = None
@@ -181,6 +186,8 @@ class Settings(BaseSettings):
             errors.append("STRAVA_WEBHOOK_VERIFY_TOKEN must contain at least 32 characters")
         if self.INSTACART_API_KEY and self.INSTACART_API_BASE.rstrip("/") != "https://connect.instacart.com":
             errors.append("INSTACART_API_BASE must use the production Instacart endpoint")
+        if self.USDA_FDC_REQUIRED and not self.USDA_FDC_API_KEY:
+            errors.append("USDA_FDC_API_KEY is required when USDA_FDC_REQUIRED is true")
         if self.SECURITY_ALERT_EMAIL_ENABLED:
             if not self.SMTP_HOST:
                 errors.append("SMTP_HOST is required when alert email is enabled")

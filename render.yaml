@@ -55,6 +55,12 @@ services:
         value: "0.0002"
       - key: OPENAI_PRICE_PER_1K_OUTPUT
         value: "0.0012"
+      - key: USDA_FDC_API_KEY
+        sync: false
+      - key: USDA_FDC_REQUIRED
+        value: "false"
+      - key: USDA_FDC_TIMEOUT_SECONDS
+        value: "10"
       - key: INSTACART_API_KEY
         sync: false
       - key: INSTACART_API_BASE

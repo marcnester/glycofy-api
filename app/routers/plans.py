@@ -106,6 +106,9 @@ def _plan_nutrition_verified(meals) -> bool:
             return False
         item_totals = {key: 0.0 for key in tolerances}
         for item in items:
+            meta = getattr(item, "meta", None) or {}
+            if meta.get("nutrition_basis") != "usda_fooddata_central":
+                return False
             for key in tolerances:
                 value = getattr(item, key, None)
                 if value is None:
@@ -614,7 +617,19 @@ def _apply_ai_idea_to_meal(meal: PlanMeal, ai: AIIdeaPayload, slot: str) -> None
                 protein_g=float(nutrition["protein_g"]) if nutrition.get("protein_g") is not None else None,
                 carbs_g=float(nutrition["carbs_g"]) if nutrition.get("carbs_g") is not None else None,
                 fat_g=float(nutrition["fat_g"]) if nutrition.get("fat_g") is not None else None,
-                meta={"nutrition_basis": "ingredient_quantity_estimate"} if nutrition else {},
+                meta=(
+                    {
+                        "nutrition_basis": (
+                            "usda_fooddata_central"
+                            if ing.get("nutrition_source", {}).get("provider") == "USDA FoodData Central"
+                            else "ingredient_quantity_estimate"
+                        ),
+                        "food_ref_id": ing.get("food_ref_id"),
+                        "nutrition_source": ing.get("nutrition_source"),
+                    }
+                    if nutrition and isinstance(ing, dict)
+                    else {}
+                ),
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
             )

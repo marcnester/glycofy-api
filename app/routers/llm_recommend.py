@@ -46,6 +46,7 @@ from app.services.training_nutrition import (
     TrainingNutritionResult,
     calculate_training_nutrition,
 )
+from app.services.usda_nutrition import USDANutritionError, verify_ingredients
 
 # Optional OpenAI client (lazy import so dev works without the package)
 ClientType = Any
@@ -53,6 +54,15 @@ ClientType = Any
 router = APIRouter()
 logger = logging.getLogger(__name__)
 _WEEKLY_JOB_CONTEXT = threading.local()
+
+
+def _verify_ingredient_nutrition(ingredients: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Replace model nutrition with USDA data whenever authoritative mode is configured."""
+    if settings.USDA_FDC_API_KEY:
+        return verify_ingredients(ingredients)
+    if settings.USDA_FDC_REQUIRED:
+        raise USDANutritionError("USDA FoodData Central is required but not configured")
+    return ingredients
 
 
 class WeeklyJobCancelled(RuntimeError):
@@ -1937,7 +1947,9 @@ def _llm_pick_or_create(
         "- Snacks are flexible and MAY repeat if needed.\n\n"
         "RECIPE CREATION RULES (GUARDRAILS):\n"
         "- Use 5–7 main ingredients MAX (excluding pantry staples like salt, pepper, water, cooking oil).\n"
-        "- EVERY ingredient must include a practical single-serving quantity, unit, and its nutrition contribution "
+        "- EVERY ingredient must use grams: amount is the edible gram weight, unit is g, and amount_g is the identical "
+        "numeric value. Also include a concise "
+        "generic usda_search_query including its raw/cooked preparation state, and its nutrition contribution "
         "for that exact quantity: kcal, protein_g, carbs_g, and fat_g.\n"
         "- Calculate the meal macros by summing the ingredient nutrition values. Never copy the target macros into "
         "the result. Adjust ingredient quantities until the ingredient sum is within 15% of the target.\n"
@@ -1962,7 +1974,7 @@ def _llm_pick_or_create(
         '  "pick_id": <int or null>,\n'
         '  "new_recipe": {\n'
         '    "title": "<string>",\n'
-        '    "ingredients": [{"name": "<ingredient>", "amount": "<number or fraction>", "unit": "<g|oz|cup|tbsp|tsp|can|item>", "nutrition": {"kcal": <number>, "protein_g": <number>, "carbs_g": <number>, "fat_g": <number>}}],\n'
+        '    "ingredients": [{"name": "<ingredient>", "amount": <exact edible grams>, "unit": "g", "amount_g": <same exact edible grams>, "usda_search_query": "<generic food and preparation state>", "nutrition": {"kcal": <number>, "protein_g": <number>, "carbs_g": <number>, "fat_g": <number>}}],\n'
         '    "instructions": ["<step 1>", "<step 2>", "..."],\n'
         '    "prep_time_min": <integer minutes>,\n'
         '    "cook_time_min": <integer minutes; 0 for assembly-only>,\n'
@@ -2291,6 +2303,13 @@ def _llm_pick_or_create(
                     return "pick", best_r, best_deltas, "default: day variety fallback", meta, None
                 meta["mode"] = "empty"
                 return "empty", None, None, "Unable to satisfy day variety rule.", meta, None
+
+        try:
+            ingredients = _verify_ingredient_nutrition(ingredients)
+        except USDANutritionError as exc:
+            meta["quality"] = {"policy_version": QUALITY_POLICY_VERSION, "issues": ["usda_unverified"]}
+            meta["mode"] = "empty"
+            return "empty", None, None, str(exc), meta, None
 
         quality_candidate = {
             "title": title,
@@ -3064,7 +3083,19 @@ def _apply_recipe_to_planmeal(pm: PlanMeal, rec: Recipe) -> None:
                     protein_g=_safe_float(nutrition.get("protein_g")) if nutrition else None,
                     carbs_g=_safe_float(nutrition.get("carbs_g")) if nutrition else None,
                     fat_g=_safe_float(nutrition.get("fat_g")) if nutrition else None,
-                    meta={"nutrition_basis": "ingredient_quantity_estimate"} if nutrition else {},
+                    meta=(
+                        {
+                            "nutrition_basis": (
+                                "usda_fooddata_central"
+                                if raw.get("nutrition_source", {}).get("provider") == "USDA FoodData Central"
+                                else "ingredient_quantity_estimate"
+                            ),
+                            "food_ref_id": raw.get("food_ref_id"),
+                            "nutrition_source": raw.get("nutrition_source"),
+                        }
+                        if nutrition and isinstance(raw, dict)
+                        else {}
+                    ),
                     created_at=datetime.utcnow(),
                     updated_at=datetime.utcnow(),
                 )
@@ -3369,11 +3400,13 @@ def _weekly_batch_schema(meals_per_day: int) -> dict[str, Any]:
     ingredient = {
         "type": "object",
         "additionalProperties": False,
-        "required": ["name", "amount", "unit", "nutrition"],
+        "required": ["name", "amount", "unit", "amount_g", "usda_search_query", "nutrition"],
         "properties": {
             "name": {"type": "string"},
-            "amount": {"type": "string"},
-            "unit": {"type": "string"},
+            "amount": {"type": "number", "exclusiveMinimum": 0, "maximum": 5000},
+            "unit": {"type": "string", "const": "g"},
+            "amount_g": {"type": "number", "exclusiveMinimum": 0, "maximum": 5000},
+            "usda_search_query": {"type": "string"},
             "nutrition": macros,
         },
     }
@@ -3465,7 +3498,11 @@ def _batch_week_recommendations(
         "chemicals or unsafe food-handling directions. "
         "Return exactly the meal slots supplied for every requested date, including every scheduled snack. "
         "Respect diet tags and ingredient exclusions as hard safety constraints. Keep every recipe practical, "
-        "single-serving, and cookable in about 30 minutes with measured ingredients. For every ingredient, calculate "
+        "single-serving, and cookable in about 30 minutes with measured ingredients. Every ingredient must use grams: "
+        "amount is the edible gram weight, unit is g, and amount_g is the identical numeric value. Also include "
+        "usda_search_query as a concise generic USDA food description "
+        "including the relevant raw/cooked preparation state. Never use a branded food or an unmeasured serving. "
+        "For every ingredient, calculate "
         "the kcal, protein_g, carbs_g, and fat_g contributed by its exact stated quantity. Then sum those ingredient "
         "values to produce the meal macros. Never copy target_macros into macros and never invent macro values merely "
         "to satisfy the target. Adjust actual ingredient quantities until the ingredient sum is within 15% of each "
@@ -3556,6 +3593,11 @@ def _batch_week_recommendations(
             protein = str(meal.get("protein_item") or "").strip().lower()
             carb = str(meal.get("carb_item") or "").strip().lower()
             ingredients = meal.get("ingredients") or []
+            usda_error = None
+            try:
+                ingredients = _verify_ingredient_nutrition(ingredients)
+            except USDANutritionError as exc:
+                usda_error = str(exc)
             instructions = meal.get("instructions") or []
             total_time_min = int(_safe_float(meal.get("total_time_min"), 0))
             prep_time_min = int(_safe_float(meal.get("prep_time_min"), 0))
@@ -3564,7 +3606,7 @@ def _batch_week_recommendations(
             protein_group = str(meal.get("protein_group") or "unknown").strip().lower()
             title_key = _meal_similarity_key(title)
             reconciled_macros = ingredient_nutrition_totals({"ingredients": ingredients})
-            quality_candidate = {**meal, "macros": macros}
+            quality_candidate = {**meal, "ingredients": ingredients, "macros": macros}
             quality_report = validate_meal(
                 quality_candidate,
                 target=target,
@@ -3585,6 +3627,7 @@ def _batch_week_recommendations(
                 or not 1 <= prep_time_min <= 240
                 or not 0 <= cook_time_min <= 240
                 or reconciled_macros is None
+                or usda_error is not None
                 or not quality_report.safe
             )
             if slot in _DAY_UNIQUE_SLOTS:
