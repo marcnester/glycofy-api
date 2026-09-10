@@ -8,6 +8,8 @@ services:
     dockerContext: .
     preDeployCommand: alembic upgrade head
     healthCheckPath: /ready
+    domains:
+      - app.glycofy.ai
     # Prevent clients from bypassing Cloudflare security controls through the
     # service's default public hostname. Render health checks use a verified
     # custom domain as Host when one is configured.

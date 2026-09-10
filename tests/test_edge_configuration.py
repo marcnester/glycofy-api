@@ -9,6 +9,7 @@ def test_render_blueprint_disables_origin_bypass() -> None:
     blueprint = yaml.safe_load((ROOT / "render.yaml").read_text())
     service = blueprint["services"][0]
 
+    assert service["domains"] == ["app.glycofy.ai"]
     assert service["renderSubdomainPolicy"] == "disabled"
 
 
