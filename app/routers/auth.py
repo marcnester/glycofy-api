@@ -30,6 +30,9 @@ pwd_context = CryptContext(
     schemes=["bcrypt", "bcrypt_sha256", "pbkdf2_sha256"],
     deprecated="auto",
 )
+# Keep failed-login work comparable whether or not an account exists. This
+# value is generated once at process start and is never associated with a user.
+DUMMY_PASSWORD_HASH = pwd_context.hash(secrets.token_urlsafe(32))
 
 
 def hash_password(plain: str) -> str:
@@ -48,6 +51,16 @@ def verify_and_maybe_upgrade(user: User, plain: str, db: Session) -> bool:
         db.add(user)
         db.commit()
     return verified
+
+
+def verify_login_password(user: User | None, plain: str, db: Session) -> bool:
+    if user is None:
+        try:
+            pwd_context.verify(plain, DUMMY_PASSWORD_HASH)
+        except Exception:
+            pass
+        return False
+    return verify_and_maybe_upgrade(user, plain, db)
 
 
 # -----------------------------------------------------------------------------
@@ -228,7 +241,7 @@ def login(request: Request, body: LoginRequest, background_tasks: BackgroundTask
         record_security_event(db, request, "authentication_rate_limited", "denied", severity="alert")
         raise
     user = db.query(User).filter(User.email == body.email.lower()).first()
-    if not user or not verify_and_maybe_upgrade(user, body.password, db):
+    if not verify_login_password(user, body.password, db):
         record_security_event(
             db,
             request,
@@ -290,6 +303,7 @@ def reset_password(request: Request, body: PasswordResetRequest, db: Session = D
             AccountActionToken.used_at.is_(None),
             AccountActionToken.expires_at > now,
         )
+        .with_for_update()
         .first()
     )
     if not row:
@@ -331,8 +345,23 @@ def verify_email(token: str, db: Session = Depends(get_db)):
 
 @router.post("/resend-verification")
 def resend_verification(
-    background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
+    try:
+        _check_auth_limit(request, "resend_verification", user.email)
+    except HTTPException:
+        record_security_event(
+            db,
+            request,
+            "verification_email_rate_limited",
+            "denied",
+            severity="warning",
+            user_id=user.id,
+        )
+        raise
     if user.email_verified_at:
         return {"ok": True, "verification_sent": False}
     return {"ok": True, "verification_sent": _send_verification(user, db, background_tasks)}
