@@ -46,7 +46,8 @@
 - End-to-end Google signup using a separate disposable Google account.
 - Exact iPhone Safari and Android Chrome viewport/device matrix.
 - Keyboard, screen reader, zoom, slow/offline, and expired-session walkthroughs. Reduced-motion behavior is implemented and covered by the automated suite.
-- Render database restore drill and recovery-time evidence.
+- [Completed 2026-09-09] Render database restore drill and recovery-time evidence; see
+  `BACKUP_RESTORE_DRILL_2026-09-09.md`.
 - Qualified legal review of the Privacy Policy and Terms launch drafts.
 
 ## Safety constraints
