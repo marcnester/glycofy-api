@@ -286,7 +286,10 @@ class Plan(Base):
 class PlanMeal(Base):
     __tablename__ = "plan_meals"
     __allow_unmapped__ = True
-    __table_args__ = (Index("ix_plan_meal_plan", "plan_id"),)
+    __table_args__ = (
+        Index("ix_plan_meal_plan", "plan_id"),
+        UniqueConstraint("plan_id", "meal_type", name="ux_plan_meal_slot"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     plan_id: Mapped[int] = mapped_column(

@@ -3077,12 +3077,35 @@ def _get_or_create_plan(db: Session, user_id: int, day: date) -> Plan:
 def _ensure_plan_meals(db: Session, plan: Plan, requested_slots: list[str]) -> dict[str, PlanMeal]:
     existing = db.query(PlanMeal).filter(PlanMeal.plan_id == plan.id).all()
     by_slot: dict[str, PlanMeal] = {}
+
+    def completeness(pm: PlanMeal) -> tuple[int, datetime, int]:
+        title = str(getattr(pm, "title", "") or "").strip().lower()
+        slot = _normalize_slot(getattr(pm, "meal_type", ""))
+        useful_title = bool(title and title not in {slot, slot.replace("_", " "), "snack"})
+        score = sum(
+            (
+                int(useful_title),
+                int(bool(str(getattr(pm, "instructions", "") or "").strip())),
+                int(_safe_float(getattr(pm, "kcal", 0.0)) > 0),
+                int(bool(getattr(pm, "recipe_id", None))),
+                int(bool(list(getattr(pm, "items", []) or []))),
+            )
+        )
+        return score, getattr(pm, "updated_at", None) or datetime.min, int(getattr(pm, "id", 0) or 0)
+
     for pm in existing:
         slot = _normalize_slot(getattr(pm, "meal_type", ""))
         if slot.startswith("snack") and slot not in requested_slots:
             db.delete(pm)
             continue
-        by_slot[slot] = pm
+        current = by_slot.get(slot)
+        if current is None:
+            by_slot[slot] = pm
+        elif completeness(pm) > completeness(current):
+            db.delete(current)
+            by_slot[slot] = pm
+        else:
+            db.delete(pm)
 
     for slot in requested_slots:
         if slot in by_slot:
@@ -4484,8 +4507,17 @@ def reconcile_weekly_jobs() -> dict[str, int]:
     failed = 0
     deleted_jobs = 0
     deleted_metrics = 0
+    deferred = 0
+    next_reconcile_seconds: float | None = None
+    now = datetime.utcnow()
+    grace_seconds = max(0, int(settings.WEEKLY_JOB_RECOVERY_GRACE_SECONDS))
     with SessionLocal() as db:
-        interrupted = db.query(WeeklyPlanningJob).filter(WeeklyPlanningJob.status.in_(("queued", "running"))).all()
+        interrupted = (
+            db.query(WeeklyPlanningJob)
+            .filter(WeeklyPlanningJob.status.in_(("queued", "running")))
+            .with_for_update(skip_locked=True)
+            .all()
+        )
         for job in interrupted:
             if job.cancel_requested:
                 job.status = "cancelled"
@@ -4503,6 +4535,12 @@ def reconcile_weekly_jobs() -> dict[str, int]:
                 job.completed_at = datetime.utcnow()
                 job.worker_id = None
                 failed += 1
+            elif grace_seconds and job.updated_at and (now - job.updated_at).total_seconds() < grace_seconds:
+                deferred += 1
+                remaining = grace_seconds - (now - job.updated_at).total_seconds()
+                next_reconcile_seconds = (
+                    remaining if next_reconcile_seconds is None else min(next_reconcile_seconds, remaining)
+                )
             else:
                 job.status = "queued"
                 job.stage = "recovering"
@@ -4534,8 +4572,16 @@ def reconcile_weekly_jobs() -> dict[str, int]:
         db.commit()
     for job_id, payload, user_id in recovered:
         _WEEKLY_JOB_EXECUTOR.submit(_run_weekly_job, job_id, payload, user_id, "recovered")
+    if next_reconcile_seconds is not None:
+        timer = threading.Timer(
+            max(1.0, next_reconcile_seconds + 1.0),
+            reconcile_weekly_jobs,
+        )
+        timer.daemon = True
+        timer.start()
     result = {
         "recovered": len(recovered),
+        "deferred": deferred,
         "failed": failed,
         "deleted_jobs": deleted_jobs,
         "deleted_metrics": deleted_metrics,

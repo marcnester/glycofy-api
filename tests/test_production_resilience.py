@@ -22,7 +22,7 @@ def _database():
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def _job(job_id: str, *, status: str, attempts: int = 0, completed_at=None) -> WeeklyPlanningJob:
+def _job(job_id: str, *, status: str, attempts: int = 0, completed_at=None, updated_at=None) -> WeeklyPlanningJob:
     return WeeklyPlanningJob(
         id=job_id,
         user_id=1,
@@ -35,7 +35,7 @@ def _job(job_id: str, *, status: str, attempts: int = 0, completed_at=None) -> W
         cancel_requested=False,
         attempt_count=attempts,
         created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        updated_at=updated_at or datetime.utcnow(),
         completed_at=completed_at,
     )
 
@@ -46,7 +46,10 @@ def test_reconcile_resumes_interrupted_job_and_prunes_old_records(monkeypatch):
     with sessions() as db:
         db.add(User(id=1, email="owner@example.com", password_hash="x"))
         db.add_all(
-            [_job("interrupted", status="running", attempts=1), _job("old", status="completed", completed_at=old)]
+            [
+                _job("interrupted", status="running", attempts=1, updated_at=old),
+                _job("old", status="completed", completed_at=old),
+            ]
         )
         db.add(
             AIOperationMetric(
@@ -67,13 +70,43 @@ def test_reconcile_resumes_interrupted_job_and_prunes_old_records(monkeypatch):
 
     result = llm_recommend.reconcile_weekly_jobs()
 
-    assert result == {"recovered": 1, "failed": 0, "deleted_jobs": 1, "deleted_metrics": 1}
+    assert result == {"recovered": 1, "deferred": 0, "failed": 0, "deleted_jobs": 1, "deleted_metrics": 1}
     assert len(submitted) == 1
     with sessions() as db:
         recovered = db.get(WeeklyPlanningJob, "interrupted")
         assert recovered.status == "queued"
         assert recovered.stage == "recovering"
         assert recovered.worker_id is None
+
+
+def test_reconcile_defers_fresh_job_during_blue_green_deploy(monkeypatch):
+    sessions = _database()
+    with sessions() as db:
+        db.add(User(id=1, email="owner@example.com", password_hash="x"))
+        db.add(_job("still-running", status="running", attempts=1))
+        db.commit()
+
+    submitted = []
+    timers = []
+    monkeypatch.setattr(llm_recommend, "SessionLocal", sessions)
+    monkeypatch.setattr(llm_recommend._WEEKLY_JOB_EXECUTOR, "submit", lambda fn, *args: submitted.append((fn, args)))
+    monkeypatch.setattr(
+        llm_recommend.threading,
+        "Timer",
+        lambda seconds, fn: timers.append((seconds, fn)) or SimpleNamespace(daemon=False, start=lambda: None),
+    )
+    monkeypatch.setattr(llm_recommend.settings, "WEEKLY_JOB_RECOVERY_GRACE_SECONDS", 120)
+
+    result = llm_recommend.reconcile_weekly_jobs()
+
+    assert result["recovered"] == 0
+    assert result["deferred"] == 1
+    assert submitted == []
+    assert len(timers) == 1
+    with sessions() as db:
+        job = db.get(WeeklyPlanningJob, "still-running")
+        assert job.status == "running"
+        assert job.stage == "running"
 
 
 def test_reconcile_fails_job_after_bounded_recovery_attempts(monkeypatch):

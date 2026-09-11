@@ -456,6 +456,11 @@ def test_ai_persistence_replaces_new_snack_placeholder_fields():
     assert (placeholder.kcal, placeholder.protein_g, placeholder.carbs_g, placeholder.fat_g) == (305, 18, 44, 7)
 
 
+def test_plan_meal_slot_has_database_uniqueness_constraint():
+    constraints = {constraint.name for constraint in PlanMeal.__table__.constraints}
+    assert "ux_plan_meal_slot" in constraints
+
+
 def test_empty_slot_is_retried_until_it_has_an_applicable_meal(monkeypatch):
     attempts = iter(
         [

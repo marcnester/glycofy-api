@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     WEEKLY_JOB_RETENTION_DAYS: int = 30
     AI_METRIC_RETENTION_DAYS: int = 90
     WEEKLY_JOB_MAX_ATTEMPTS: int = 3
+    # During a blue/green deploy the old instance may still be completing a
+    # job. Give it time to finish before the new instance claims the work.
+    WEEKLY_JOB_RECOVERY_GRACE_SECONDS: int = 120
     ADMIN_EMAILS: str = ""
     WEB_PROCESS_COUNT: int = 1
     SHARED_JOB_QUEUE_URL: str | None = None
