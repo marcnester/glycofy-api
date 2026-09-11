@@ -185,15 +185,18 @@ def test_weekly_batch_parallelizes_bounded_day_calls_and_accepts_complete_week(m
 
 def test_weekly_day_generation_respects_memory_safe_worker_limit(monkeypatch):
     monkeypatch.setenv("WEEKLY_DAY_MAX_WORKERS", "3")
+    monkeypatch.setenv("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "12")
     active = 0
     peak = 0
+    lookup_limits = []
     lock = threading.Lock()
 
-    def generate(_client, *, days, **_kwargs):
+    def generate(_client, *, days, synchronous_lookup_limit, **_kwargs):
         nonlocal active, peak
         with lock:
             active += 1
             peak = max(peak, active)
+            lookup_limits.append(synchronous_lookup_limit)
         time.sleep(0.02)
         with lock:
             active -= 1
@@ -209,6 +212,8 @@ def test_weekly_day_generation_respects_memory_safe_worker_limit(monkeypatch):
     assert peak == 3
     assert len(output) == 7
     assert meta["day_generations"] == 7
+    assert sum(lookup_limits) == 12
+    assert max(lookup_limits) == 2
 
 
 def test_weekly_batch_schema_supports_one_compact_variable_slot_repair(monkeypatch):
@@ -605,3 +610,50 @@ def test_weekly_batch_uses_authoritative_ingredient_sum_instead_of_model_macros(
         "fat_g": 15.0,
     }
     assert meta["rejected"] == 0
+
+
+def test_weekly_batch_keeps_safe_meals_when_usda_foods_are_pending(monkeypatch):
+    date = "2026-09-01"
+    response_body = {"days": [{"date": date, "meals": [_meal(slot, 1) for slot in llm_recommend.SLOTS]}]}
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response_body)))],
+                usage=None,
+            )
+
+    def provisional(ingredients, **_kwargs):
+        return ([{**item, "nutrition": None, "nutrition_status": "pending_validation"} for item in ingredients], 1)
+
+    monkeypatch.setattr(llm_recommend, "_circuit_open", lambda: False)
+    monkeypatch.setattr(llm_recommend, "_daily_budget_usd", lambda: 100.0)
+    monkeypatch.setattr(llm_recommend.settings, "USDA_FDC_API_KEY", "test-key")
+    monkeypatch.setattr(llm_recommend, "resolve_foods", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(llm_recommend, "_verify_ingredient_nutrition_resilient", provisional)
+    days = [
+        {
+            "date": date,
+            "training": {},
+            "diet_tags": [],
+            "meals": [
+                {"slot": slot, "target_macros": {"kcal": 500, "protein_g": 40, "carbs_g": 50, "fat_g": 15}}
+                for slot in llm_recommend.SLOTS
+            ],
+        }
+    ]
+
+    recommendations, meta = llm_recommend._batch_week_recommendations(
+        SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+        days=days,
+        primary_diet="omnivore",
+        diet_tags=[],
+        exclusions=[],
+    )
+
+    assert meta["accepted"] == 4
+    assert meta["rejected"] == 0
+    assert all(
+        recommendation.meta["nutrition_validation"]["status"] == "provisional"
+        for recommendation in recommendations[date].values()
+    )

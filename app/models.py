@@ -500,6 +500,47 @@ class AIOperationMetric(Base):
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
 
+class NutritionCatalogEntry(Base):
+    """Shared, USDA-backed nutrition evidence for a normalized food query."""
+
+    __tablename__ = "nutrition_catalog_entries"
+    __table_args__ = (
+        UniqueConstraint("query_key", name="ux_nutrition_catalog_query_key"),
+        Index("ix_nutrition_catalog_fdc_id", "fdc_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    query_key: Mapped[str] = mapped_column(String(240), nullable=False)
+    fdc_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    description: Mapped[str] = mapped_column(String(500), nullable=False)
+    data_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    nutrients_per_100g: Mapped[dict] = mapped_column(JSON, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="usda_fdc", server_default="usda_fdc")
+    verified_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class NutritionValidationJob(Base):
+    """Deduplicated background work for foods not resolved during planning."""
+
+    __tablename__ = "nutrition_validation_jobs"
+    __table_args__ = (
+        UniqueConstraint("query_key", name="ux_nutrition_validation_query_key"),
+        Index("ix_nutrition_validation_status_due", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    query_key: Mapped[str] = mapped_column(String(240), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued", server_default="queued")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class BetaFeedback(Base):
     """Product feedback with coarse technical context and no health payload."""
 

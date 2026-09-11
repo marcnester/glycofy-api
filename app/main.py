@@ -22,7 +22,7 @@ from app.observability import (
     request_id_context,
 )
 from app.schema_compat import ensure_snack_preference_columns
-from app.services.usda_nutrition import USDANutritionError, lookup_food
+from app.services.usda_nutrition import USDANutritionError, lookup_food, start_nutrition_validation_worker
 
 configure_logging()
 from app.routers import user_profile, weekly_plans
@@ -176,6 +176,7 @@ def recover_interrupted_weekly_plans() -> None:
                 "usda_startup_probe",
                 extra={"status": "unavailable", "provider": "usda_fdc"},
             )
+        start_nutrition_validation_worker()
 
 
 # -----------------------------

@@ -11,7 +11,16 @@ from sqlalchemy.orm import Session
 from app.auth_utils import get_current_user
 from app.config import settings
 from app.db import get_db
-from app.models import AIOperationMetric, BetaFeedback, ProductEvent, SecurityAuditEvent, User, WeeklyPlanningJob
+from app.models import (
+    AIOperationMetric,
+    BetaFeedback,
+    NutritionCatalogEntry,
+    NutritionValidationJob,
+    ProductEvent,
+    SecurityAuditEvent,
+    User,
+    WeeklyPlanningJob,
+)
 from app.services.usda_nutrition import USDANutritionError, lookup_food
 
 router = APIRouter()
@@ -49,6 +58,40 @@ def nutrition_source_health(_admin: User = Depends(_require_admin)):
         "fdc_id": match.fdc_id,
         "data_type": match.data_type,
         "nutrients_present": sorted(match.nutrients_per_100g),
+    }
+
+
+@router.get("/nutrition-validation-summary", tags=["operations"])
+def nutrition_validation_summary(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(_require_admin),
+):
+    """Privacy-safe coverage and reconciliation status for nutrition evidence."""
+    now = datetime.utcnow()
+    by_status = dict(
+        db.query(NutritionValidationJob.status, func.count(NutritionValidationJob.id))
+        .group_by(NutritionValidationJob.status)
+        .all()
+    )
+    due = (
+        db.query(NutritionValidationJob)
+        .filter(
+            NutritionValidationJob.status.in_(("queued", "retry")),
+            NutritionValidationJob.next_attempt_at <= now,
+        )
+        .count()
+    )
+    oldest = (
+        db.query(func.min(NutritionValidationJob.created_at))
+        .filter(NutritionValidationJob.status.in_(("queued", "retry")))
+        .scalar()
+    )
+    return {
+        "catalog_foods": db.query(NutritionCatalogEntry).count(),
+        "queue": by_status,
+        "due": due,
+        "oldest_pending_at": oldest.isoformat() if oldest else None,
+        "privacy": "Aggregate food-validation state only; no users, meals, health data, or food descriptions.",
     }
 
 

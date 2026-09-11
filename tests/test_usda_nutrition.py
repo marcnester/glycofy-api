@@ -11,6 +11,7 @@ from app.services.usda_nutrition import (
     resolve_foods,
     select_match,
     verify_ingredients,
+    verify_ingredients_resilient,
 )
 
 
@@ -181,6 +182,32 @@ def test_verify_ingredients_replaces_model_values_with_usda(monkeypatch):
     assert ingredients[0]["nutrition"] == {"kcal": 247.5, "protein_g": 46.5, "carbs_g": 0.0, "fat_g": 5.4}
     assert ingredients[0]["food_ref_id"] == "171077"
     assert ingredients[0]["nutrition_source"]["provider"] == "USDA FoodData Central"
+
+
+def test_resilient_verification_keeps_valid_measured_food_provisional(monkeypatch):
+    queued = []
+    monkeypatch.setattr(
+        usda_nutrition,
+        "lookup_food",
+        lambda _query: (_ for _ in ()).throw(USDAUnavailableError("temporarily unavailable")),
+    )
+    monkeypatch.setattr(usda_nutrition, "enqueue_nutrition_validation", lambda query, _exc: queued.append(query))
+
+    ingredients, unresolved = verify_ingredients_resilient(
+        [{"name": "banana", "amount": 120, "amount_g": 120, "unit": "g"}]
+    )
+
+    assert unresolved == 1
+    assert ingredients[0]["nutrition_status"] == "pending_validation"
+    assert ingredients[0]["nutrition"] is None
+    assert queued == ["banana"]
+
+
+def test_resilient_verification_still_rejects_invalid_measurement(monkeypatch):
+    monkeypatch.setattr(usda_nutrition, "enqueue_nutrition_validation", lambda *_args: pytest.fail("must not queue"))
+
+    with pytest.raises(USDANutritionError, match="cannot be verified"):
+        verify_ingredients_resilient([{"name": "banana", "amount": 1, "amount_g": 120, "unit": "item"}])
 
 
 def test_fit_portions_uses_verified_foods_to_reach_macro_targets():

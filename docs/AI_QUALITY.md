@@ -20,9 +20,11 @@ Meal rows are the authoritative source for daily and weekly totals. API response
 
 ## Authoritative nutrient values
 
-When `USDA_FDC_API_KEY` is configured, every generated ingredient must include an exact edible gram weight and a generic USDA search description. Glycofy matches only Foundation Food or SR Legacy records, rejects ambiguous or inappropriate processed-food matches, discards the model's nutrient values, and recalculates calories and macros from FoodData Central per-100-gram data.
+When `USDA_FDC_API_KEY` is configured, every generated ingredient must include an exact edible gram weight and a generic USDA search description. Glycofy prefers Foundation, SR Legacy, and Survey food records, rejects inappropriate processed-food matches, and recalculates calories and macros from FoodData Central per-100-gram data whenever every ingredient resolves.
 
-Set `USDA_FDC_REQUIRED=true` in production after the private key is installed. In required mode, a missing key, unavailable USDA service, ambiguous food, or unmeasured ingredient fails closed and no meal is saved. FoodData Central IDs and descriptions are retained with each plan ingredient for auditability.
+Set `USDA_FDC_REQUIRED=true` in production after the private key is installed. A missing key, unsafe diet/allergen result, or unmeasured ingredient fails closed. A valid measured food that is ambiguous, unmatched, or temporarily unavailable remains provisional: Glycofy uses the meal-level AI estimate only after plausibility and target-tolerance checks, queues the food for background validation, and never replaces a previously saved week with a partial result. Verified matches are stored in a shared catalog, and FoodData Central IDs and descriptions are retained with plan ingredients for auditability.
+
+Weekly requests use the shared catalog first and make only a bounded number of live USDA calls. The reconciliation worker retries unresolved foods with exponential backoff, while the admin Operations page reports verified catalog coverage and queue health without exposing food descriptions, meals, users, or health data.
 
 Source: U.S. Department of Agriculture, Agricultural Research Service, FoodData Central, 2019, https://fdc.nal.usda.gov/.
 

@@ -50,10 +50,9 @@ from app.services.training_nutrition import (
 from app.services.usda_nutrition import (
     FDCMatch,
     USDANutritionError,
-    USDAUnavailableError,
     fit_portions_to_targets,
     resolve_foods,
-    verify_ingredients,
+    verify_ingredients_resilient,
 )
 
 # Optional OpenAI client (lazy import so dev works without the package)
@@ -66,17 +65,17 @@ _OPENAI_CLIENT: ClientType | None = None
 _OPENAI_CLIENT_LOCK = threading.Lock()
 
 
-def _verify_ingredient_nutrition(
+def _verify_ingredient_nutrition_resilient(
     ingredients: list[dict[str, Any]],
     *,
     resolved_foods: dict[str, FDCMatch | USDANutritionError] | None = None,
-) -> list[dict[str, Any]]:
-    """Replace model nutrition with USDA data whenever authoritative mode is configured."""
+) -> tuple[list[dict[str, Any]], int]:
+    """Use USDA evidence when available without making availability a planner dependency."""
     if settings.USDA_FDC_API_KEY:
-        return verify_ingredients(ingredients, resolved_foods=resolved_foods)
+        return verify_ingredients_resilient(ingredients, resolved_foods=resolved_foods)
     if settings.USDA_FDC_REQUIRED:
         raise USDANutritionError("USDA FoodData Central is required but not configured")
-    return ingredients
+    return ingredients, 0
 
 
 def _usda_error_code(message: str) -> str:
@@ -2344,8 +2343,20 @@ def _llm_pick_or_create(
                 meta["mode"] = "empty"
                 return "empty", None, None, "Unable to satisfy day variety rule.", meta, None
 
+        unresolved_nutrition = 0
         try:
-            ingredients = _verify_ingredient_nutrition(ingredients)
+            resolved_daily = (
+                resolve_foods(
+                    [str(item.get("usda_search_query") or item.get("name") or "") for item in ingredients],
+                    max_live_lookups=8,
+                )
+                if settings.USDA_FDC_API_KEY
+                else None
+            )
+            ingredients, unresolved_nutrition = _verify_ingredient_nutrition_resilient(
+                ingredients,
+                resolved_foods=resolved_daily,
+            )
         except USDANutritionError as exc:
             meta["quality"] = {"policy_version": QUALITY_POLICY_VERSION, "issues": ["usda_unverified"]}
             meta["mode"] = "empty"
@@ -2359,8 +2370,8 @@ def _llm_pick_or_create(
             "prep_time_min": new_recipe.get("prep_time_min"),
             "cook_time_min": new_recipe.get("cook_time_min"),
             "total_time_min": new_recipe.get("total_time_min"),
-            # USDA is authoritative. The model estimate only guides ingredient
-            # quantities and must not override or invalidate the verified sum.
+            # USDA is authoritative when every ingredient resolves. Otherwise,
+            # retain the model estimate while the unresolved foods are queued.
             "macro_estimate": reconciled_macros or macro_est,
         }
         quality_report = validate_meal(
@@ -2368,8 +2379,12 @@ def _llm_pick_or_create(
             target=tgt.model_dump(exclude={"slot"}),
             exclusions=ingredient_exclusions,
             diet=primary_diet,
-            require_ingredient_nutrition=True,
+            require_ingredient_nutrition=unresolved_nutrition == 0,
         )
+        meta["nutrition_validation"] = {
+            "status": "verified" if unresolved_nutrition == 0 else "provisional",
+            "unresolved_ingredients": unresolved_nutrition,
+        }
         meta["quality"] = {"policy_version": QUALITY_POLICY_VERSION, "issues": quality_report.codes()}
         if not quality_report.safe:
             meta["fallback"] = "quality_validation"
@@ -2379,10 +2394,10 @@ def _llm_pick_or_create(
             meta["mode"] = "empty"
             return "empty", None, None, "Unable to produce a nutrition-safe meal.", meta, None
 
-        if reconciled_macros is None:
+        if reconciled_macros is None and unresolved_nutrition == 0:
             meta["mode"] = "empty"
             return "empty", None, None, "Ingredient nutrition could not be reconciled.", meta, None
-        macro_est = reconciled_macros
+        macro_est = reconciled_macros or macro_est
 
         deltas: dict[str, float] = {}
         for m in _MACROS:
@@ -3543,6 +3558,7 @@ def _batch_week_recommendations(
     athlete_feedback: dict[str, Any] | None = None,
     week_context: list[dict[str, Any]] | None = None,
     flexible_meal_count: bool = False,
+    synchronous_lookup_limit: int | None = None,
 ) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
     """Generate the whole week in one model round-trip and discard unsafe cells."""
     if not client or not days or _circuit_open() or _BUDGET.spent_usd >= _daily_budget_usd():
@@ -3663,9 +3679,13 @@ def _batch_week_recommendations(
         for ingredient in (meal.get("ingredients") or [])
         if isinstance(ingredient, dict)
     ]
-    resolved_usda = resolve_foods(usda_queries) if settings.USDA_FDC_API_KEY else None
-    if resolved_usda is not None and any(isinstance(value, USDAUnavailableError) for value in resolved_usda.values()):
-        raise USDAUnavailableError("USDA FoodData Central is temporarily unavailable")
+    if synchronous_lookup_limit is None:
+        synchronous_lookup_limit = max(0, int(os.environ.get("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "12")))
+    primary_lookup_limit = math.ceil(synchronous_lookup_limit * 2 / 3)
+    fallback_lookup_limit = synchronous_lookup_limit - primary_lookup_limit
+    resolved_usda = (
+        resolve_foods(usda_queries, max_live_lookups=primary_lookup_limit) if settings.USDA_FDC_API_KEY else None
+    )
     # Resolve concise recipe names only for primary descriptions that did not
     # match. The former eager fallback doubled FDC traffic for every meal and
     # amplified transient 503 responses during a weekly plan.
@@ -3685,9 +3705,10 @@ def _batch_week_recommendations(
                 USDANutritionError,
             )
         ]
-        fallback_usda = resolve_foods(fallback_queries)
-        if any(isinstance(value, USDAUnavailableError) for value in fallback_usda.values()):
-            raise USDAUnavailableError("USDA FoodData Central is temporarily unavailable")
+        fallback_usda = resolve_foods(
+            fallback_queries,
+            max_live_lookups=fallback_lookup_limit,
+        )
         resolved_usda.update(fallback_usda)
 
     for day in parsed.get("days", []):
@@ -3705,9 +3726,13 @@ def _batch_week_recommendations(
             carb = str(meal.get("carb_item") or "").strip().lower()
             ingredients = meal.get("ingredients") or []
             usda_error = None
+            unresolved_nutrition = 0
             try:
-                ingredients = _verify_ingredient_nutrition(ingredients, resolved_foods=resolved_usda)
-                ingredients = fit_portions_to_targets(ingredients, target or {})
+                ingredients, unresolved_nutrition = _verify_ingredient_nutrition_resilient(
+                    ingredients, resolved_foods=resolved_usda
+                )
+                if unresolved_nutrition == 0:
+                    ingredients = fit_portions_to_targets(ingredients, target or {})
             except USDANutritionError as exc:
                 usda_error = str(exc)
             instructions = meal.get("instructions") or []
@@ -3721,7 +3746,8 @@ def _batch_week_recommendations(
             quality_candidate = {
                 **meal,
                 "ingredients": ingredients,
-                # Validate USDA-derived totals, not the discarded AI estimate.
+                # Prefer USDA-derived totals. If one or more foods are waiting
+                # for validation, retain the bounded model estimate.
                 "macros": reconciled_macros or macros,
             }
             quality_report = validate_meal(
@@ -3729,7 +3755,7 @@ def _batch_week_recommendations(
                 target=target,
                 exclusions=exclusions,
                 diet=primary_diet,
-                require_ingredient_nutrition=True,
+                require_ingredient_nutrition=unresolved_nutrition == 0,
             )
             invalid = (
                 slot not in ALL_SLOTS
@@ -3743,7 +3769,7 @@ def _batch_week_recommendations(
                 or not 1 <= total_time_min <= 240
                 or not 1 <= prep_time_min <= 240
                 or not 0 <= cook_time_min <= 240
-                or reconciled_macros is None
+                or (reconciled_macros is None and unresolved_nutrition == 0)
                 or usda_error is not None
                 or not quality_report.safe
             )
@@ -3755,7 +3781,7 @@ def _batch_week_recommendations(
                     rejection_reasons.append(_usda_error_code(usda_error))
                 if not isinstance(instructions, list) or len(instructions) < 2:
                     rejection_reasons.append("instructions_incomplete")
-                if reconciled_macros is None:
+                if reconciled_macros is None and unresolved_nutrition == 0:
                     rejection_reasons.append("nutrition_unreconciled")
                 logger.warning(
                     "weekly_meal_rejected",
@@ -3763,7 +3789,7 @@ def _batch_week_recommendations(
                 )
                 rejected += 1
                 continue
-            macros = reconciled_macros or {}
+            macros = reconciled_macros or macros
             ai_idea = {
                 "title": title,
                 "ingredients": ingredients,
@@ -3789,6 +3815,10 @@ def _batch_week_recommendations(
                     "prompt_version": PROMPT_VERSION,
                     "quality_policy_version": QUALITY_POLICY_VERSION,
                     "quality": {"issues": quality_report.codes()},
+                    "nutrition_validation": {
+                        "status": "verified" if unresolved_nutrition == 0 else "provisional",
+                        "unresolved_ingredients": unresolved_nutrition,
+                    },
                     "protein_group": ai_idea["protein_group"],
                     "protein_item": protein,
                     "carb_item": carb,
@@ -3862,11 +3892,14 @@ def _parallel_week_recommendations(
     themed_days = [
         {**day, "variety_assignment": _DAY_THEMES[index % len(_DAY_THEMES)]} for index, day in enumerate(days)
     ]
+    weekly_lookup_limit = max(0, int(os.environ.get("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "12")))
+    lookups_per_day, extra_lookup_days = divmod(weekly_lookup_limit, len(themed_days))
+    day_lookup_limits = [lookups_per_day + int(index < extra_lookup_days) for index in range(len(themed_days))]
     output: dict[str, dict[str, SlotRecommendation]] = {}
     metas: list[dict[str, Any]] = []
     started = time.perf_counter()
 
-    def generate(day: dict[str, Any]):
+    def generate(day: dict[str, Any], lookup_limit: int):
         return _batch_week_recommendations(
             client,
             days=[day],
@@ -3875,6 +3908,7 @@ def _parallel_week_recommendations(
             exclusions=exclusions,
             athlete_feedback=athlete_feedback,
             week_context=themed_days,
+            synchronous_lookup_limit=lookup_limit,
         )
 
     try:
@@ -3884,7 +3918,7 @@ def _parallel_week_recommendations(
     with ThreadPoolExecutor(
         max_workers=min(configured_workers, len(themed_days)), thread_name_prefix="weekly-day"
     ) as executor:
-        futures = [executor.submit(generate, day) for day in themed_days]
+        futures = [executor.submit(generate, day, day_lookup_limits[index]) for index, day in enumerate(themed_days)]
         for future in futures:
             day_output, day_meta = future.result()
             output.update(day_output)

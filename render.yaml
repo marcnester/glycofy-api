@@ -61,6 +61,12 @@ services:
         value: "false"
       - key: USDA_FDC_TIMEOUT_SECONDS
         value: "10"
+      - key: USDA_FDC_WEEKLY_SYNC_LOOKUPS
+        value: "12"
+      - key: NUTRITION_VALIDATION_INTERVAL_SECONDS
+        value: "900"
+      - key: NUTRITION_VALIDATION_BATCH_SIZE
+        value: "20"
       - key: INSTACART_API_KEY
         sync: false
       - key: INSTACART_API_BASE

@@ -8,9 +8,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app import db as db_module
 from app.db import Base
-from app.models import AIOperationMetric, User, WeeklyPlanningJob
+from app.models import AIOperationMetric, NutritionCatalogEntry, NutritionValidationJob, User, WeeklyPlanningJob
 from app.routers import llm_recommend, operations
+from app.services import usda_nutrition
+from app.services.usda_nutrition import FDCMatch, USDAUnavailableError
 
 
 def _database():
@@ -164,6 +167,69 @@ def test_nutrition_source_health_is_privacy_safe(monkeypatch):
     }
 
 
+def test_nutrition_validation_summary_exposes_only_aggregate_queue_health():
+    sessions = _database()
+    now = datetime.utcnow()
+    with sessions() as db:
+        db.add(
+            NutritionCatalogEntry(
+                query_key="banana raw",
+                fdc_id=173944,
+                description="Bananas, raw",
+                data_type="Foundation",
+                nutrients_per_100g={"kcal": 89, "protein_g": 1.1, "carbs_g": 22.8, "fat_g": 0.3},
+                verified_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        db.add(
+            NutritionValidationJob(
+                query_key="athlete recovery food",
+                status="retry",
+                attempt_count=2,
+                next_attempt_at=now - timedelta(minutes=1),
+                created_at=now - timedelta(hours=1),
+                updated_at=now,
+            )
+        )
+        db.commit()
+
+        result = operations.nutrition_validation_summary(
+            db=db,
+            _admin=SimpleNamespace(email="admin@example.com"),
+        )
+
+    assert result["catalog_foods"] == 1
+    assert result["queue"] == {"retry": 1}
+    assert result["due"] == 1
+    assert "banana" not in str(result)
+    assert "athlete" not in str(result)
+
+
+def test_nutrition_validation_queue_deduplicates_and_resolves_into_catalog(monkeypatch):
+    sessions = _database()
+    monkeypatch.setattr(db_module, "SessionLocal", sessions)
+
+    error = USDAUnavailableError("temporarily unavailable")
+    usda_nutrition.enqueue_nutrition_validation(" Banana raw ", error)
+    usda_nutrition.enqueue_nutrition_validation("banana   raw", error)
+    usda_nutrition._store_catalog_match(
+        "banana raw",
+        FDCMatch(
+            fdc_id=173944,
+            description="Bananas, raw",
+            data_type="Foundation",
+            nutrients_per_100g={"kcal": 89, "protein_g": 1.1, "carbs_g": 22.8, "fat_g": 0.3},
+        ),
+    )
+
+    with sessions() as db:
+        assert db.query(NutritionValidationJob).count() == 1
+        assert db.query(NutritionValidationJob).one().status == "resolved"
+        assert db.query(NutritionCatalogEntry).count() == 1
+
+
 def test_operator_dashboard_has_latency_failure_cost_and_job_states():
     page = Path("ui/operations.html").read_text(encoding="utf-8")
     script = Path("ui/operations.js").read_text(encoding="utf-8")
@@ -172,5 +238,6 @@ def test_operator_dashboard_has_latency_failure_cost_and_job_states():
     assert "Estimated cost" in page
     assert "/v1/operations/ai-summary" in script
     assert "/v1/operations/nutrition-source-health" in script
-    assert "USDA verified" in script
-    assert "operations.js?v=2026-09-10-usda-health" in page
+    assert "USDA available" in script
+    assert "/v1/operations/nutrition-validation-summary" in script
+    assert "operations.js?v=2026-09-10-nutrition-queue" in page

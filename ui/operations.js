@@ -70,14 +70,22 @@ async function loadNutritionSource() {
   const source = document.getElementById("nutritionSource");
   const detail = document.getElementById("nutritionSourceDetail");
   try {
-    const response = await fetch("/v1/operations/nutrition-source-health", {credentials:"same-origin"});
-    if (!response.ok) throw new Error("Unavailable");
-    const data = await response.json();
-    source.textContent = data.status === "ok" && data.required ? "USDA verified" : "Needs attention";
+    const [healthResponse, summaryResponse] = await Promise.all([
+      fetch("/v1/operations/nutrition-source-health", {credentials:"same-origin"}),
+      fetch("/v1/operations/nutrition-validation-summary", {credentials:"same-origin"})
+    ]);
+    if (!healthResponse.ok || !summaryResponse.ok) throw new Error("Unavailable");
+    const [data, summary] = await Promise.all([healthResponse.json(), summaryResponse.json()]);
+    source.textContent = data.status === "ok" && data.required ? "USDA available" : "Needs attention";
     detail.textContent = `${data.data_type} · FDC ${data.fdc_id} · ${data.nutrients_present.join(", ")}`;
+    const pending = (summary.queue.queued || 0) + (summary.queue.retry || 0);
+    document.getElementById("nutritionCatalog").textContent = `${number.format(summary.catalog_foods)} verified foods`;
+    document.getElementById("nutritionQueue").textContent = `${number.format(pending)} pending · ${number.format(summary.due)} ready for retry · ${number.format(summary.queue.abandoned || 0)} need review`;
   } catch (_) {
     source.textContent = "Unavailable";
-    detail.textContent = "Authoritative nutrition validation is not responding.";
+    detail.textContent = "USDA is not responding; planning can continue with guarded estimates.";
+    document.getElementById("nutritionCatalog").textContent = "Status unavailable";
+    document.getElementById("nutritionQueue").textContent = "Validation coverage could not be loaded.";
   }
 }
 

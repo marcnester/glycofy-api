@@ -7,10 +7,12 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Any
 
 import httpx
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
 
@@ -22,6 +24,8 @@ logger = logging.getLogger(__name__)
 # I/O parallel without allowing a request to starve health checks/job polling.
 _FDC_CONCURRENCY = max(1, int(os.environ.get("USDA_FDC_MAX_CONCURRENCY", "3")))
 _FDC_GATE = threading.BoundedSemaphore(_FDC_CONCURRENCY)
+_VALIDATION_WORKER_LOCK = threading.Lock()
+_VALIDATION_WORKER_STARTED = False
 
 FDC_API_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
 FDC_DATA_TYPES = ["Foundation", "SR Legacy", "Survey (FNDDS)"]
@@ -58,6 +62,119 @@ class FDCMatch:
     description: str
     data_type: str
     nutrients_per_100g: dict[str, float]
+
+
+def _query_key(query: str) -> str:
+    return re.sub(r"\s+", " ", query.strip().lower())[:240]
+
+
+def _catalog_match(query: str) -> FDCMatch | None:
+    """Read shared verified evidence without making meal planning depend on it."""
+    from app.db import SessionLocal
+    from app.models import NutritionCatalogEntry
+
+    key = _query_key(query)
+    if not key:
+        return None
+    db = SessionLocal()
+    try:
+        row = db.query(NutritionCatalogEntry).filter(NutritionCatalogEntry.query_key == key).first()
+        if row is None:
+            return None
+        nutrients = {name: float(row.nutrients_per_100g[name]) for name in ("kcal", "protein_g", "carbs_g", "fat_g")}
+        return FDCMatch(
+            fdc_id=row.fdc_id,
+            description=row.description,
+            data_type=row.data_type,
+            nutrients_per_100g=nutrients,
+        )
+    except (KeyError, TypeError, ValueError, SQLAlchemyError):
+        return None
+    finally:
+        db.close()
+
+
+def _store_catalog_match(query: str, match: FDCMatch) -> None:
+    from app.db import SessionLocal
+    from app.models import NutritionCatalogEntry, NutritionValidationJob
+
+    key = _query_key(query)
+    if not key:
+        return
+    now = datetime.utcnow()
+    db = SessionLocal()
+    try:
+        row = db.query(NutritionCatalogEntry).filter(NutritionCatalogEntry.query_key == key).first()
+        if row is None:
+            row = NutritionCatalogEntry(query_key=key, created_at=now)
+            db.add(row)
+        row.fdc_id = match.fdc_id
+        row.description = match.description
+        row.data_type = match.data_type
+        row.nutrients_per_100g = match.nutrients_per_100g
+        row.source = "usda_fdc"
+        row.verified_at = now
+        row.updated_at = now
+        queued = db.query(NutritionValidationJob).filter(NutritionValidationJob.query_key == key).first()
+        if queued is not None:
+            queued.status = "resolved"
+            queued.last_error_code = None
+            queued.resolved_at = now
+            queued.updated_at = now
+        db.commit()
+    except SQLAlchemyError:
+        # Another concurrent request may have inserted the same unique key.
+        # The catalog is an optimization; never fail a valid USDA lookup here.
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _validation_error_code(exc: Exception) -> str:
+    message = str(exc).lower()
+    if "no unambiguous" in message:
+        return "no_match"
+    if "ambiguous" in message:
+        return "ambiguous_match"
+    if isinstance(exc, USDAUnavailableError):
+        return "provider_unavailable"
+    return "unresolved"
+
+
+def enqueue_nutrition_validation(query: str, exc: Exception) -> None:
+    """Deduplicate unresolved model-generated food descriptions for retry."""
+    from app.db import SessionLocal
+    from app.models import NutritionCatalogEntry, NutritionValidationJob
+
+    key = _query_key(query)
+    if not key:
+        return
+    now = datetime.utcnow()
+    db = SessionLocal()
+    try:
+        if db.query(NutritionCatalogEntry.id).filter(NutritionCatalogEntry.query_key == key).first():
+            return
+        row = db.query(NutritionValidationJob).filter(NutritionValidationJob.query_key == key).first()
+        if row is None:
+            row = NutritionValidationJob(
+                query_key=key,
+                status="queued",
+                next_attempt_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(row)
+        elif row.status == "resolved":
+            return
+        row.last_error_code = _validation_error_code(exc)
+        row.updated_at = now
+        db.commit()
+    except SQLAlchemyError:
+        # Local tests and a narrow migration rollout can briefly precede the
+        # queue tables. Planning remains available during that window.
+        db.rollback()
+    finally:
+        db.close()
 
 
 def _canonical_token(token: str) -> str:
@@ -200,6 +317,9 @@ def select_match(query: str, foods: list[dict[str, Any]]) -> FDCMatch:
 
 @lru_cache(maxsize=1024)
 def lookup_food(query: str) -> FDCMatch:
+    cached = _catalog_match(query)
+    if cached is not None:
+        return cached
     api_key = (settings.USDA_FDC_API_KEY or "").strip()
     if not api_key:
         raise USDANutritionError("USDA_FDC_API_KEY is not configured")
@@ -243,40 +363,176 @@ def lookup_food(query: str) -> FDCMatch:
             raise USDAUnavailableError("USDA FoodData Central is temporarily unavailable") from exc
     if response is None:  # defensive: every unsuccessful path above raises
         raise USDAUnavailableError("USDA FoodData Central is temporarily unavailable")
-    return select_match(query, response.json().get("foods", []))
+    match = select_match(query, response.json().get("foods", []))
+    _store_catalog_match(query, match)
+    return match
 
 
-def resolve_foods(queries: list[str], *, max_workers: int = 2) -> dict[str, FDCMatch | USDANutritionError]:
-    """Resolve unique USDA descriptions concurrently for a whole planning request."""
+def resolve_foods(
+    queries: list[str],
+    *,
+    max_workers: int = 2,
+    max_live_lookups: int | None = None,
+) -> dict[str, FDCMatch | USDANutritionError]:
+    """Resolve cached foods plus a bounded number of live USDA descriptions."""
     normalized = sorted({query.strip().lower() for query in queries if query.strip()})
     if not normalized:
         return {}
     resolved: dict[str, FDCMatch | USDANutritionError] = {}
-    executor = ThreadPoolExecutor(max_workers=min(max_workers, len(normalized)))
-    try:
-        futures = {executor.submit(lookup_food, query): query for query in normalized}
-        for future in as_completed(futures):
-            query = futures[future]
-            try:
-                resolved[query] = future.result()
-            except USDAUnavailableError as exc:
-                resolved[query] = exc
-                # One upstream outage is enough to make this batch unverifiable.
-                # Cancel requests that have not started so a planner fails in
-                # seconds instead of draining every queued ingredient lookup.
-                for pending in futures:
-                    pending.cancel()
+    pending: list[str] = []
+    for query in normalized:
+        cached = _catalog_match(query)
+        if cached is not None:
+            resolved[query] = cached
+        else:
+            pending.append(query)
+    if max_live_lookups is not None:
+        pending = pending[: max(0, max_live_lookups)]
+    if not pending:
+        return resolved
+    worker_count = max(1, min(max_workers, len(pending)))
+    provider_unavailable = False
+    # Submit only one worker-sized batch at a time. If USDA is down, at most
+    # one small batch consumes retries before the request switches to estimates.
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        for offset in range(0, len(pending), worker_count):
+            futures = {executor.submit(lookup_food, query): query for query in pending[offset : offset + worker_count]}
+            for future in as_completed(futures):
+                query = futures[future]
+                try:
+                    resolved[query] = future.result()
+                except USDAUnavailableError as exc:
+                    resolved[query] = exc
+                    enqueue_nutrition_validation(query, exc)
+                    provider_unavailable = True
+                except USDANutritionError as exc:
+                    resolved[query] = exc
+                    enqueue_nutrition_validation(query, exc)
+                except Exception:  # defensive boundary around third-party data
+                    resolved[query] = USDAUnavailableError("USDA FoodData Central is temporarily unavailable")
+                    provider_unavailable = True
+            if provider_unavailable:
                 break
-            except USDANutritionError as exc:
-                resolved[query] = exc
-            except Exception:  # defensive boundary around third-party data
-                resolved[query] = USDAUnavailableError("USDA FoodData Central is temporarily unavailable")
-                for pending in futures:
-                    pending.cancel()
-                break
-    finally:
-        executor.shutdown(wait=True, cancel_futures=True)
     return resolved
+
+
+def verify_ingredients_resilient(
+    ingredients: list[dict[str, Any]],
+    *,
+    resolved_foods: dict[str, FDCMatch | USDANutritionError] | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Verify what USDA can resolve and mark the remainder for background work.
+
+    Invalid quantities still fail closed. Only a valid measured ingredient
+    whose food identity could not be resolved is allowed to remain provisional.
+    """
+    output: list[dict[str, Any]] = []
+    unresolved = 0
+    for ingredient in ingredients:
+        try:
+            verified = verify_ingredients([ingredient], resolved_foods=resolved_foods)[0]
+            output.append({**verified, "nutrition_status": "verified"})
+        except USDANutritionError as exc:
+            message = str(exc).lower()
+            if "gram weight" in message or "cannot be verified" in message or "no ingredients" in message:
+                raise
+            query = str(ingredient.get("usda_search_query") or ingredient.get("name") or "").strip()
+            enqueue_nutrition_validation(query, exc)
+            output.append(
+                {
+                    **ingredient,
+                    "nutrition_status": "pending_validation",
+                    "nutrition": None,
+                    "food_ref_id": None,
+                    "nutrition_source": {"provider": "Glycofy estimate", "status": "pending_validation"},
+                }
+            )
+            unresolved += 1
+    return output, unresolved
+
+
+def reconcile_nutrition_validation_queue(*, limit: int = 20) -> dict[str, int]:
+    """Resolve due foods into the shared catalog with bounded retry backoff."""
+    from app.db import SessionLocal
+    from app.models import NutritionValidationJob
+
+    now = datetime.utcnow()
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(NutritionValidationJob)
+            .filter(
+                NutritionValidationJob.status.in_(("queued", "retry")),
+                NutritionValidationJob.next_attempt_at <= now,
+            )
+            .order_by(NutritionValidationJob.next_attempt_at.asc())
+            .limit(max(1, min(limit, 100)))
+            .all()
+        )
+        keys = [row.query_key for row in rows]
+    except SQLAlchemyError:
+        db.rollback()
+        return {"processed": 0, "resolved": 0, "retry": 0}
+    finally:
+        db.close()
+
+    resolved_count = 0
+    retry_count = 0
+    for key in keys:
+        try:
+            match = lookup_food(key)
+            # Also resolves the queue row when the in-process LRU already had
+            # the match and therefore bypassed lookup_food's storage path.
+            _store_catalog_match(key, match)
+            resolved_count += 1
+            continue
+        except USDANutritionError as exc:
+            error_code = _validation_error_code(exc)
+
+        db = SessionLocal()
+        try:
+            row = db.query(NutritionValidationJob).filter(NutritionValidationJob.query_key == key).first()
+            if row is None or row.status == "resolved":
+                continue
+            row.attempt_count += 1
+            row.status = "abandoned" if row.attempt_count >= 8 else "retry"
+            row.last_error_code = error_code
+            row.next_attempt_at = datetime.utcnow() + timedelta(
+                minutes=min(24 * 60, 5 * (2 ** min(row.attempt_count, 8)))
+            )
+            row.updated_at = datetime.utcnow()
+            db.commit()
+            retry_count += int(row.status == "retry")
+        except SQLAlchemyError:
+            db.rollback()
+        finally:
+            db.close()
+    return {"processed": len(keys), "resolved": resolved_count, "retry": retry_count}
+
+
+def start_nutrition_validation_worker() -> bool:
+    """Start one lightweight reconciliation loop per web process."""
+    global _VALIDATION_WORKER_STARTED
+    with _VALIDATION_WORKER_LOCK:
+        if _VALIDATION_WORKER_STARTED:
+            return False
+        _VALIDATION_WORKER_STARTED = True
+
+    interval_seconds = max(60, int(os.environ.get("NUTRITION_VALIDATION_INTERVAL_SECONDS", "900")))
+    batch_size = max(1, int(os.environ.get("NUTRITION_VALIDATION_BATCH_SIZE", "20")))
+
+    def run() -> None:
+        while True:
+            try:
+                result = reconcile_nutrition_validation_queue(limit=batch_size)
+                if result["processed"]:
+                    logger.info("nutrition_validation_reconciliation", extra=result)
+            except Exception:
+                logger.exception("nutrition_validation_worker_failed")
+            threading.Event().wait(interval_seconds)
+
+    threading.Thread(target=run, name="nutrition-validation", daemon=True).start()
+    return True
 
 
 def verify_ingredients(

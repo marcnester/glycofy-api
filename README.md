@@ -102,6 +102,8 @@ Configuration is read from environment variables or a local `.env` file. Start w
 | `JWT_SECRET` | Session-signing secret; use at least 32 random characters |
 | `OAUTH_TOKEN_ENCRYPTION_KEY` | Fernet key used to encrypt retained provider credentials |
 | `OPENAI_API_KEY` | Enables AI meal recommendations |
+| `USDA_FDC_API_KEY` | Verifies generated ingredient nutrition against FoodData Central |
+| `USDA_FDC_WEEKLY_SYNC_LOOKUPS` | Caps live USDA lookups during a weekly request; remaining foods reconcile in the background |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google account authentication |
 | `STRAVA_CLIENT_ID` / `STRAVA_CLIENT_SECRET` | Strava activity integration |
 | `PUBLIC_BASE_URL` | Canonical public application URL |
