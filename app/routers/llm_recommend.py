@@ -3416,29 +3416,91 @@ def recommend_recipes(
     used_meal_keys: set[str] = set(week_used_meal_keys)
 
     items: list[SlotRecommendation] = []
-    used_protein_items: list[str] = []
-    used_carb_items: list[str] = []
-
-    for tgt in adjusted_meals:
-        rec = _recommend_for_single_meal(
-            client=client,
-            db=db,
-            date=payload.date,
-            tgt=tgt,
-            diet_tags=diet_tags,
+    if client:
+        # Generate the complete day in one structured response. The previous
+        # implementation made one model request per slot (and up to three more
+        # when a slot was rejected), so a five-meal day could take more than
+        # 100 seconds before failing on the final snack. USDA resolution is
+        # already deduplicated and bounded inside the batch validator.
+        snack_times_by_slot = dict(_snack_schedule(pref))
+        batch_day = {
+            "date": payload.date or target_date.isoformat(),
+            "training": nutrition.to_dict()["training"],
+            "diet_tags": req_tags,
+            "meals": [
+                {
+                    "slot": meal.slot,
+                    "preferred_time": snack_times_by_slot.get(meal.slot),
+                    "target_macros": meal.model_dump(exclude={"slot"}),
+                }
+                for meal in adjusted_meals
+            ],
+        }
+        daily_lookup_limit = max(0, int(os.environ.get("USDA_FDC_DAILY_SYNC_LOOKUPS", "6")))
+        batch_items, _batch_meta = _batch_week_recommendations(
+            client,
+            days=[batch_day],
             primary_diet=primary_diet,
-            pref=pref,
-            provider=provider,
-            used_protein_items=used_protein_items,
-            used_carb_items=used_carb_items,
-            used_recipe_ids=used_recipe_ids,
-            used_meal_keys=used_meal_keys,
-            allow_new_recipe=allow_new,
-            week_protein_counts=week_protein_counts,
-            protein_cap_per_slot=2,
+            diet_tags=diet_tags or [],
+            exclusions=_preference_exclusions(pref),
             athlete_feedback=athlete_feedback,
+            week_context=[batch_day],
+            synchronous_lookup_limit=daily_lookup_limit,
         )
-        items.append(rec)
+        slots = batch_items.get(batch_day["date"], {})
+
+        # One compact repair request is the entire retry budget. This preserves
+        # strict safety validation without multiplying latency by meal count.
+        missing_targets = [meal for meal in batch_day["meals"] if meal["slot"] not in slots]
+        if missing_targets:
+            repair_day = {**batch_day, "meals": missing_targets}
+            repaired, _repair_meta = _batch_week_recommendations(
+                client,
+                days=[repair_day],
+                primary_diet=primary_diet,
+                diet_tags=diet_tags or [],
+                exclusions=_preference_exclusions(pref),
+                athlete_feedback=athlete_feedback,
+                week_context=[batch_day],
+                flexible_meal_count=True,
+                synchronous_lookup_limit=0,
+            )
+            slots.update(repaired.get(batch_day["date"], {}))
+        items = [
+            slots.get(
+                meal.slot,
+                SlotRecommendation(
+                    slot=meal.slot,
+                    target=meal.model_dump(exclude={"slot"}),
+                    reason="Daily batch did not produce a safe, complete meal.",
+                    meta={"provider": provider, "mode": "empty", "batch": True},
+                ),
+            )
+            for meal in adjusted_meals
+        ]
+    else:
+        used_protein_items: list[str] = []
+        used_carb_items: list[str] = []
+        for tgt in adjusted_meals:
+            rec = _recommend_for_single_meal(
+                client=client,
+                db=db,
+                date=payload.date,
+                tgt=tgt,
+                diet_tags=diet_tags,
+                primary_diet=primary_diet,
+                pref=pref,
+                provider=provider,
+                used_protein_items=used_protein_items,
+                used_carb_items=used_carb_items,
+                used_recipe_ids=used_recipe_ids,
+                used_meal_keys=used_meal_keys,
+                allow_new_recipe=allow_new,
+                week_protein_counts=week_protein_counts,
+                protein_cap_per_slot=2,
+                athlete_feedback=athlete_feedback,
+            )
+            items.append(rec)
 
     missing_slots = _missing_recommendation_slots(items)
     if missing_slots:
