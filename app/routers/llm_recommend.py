@@ -46,7 +46,13 @@ from app.services.training_nutrition import (
     TrainingNutritionResult,
     calculate_training_nutrition,
 )
-from app.services.usda_nutrition import FDCMatch, USDANutritionError, resolve_foods, verify_ingredients
+from app.services.usda_nutrition import (
+    FDCMatch,
+    USDANutritionError,
+    USDAUnavailableError,
+    resolve_foods,
+    verify_ingredients,
+)
 
 # Optional OpenAI client (lazy import so dev works without the package)
 ClientType = Any
@@ -3605,17 +3611,38 @@ def _batch_week_recommendations(
     # quantity math locally. This keeps authoritative validation from becoming
     # hundreds of sequential network round-trips.
     usda_queries = [
-        candidate
+        str(ingredient.get("usda_search_query") or ingredient.get("name") or "")
         for day in parsed.get("days", [])
         for meal in day.get("meals", [])
         for ingredient in (meal.get("ingredients") or [])
         if isinstance(ingredient, dict)
-        for candidate in (
-            str(ingredient.get("usda_search_query") or ingredient.get("name") or ""),
-            str(ingredient.get("name") or ""),
-        )
     ]
     resolved_usda = resolve_foods(usda_queries) if settings.USDA_FDC_API_KEY else None
+    if resolved_usda is not None and any(isinstance(value, USDAUnavailableError) for value in resolved_usda.values()):
+        raise USDAUnavailableError("USDA FoodData Central is temporarily unavailable")
+    # Resolve concise recipe names only for primary descriptions that did not
+    # match. The former eager fallback doubled FDC traffic for every meal and
+    # amplified transient 503 responses during a weekly plan.
+    if resolved_usda is not None:
+        fallback_queries = [
+            str(ingredient.get("name") or "")
+            for day in parsed.get("days", [])
+            for meal in day.get("meals", [])
+            for ingredient in (meal.get("ingredients") or [])
+            if isinstance(ingredient, dict)
+            and str(ingredient.get("name") or "").strip().lower()
+            != str(ingredient.get("usda_search_query") or ingredient.get("name") or "").strip().lower()
+            and isinstance(
+                resolved_usda.get(
+                    str(ingredient.get("usda_search_query") or ingredient.get("name") or "").strip().lower()
+                ),
+                USDANutritionError,
+            )
+        ]
+        fallback_usda = resolve_foods(fallback_queries)
+        if any(isinstance(value, USDAUnavailableError) for value in fallback_usda.values()):
+            raise USDAUnavailableError("USDA FoodData Central is temporarily unavailable")
+        resolved_usda.update(fallback_usda)
 
     for day in parsed.get("days", []):
         date_iso = str(day.get("date") or "")

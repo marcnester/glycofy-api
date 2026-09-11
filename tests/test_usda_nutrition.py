@@ -3,7 +3,14 @@ from __future__ import annotations
 import pytest
 
 from app.services import usda_nutrition
-from app.services.usda_nutrition import FDCMatch, USDANutritionError, resolve_foods, select_match, verify_ingredients
+from app.services.usda_nutrition import (
+    FDCMatch,
+    USDANutritionError,
+    USDAUnavailableError,
+    resolve_foods,
+    select_match,
+    verify_ingredients,
+)
 
 
 def _food(fdc_id: int, description: str, *, data_type: str = "Foundation") -> dict:
@@ -74,6 +81,29 @@ def test_select_match_accepts_equivalent_usda_preparation_terms(query, descripti
 def test_select_match_keeps_raw_and_cooked_foods_distinct():
     with pytest.raises(USDANutritionError, match="No unambiguous"):
         select_match("chicken breast raw", [_food(15, "Chicken breast, cooked, roasted")])
+
+
+def test_select_match_accepts_omitted_zero_macros_when_energy_is_explained():
+    oil = _food(16, "Oil, olive")
+    oil["foodNutrients"] = [
+        {"nutrientId": 1008, "value": 884},
+        {"nutrientId": 1004, "value": 100},
+    ]
+
+    match = select_match("olive oil", [oil])
+
+    assert match.nutrients_per_100g == {"kcal": 884.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 100.0}
+
+
+def test_select_match_rejects_missing_macro_when_energy_is_not_explained():
+    incomplete = _food(17, "Mystery food")
+    incomplete["foodNutrients"] = [
+        {"nutrientId": 1008, "value": 300},
+        {"nutrientId": 1003, "value": 10},
+    ]
+
+    with pytest.raises(USDANutritionError, match="No unambiguous"):
+        select_match("mystery food", [incomplete])
 
 
 def test_verify_ingredients_replaces_model_values_with_usda(monkeypatch):
@@ -159,6 +189,37 @@ def test_lookup_reports_rejected_key_without_logging_url_or_query(monkeypatch, c
     assert "private food query" not in caplog.text
 
 
+def test_lookup_retries_transient_usda_failure(monkeypatch):
+    usda_nutrition.lookup_food.cache_clear()
+    attempts = []
+
+    class TransientClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, *_args, **_kwargs):
+            attempts.append(1)
+            request = usda_nutrition.httpx.Request("POST", usda_nutrition.FDC_API_URL)
+            if len(attempts) < 3:
+                return usda_nutrition.httpx.Response(503, request=request)
+            return usda_nutrition.httpx.Response(200, request=request, json={"foods": [_food(18, "Banana raw")]})
+
+    monkeypatch.setattr(usda_nutrition.settings, "USDA_FDC_API_KEY", "test-key")
+    monkeypatch.setattr(usda_nutrition.httpx, "Client", TransientClient)
+    monkeypatch.setattr(usda_nutrition.time, "sleep", lambda _seconds: None)
+
+    match = usda_nutrition.lookup_food("banana raw")
+
+    assert len(attempts) == 3
+    assert match.fdc_id == 18
+
+
 def test_resolve_foods_deduplicates_queries_and_reuses_results(monkeypatch):
     calls = []
     match = FDCMatch(
@@ -199,6 +260,21 @@ def test_resolve_foods_bounds_nested_weekly_concurrency(monkeypatch):
     resolve_foods([f"food {index}" for index in range(12)])
 
     assert peak <= 2
+
+
+def test_resolve_foods_stops_queued_lookups_when_usda_is_unavailable(monkeypatch):
+    calls = []
+
+    def unavailable(query):
+        calls.append(query)
+        raise USDAUnavailableError("temporarily unavailable")
+
+    monkeypatch.setattr(usda_nutrition, "lookup_food", unavailable)
+
+    resolved = resolve_foods([f"food {index}" for index in range(12)], max_workers=1)
+
+    assert calls == ["food 0"]
+    assert isinstance(resolved["food 0"], USDAUnavailableError)
 
 
 @pytest.mark.parametrize("amount_g", [None, 0, -1, "not-a-number"])

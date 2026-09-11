@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from functools import lru_cache
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 # can then validate dozens of ingredients, so an unbounded nested executor can
 # exhaust a small production web instance. This process-wide gate keeps FDC
 # I/O parallel without allowing a request to starve health checks/job polling.
-_FDC_CONCURRENCY = max(1, int(os.environ.get("USDA_FDC_MAX_CONCURRENCY", "8")))
+_FDC_CONCURRENCY = max(1, int(os.environ.get("USDA_FDC_MAX_CONCURRENCY", "3")))
 _FDC_GATE = threading.BoundedSemaphore(_FDC_CONCURRENCY)
 
 FDC_API_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
@@ -41,6 +42,10 @@ _DISQUALIFIERS = {
 
 class USDANutritionError(RuntimeError):
     """Raised when authoritative nutrition cannot be established."""
+
+
+class USDAUnavailableError(USDANutritionError):
+    """Raised when FoodData Central is temporarily unavailable."""
 
 
 @dataclass(frozen=True)
@@ -82,9 +87,22 @@ def _nutrients(food: dict[str, Any]) -> dict[str, float] | None:
         for item in food.get("foodNutrients", [])
         if item.get("nutrientId") is not None and item.get("value") is not None
     }
-    if any(nutrient_id not in by_id for nutrient_id in NUTRIENT_IDS.values()):
+    # Energy is the authoritative completeness anchor. FDC search results often
+    # omit a zero-valued macro entirely (water has no macros, oil commonly has
+    # no carbohydrate/protein row). Accept omitted macros only when the listed
+    # energy is already explained by the nutrients FDC did return; otherwise an
+    # omitted row could be unknown rather than zero and must fail closed.
+    energy_id = NUTRIENT_IDS["kcal"]
+    if energy_id not in by_id:
         return None
-    return {name: by_id[nutrient_id] for name, nutrient_id in NUTRIENT_IDS.items()}
+    nutrients = {name: by_id.get(nutrient_id, 0.0) for name, nutrient_id in NUTRIENT_IDS.items()}
+    missing_macros = [name for name in ("protein_g", "carbs_g", "fat_g") if NUTRIENT_IDS[name] not in by_id]
+    if missing_macros:
+        explained = 4 * nutrients["protein_g"] + 4 * nutrients["carbs_g"] + 9 * nutrients["fat_g"]
+        tolerance = max(10.0, nutrients["kcal"] * 0.12)
+        if abs(nutrients["kcal"] - explained) > tolerance:
+            return None
+    return nutrients
 
 
 def _match_score(query: str, food: dict[str, Any]) -> float | None:
@@ -153,28 +171,46 @@ def lookup_food(query: str) -> FDCMatch:
     api_key = (settings.USDA_FDC_API_KEY or "").strip()
     if not api_key:
         raise USDANutritionError("USDA_FDC_API_KEY is not configured")
-    try:
-        with _FDC_GATE, httpx.Client(timeout=settings.USDA_FDC_TIMEOUT_SECONDS) as client:
-            response = client.post(
-                FDC_API_URL,
-                params={"api_key": api_key},
-                json={
-                    "query": query,
-                    "dataType": FDC_DATA_TYPES,
-                    "pageSize": 20,
-                    "requireAllWords": False,
-                },
+    response = None
+    for attempt in range(3):
+        try:
+            with _FDC_GATE, httpx.Client(timeout=settings.USDA_FDC_TIMEOUT_SECONDS) as client:
+                response = client.post(
+                    FDC_API_URL,
+                    params={"api_key": api_key},
+                    json={
+                        "query": query,
+                        "dataType": FDC_DATA_TYPES,
+                        "pageSize": 20,
+                        "requireAllWords": False,
+                    },
+                )
+                response.raise_for_status()
+            break
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            if status_code in {429, 500, 502, 503, 504} and attempt < 2:
+                logger.info(
+                    "usda_request_retry",
+                    extra={"provider": "usda_fdc", "status_code": status_code, "attempt": attempt + 1},
+                )
+                time.sleep(0.4 * (2**attempt))
+                continue
+            logger.warning(
+                "usda_request_rejected",
+                extra={"provider": "usda_fdc", "status_code": status_code},
             )
-            response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        logger.warning(
-            "usda_request_rejected",
-            extra={"provider": "usda_fdc", "status_code": exc.response.status_code},
-        )
-        raise USDANutritionError("USDA FoodData Central rejected the request") from exc
-    except httpx.HTTPError as exc:
-        logger.warning("usda_request_unavailable", extra={"provider": "usda_fdc"})
-        raise USDANutritionError("USDA FoodData Central is temporarily unavailable") from exc
+            if status_code in {429, 500, 502, 503, 504}:
+                raise USDAUnavailableError("USDA FoodData Central is temporarily unavailable") from exc
+            raise USDANutritionError("USDA FoodData Central rejected the request") from exc
+        except httpx.HTTPError as exc:
+            if attempt < 2:
+                time.sleep(0.4 * (2**attempt))
+                continue
+            logger.warning("usda_request_unavailable", extra={"provider": "usda_fdc"})
+            raise USDAUnavailableError("USDA FoodData Central is temporarily unavailable") from exc
+    if response is None:  # defensive: every unsuccessful path above raises
+        raise USDAUnavailableError("USDA FoodData Central is temporarily unavailable")
     return select_match(query, response.json().get("foods", []))
 
 
@@ -184,16 +220,30 @@ def resolve_foods(queries: list[str], *, max_workers: int = 2) -> dict[str, FDCM
     if not normalized:
         return {}
     resolved: dict[str, FDCMatch | USDANutritionError] = {}
-    with ThreadPoolExecutor(max_workers=min(max_workers, len(normalized))) as executor:
+    executor = ThreadPoolExecutor(max_workers=min(max_workers, len(normalized)))
+    try:
         futures = {executor.submit(lookup_food, query): query for query in normalized}
         for future in as_completed(futures):
             query = futures[future]
             try:
                 resolved[query] = future.result()
+            except USDAUnavailableError as exc:
+                resolved[query] = exc
+                # One upstream outage is enough to make this batch unverifiable.
+                # Cancel requests that have not started so a planner fails in
+                # seconds instead of draining every queued ingredient lookup.
+                for pending in futures:
+                    pending.cancel()
+                break
             except USDANutritionError as exc:
                 resolved[query] = exc
             except Exception:  # defensive boundary around third-party data
-                resolved[query] = USDANutritionError("USDA FoodData Central is temporarily unavailable")
+                resolved[query] = USDAUnavailableError("USDA FoodData Central is temporarily unavailable")
+                for pending in futures:
+                    pending.cancel()
+                break
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
     return resolved
 
 
