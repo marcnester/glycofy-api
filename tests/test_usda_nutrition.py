@@ -37,14 +37,33 @@ def test_select_match_rejects_unrequested_processing():
 
 
 def test_select_match_fails_closed_when_ambiguous():
+    green = _food(11, "Banana raw green")
+    green["foodNutrients"] = [
+        {"nutrientId": 1008, "value": 120},
+        {"nutrientId": 1003, "value": 1.1},
+        {"nutrientId": 1005, "value": 31},
+        {"nutrientId": 1004, "value": 0.3},
+    ]
     with pytest.raises(USDANutritionError, match="Ambiguous"):
         select_match(
             "banana raw",
             [
                 _food(10, "Banana raw yellow"),
-                _food(11, "Banana raw green"),
+                green,
             ],
         )
+
+
+def test_select_match_accepts_nutritionally_equivalent_usda_tie():
+    match = select_match(
+        "banana raw",
+        [
+            _food(10, "Banana raw yellow"),
+            _food(11, "Banana raw green"),
+        ],
+    )
+
+    assert match.fdc_id == 10
 
 
 def test_select_match_tolerates_natural_language_modifiers():

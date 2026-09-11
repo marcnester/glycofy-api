@@ -150,18 +150,45 @@ def _match_score(query: str, food: dict[str, Any]) -> float | None:
     return (10.0 * len(overlap)) - (4.0 * missing) - extra + type_bonus
 
 
+def _nutritionally_equivalent(left: dict[str, float], right: dict[str, float]) -> bool:
+    """Return whether two USDA records are interchangeable for macro planning.
+
+    FoodData Central frequently returns duplicate or near-duplicate records at
+    the same relevance score (for example, two releases of the same staple).
+    Rejecting those ties made common foods impossible to use.  We only accept a
+    tie when every per-100g value is close enough that choosing either official
+    record cannot materially change the planned meal.
+    """
+    tolerances = {
+        "kcal": (10.0, 0.05),
+        "protein_g": (1.0, 0.12),
+        "carbs_g": (1.0, 0.12),
+        "fat_g": (1.0, 0.12),
+    }
+    for nutrient, (absolute, relative) in tolerances.items():
+        left_value = float(left[nutrient])
+        right_value = float(right[nutrient])
+        allowed = max(absolute, max(abs(left_value), abs(right_value)) * relative)
+        if abs(left_value - right_value) > allowed:
+            return False
+    return True
+
+
 def select_match(query: str, foods: list[dict[str, Any]]) -> FDCMatch:
-    candidates: list[tuple[float, dict[str, Any], dict[str, float]]] = []
-    for food in foods:
+    candidates: list[tuple[float, int, dict[str, Any], dict[str, float]]] = []
+    for relevance_rank, food in enumerate(foods):
         score = _match_score(query, food)
         nutrients = _nutrients(food)
         if score is not None and nutrients is not None:
-            candidates.append((score, food, nutrients))
+            candidates.append((score, relevance_rank, food, nutrients))
     if not candidates:
         raise USDANutritionError(f"No unambiguous USDA match for {query!r}")
-    candidates.sort(key=lambda row: (-row[0], int(row[1].get("fdcId") or 0)))
-    best_score, best, nutrients = candidates[0]
-    if len(candidates) > 1 and candidates[1][0] == best_score:
+    # FDC search results are relevance ordered. Preserve that authoritative
+    # order instead of using an arbitrary database id as the tie breaker.
+    candidates.sort(key=lambda row: (-row[0], row[1]))
+    best_score, _, best, nutrients = candidates[0]
+    tied = [candidate for candidate in candidates[1:] if candidate[0] == best_score]
+    if tied and not all(_nutritionally_equivalent(nutrients, candidate[3]) for candidate in tied):
         raise USDANutritionError(f"Ambiguous USDA match for {query!r}")
     return FDCMatch(
         fdc_id=int(best["fdcId"]),
