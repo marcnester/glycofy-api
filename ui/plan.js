@@ -575,15 +575,36 @@
   }
 
   const WEEKLY_JOB_STORAGE_KEY = 'glycofy.weeklyPlanningJob';
+  const TRANSIENT_JOB_STATUSES = new Set([429, 502, 503, 504]);
 
   async function pollWeeklyJob(jobId) {
+    let transientFailures = 0;
     while (true) {
-      const response = await fetch(`/v1/llm/recommend/weekly/jobs/${jobId}`, {
-        credentials: 'include',
-      });
+      let response;
+      try {
+        response = await fetch(`/v1/llm/recommend/weekly/jobs/${jobId}`, {
+          credentials: 'include',
+        });
+      } catch (_) {
+        transientFailures += 1;
+        if (transientFailures > 12) throw new Error('Unable to reconnect to weekly planning.');
+        updateBusyProgress('Reconnecting to your AI week…');
+        await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * transientFailures, 5000)));
+        continue;
+      }
+      if (TRANSIENT_JOB_STATUSES.has(response.status)) {
+        transientFailures += 1;
+        if (transientFailures > 12) {
+          throw new Error(`Unable to reconnect to weekly planning: ${response.status}`);
+        }
+        updateBusyProgress('Your plan is still running. Reconnecting…');
+        await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * transientFailures, 5000)));
+        continue;
+      }
       if (!response.ok) {
         throw new Error(`Weekly planning status failed: ${response.status}`);
       }
+      transientFailures = 0;
       const job = await response.json();
       if (job.status === 'completed') return job.result;
       if (job.status === 'cancelled') throw new Error('Weekly planning was cancelled.');
