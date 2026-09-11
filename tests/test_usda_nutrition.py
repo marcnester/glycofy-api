@@ -7,6 +7,7 @@ from app.services.usda_nutrition import (
     FDCMatch,
     USDANutritionError,
     USDAUnavailableError,
+    fit_portions_to_targets,
     resolve_foods,
     select_match,
     verify_ingredients,
@@ -161,6 +162,50 @@ def test_verify_ingredients_replaces_model_values_with_usda(monkeypatch):
     assert ingredients[0]["nutrition"] == {"kcal": 247.5, "protein_g": 46.5, "carbs_g": 0.0, "fat_g": 5.4}
     assert ingredients[0]["food_ref_id"] == "171077"
     assert ingredients[0]["nutrition_source"]["provider"] == "USDA FoodData Central"
+
+
+def test_fit_portions_uses_verified_foods_to_reach_macro_targets():
+    ingredients = [
+        {
+            "name": "chicken breast",
+            "amount": 100.0,
+            "unit": "g",
+            "amount_g": 100.0,
+            "nutrition": {"kcal": 165.0, "protein_g": 31.0, "carbs_g": 0.0, "fat_g": 3.6},
+        },
+        {
+            "name": "cooked rice",
+            "amount": 100.0,
+            "unit": "g",
+            "amount_g": 100.0,
+            "nutrition": {"kcal": 130.0, "protein_g": 2.7, "carbs_g": 28.0, "fat_g": 0.3},
+        },
+        {
+            "name": "olive oil",
+            "amount": 10.0,
+            "unit": "g",
+            "amount_g": 10.0,
+            "nutrition": {"kcal": 88.4, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 10.0},
+        },
+        {
+            "name": "salt",
+            "amount": 1.0,
+            "unit": "g",
+            "amount_g": 1.0,
+            "nutrition": {"kcal": 0.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0},
+        },
+    ]
+    targets = {"kcal": 650.0, "protein_g": 50.0, "carbs_g": 75.0, "fat_g": 17.0}
+
+    fitted = fit_portions_to_targets(ingredients, targets)
+    totals = {
+        name: sum(float(item["nutrition"][name]) for item in fitted)
+        for name in ("kcal", "protein_g", "carbs_g", "fat_g")
+    }
+
+    assert all(abs(totals[name] - targets[name]) / targets[name] <= 0.18 for name in totals)
+    assert fitted[3] == ingredients[3]
+    assert fitted[0]["nutrition"]["protein_g"] != ingredients[0]["nutrition"]["protein_g"]
 
 
 def test_verify_ingredients_falls_back_to_concise_name():

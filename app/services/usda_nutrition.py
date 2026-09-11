@@ -307,3 +307,82 @@ def verify_ingredients(
             }
         )
     return verified
+
+
+def fit_portions_to_targets(
+    ingredients: list[dict[str, Any]],
+    targets: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Fit gram portions to macro targets using only USDA-derived evidence.
+
+    The model chooses foods; this deterministic pass adjusts their serving
+    weights. It cannot invent nutrition because each coefficient comes from
+    the already verified per-ingredient USDA values.
+    """
+    macro_names = ("kcal", "protein_g", "carbs_g", "fat_g")
+    try:
+        target = [float(targets[name]) for name in macro_names]
+    except (KeyError, TypeError, ValueError):
+        return ingredients
+    if any(value <= 0 for value in target):
+        return ingredients
+
+    evidence: list[list[float]] = []
+    base_weights: list[float] = []
+    adjustable: list[int] = []
+    for index, ingredient in enumerate(ingredients):
+        nutrition = ingredient.get("nutrition")
+        try:
+            weight = float(ingredient.get("amount_g"))
+            values = [float(nutrition[name]) for name in macro_names]
+        except (KeyError, TypeError, ValueError):
+            return ingredients
+        if weight <= 0 or any(value < 0 for value in values):
+            return ingredients
+        evidence.append(values)
+        base_weights.append(weight)
+        # Leave water, spices, and other nutritionally negligible additions at
+        # their recipe amount. Portion-fit only foods that can move a target.
+        if values[0] >= 20 or max(values[1:]) >= 2:
+            adjustable.append(index)
+    if not adjustable:
+        return ingredients
+
+    # Coordinate descent over serving multipliers minimizes normalized target
+    # error with a small preference for the model's original practical amount.
+    factors = [1.0 for _ in ingredients]
+    normalized = [[value / target[pos] for pos, value in enumerate(row)] for row in evidence]
+    regularization = 0.002
+    for _ in range(60):
+        for index in adjustable:
+            contribution = normalized[index]
+            other = [
+                sum(normalized[row][metric] * factors[row] for row in range(len(ingredients)) if row != index)
+                for metric in range(len(macro_names))
+            ]
+            numerator = (
+                sum(contribution[metric] * (1.0 - other[metric]) for metric in range(len(macro_names))) + regularization
+            )
+            denominator = sum(value * value for value in contribution) + regularization
+            factors[index] = min(4.0, max(0.25, numerator / denominator))
+
+    fitted: list[dict[str, Any]] = []
+    for index, ingredient in enumerate(ingredients):
+        if index not in adjustable:
+            fitted.append(ingredient)
+            continue
+        factor = factors[index]
+        amount_g = round(base_weights[index] * factor, 1)
+        if amount_g <= 0 or amount_g > 5000:
+            return ingredients
+        nutrition = {name: round(evidence[index][position] * factor, 1) for position, name in enumerate(macro_names)}
+        fitted.append(
+            {
+                **ingredient,
+                "amount": amount_g,
+                "amount_g": amount_g,
+                "unit": "g",
+                "nutrition": nutrition,
+            }
+        )
+    return fitted

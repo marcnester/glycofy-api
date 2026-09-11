@@ -97,6 +97,8 @@ services:
         value: "1"
       - key: WEEKLY_DAY_MAX_WORKERS
         value: "3"
+      - key: WEEKLY_REPAIR_MAX_SLOTS
+        value: "10"
       - key: LLM_CACHE_MAX_ENTRIES
         value: "64"
       - key: WEB_PROCESS_COUNT

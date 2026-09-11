@@ -51,6 +51,7 @@ from app.services.usda_nutrition import (
     FDCMatch,
     USDANutritionError,
     USDAUnavailableError,
+    fit_portions_to_targets,
     resolve_foods,
     verify_ingredients,
 )
@@ -76,6 +77,19 @@ def _verify_ingredient_nutrition(
     if settings.USDA_FDC_REQUIRED:
         raise USDANutritionError("USDA FoodData Central is required but not configured")
     return ingredients
+
+
+def _usda_error_code(message: str) -> str:
+    normalized = message.lower()
+    if "no unambiguous usda match" in normalized:
+        return "usda_no_match"
+    if "ambiguous usda match" in normalized:
+        return "usda_ambiguous_match"
+    if "no usda result was resolved" in normalized:
+        return "usda_missing_resolution"
+    if "gram weight" in normalized or "cannot be verified" in normalized:
+        return "usda_invalid_measurement"
+    return "usda_unresolved"
 
 
 class WeeklyJobCancelled(RuntimeError):
@@ -3433,7 +3447,7 @@ def recommend_recipes(
 # ---------- Weekly, training-aware API (persists) ----------
 
 
-def _weekly_batch_schema(meals_per_day: int) -> dict[str, Any]:
+def _weekly_batch_schema(meals_per_day: int, *, flexible_meal_count: bool = False) -> dict[str, Any]:
     macros = {
         "type": "object",
         "additionalProperties": False,
@@ -3507,7 +3521,7 @@ def _weekly_batch_schema(meals_per_day: int) -> dict[str, Any]:
                             "date": {"type": "string"},
                             "meals": {
                                 "type": "array",
-                                "minItems": meals_per_day,
+                                "minItems": 1 if flexible_meal_count else meals_per_day,
                                 "maxItems": meals_per_day,
                                 "items": meal,
                             },
@@ -3528,6 +3542,7 @@ def _batch_week_recommendations(
     exclusions: list[str],
     athlete_feedback: dict[str, Any] | None = None,
     week_context: list[dict[str, Any]] | None = None,
+    flexible_meal_count: bool = False,
 ) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
     """Generate the whole week in one model round-trip and discard unsafe cells."""
     if not client or not days or _circuit_open() or _BUDGET.spent_usd >= _daily_budget_usd():
@@ -3544,7 +3559,10 @@ def _batch_week_recommendations(
         "single-serving, and cookable in about 30 minutes with measured ingredients. Every ingredient must use grams: "
         "amount is the edible gram weight, unit is g, and amount_g is the identical numeric value. Also include "
         "usda_search_query as a concise generic USDA food description "
-        "including the relevant raw/cooked preparation state. Never use a branded food or an unmeasured serving. "
+        "including the relevant raw/cooked preparation state. Each query must describe one common, independently "
+        "searchable food—not a recipe or composite ingredient. Specify cooked versus raw for grains and proteins, "
+        "and specify fat percentage for dairy when relevant. Use plain canonical terms; omit marketing adjectives. "
+        "Never use a branded food or an unmeasured serving. "
         "Do not calculate or return nutrition for individual ingredients; Glycofy computes it authoritatively from "
         "USDA FoodData Central after generation. Estimate meal macros from the stated foods and quantities, never copy "
         "target_macros into macros, and adjust actual ingredient quantities until the estimate is close to each slot "
@@ -3600,7 +3618,10 @@ def _batch_week_recommendations(
             ),
             response_format={
                 "type": "json_schema",
-                "json_schema": _weekly_batch_schema(len(days[0].get("meals", []))),
+                "json_schema": _weekly_batch_schema(
+                    max(len(day.get("meals", [])) for day in days),
+                    flexible_meal_count=flexible_meal_count,
+                ),
             },
             messages=[
                 {"role": "system", "content": system},
@@ -3686,6 +3707,7 @@ def _batch_week_recommendations(
             usda_error = None
             try:
                 ingredients = _verify_ingredient_nutrition(ingredients, resolved_foods=resolved_usda)
+                ingredients = fit_portions_to_targets(ingredients, target or {})
             except USDANutritionError as exc:
                 usda_error = str(exc)
             instructions = meal.get("instructions") or []
@@ -3730,7 +3752,7 @@ def _batch_week_recommendations(
             if invalid:
                 rejection_reasons: list[str] = quality_report.codes()
                 if usda_error is not None:
-                    rejection_reasons.append("usda_unresolved")
+                    rejection_reasons.append(_usda_error_code(usda_error))
                 if not isinstance(instructions, list) or len(instructions) < 2:
                     rejection_reasons.append("instructions_incomplete")
                 if reconciled_macros is None:
@@ -3965,6 +3987,47 @@ def recommend_weekly_apply(
         exclusions=_preference_exclusions(pref),
         athlete_feedback=athlete_feedback,
     )
+
+    # Repair only the rejected cells in one compact model call. USDA remains
+    # authoritative and the same validation runs again; this is not a fallback
+    # to guessed nutrition. Keeping the repair bounded avoids turning one bad
+    # ingredient into dozens of slow per-slot calls.
+    repair_days: list[dict[str, Any]] = []
+    missing_count = 0
+    for batch_day in batch_days:
+        missing_meals = [
+            meal
+            for meal in batch_day["meals"]
+            if _normalize_slot(str(meal["slot"])) not in batch_items.get(batch_day["date"], {})
+        ]
+        if missing_meals:
+            missing_count += len(missing_meals)
+            repair_days.append({**batch_day, "meals": missing_meals})
+    try:
+        repair_limit = max(0, int(os.environ.get("WEEKLY_REPAIR_MAX_SLOTS", "10")))
+    except ValueError:
+        repair_limit = 10
+    if repair_days and missing_count <= repair_limit:
+        repaired_items, repair_meta = _batch_week_recommendations(
+            client,
+            days=repair_days,
+            primary_diet=primary_diet,
+            diet_tags=pref_tags,
+            exclusions=_preference_exclusions(pref),
+            athlete_feedback=athlete_feedback,
+            week_context=batch_days,
+            flexible_meal_count=True,
+        )
+        for repair_date, slots in repaired_items.items():
+            batch_items.setdefault(repair_date, {}).update(slots)
+        batch_meta["repair"] = {
+            "requested": missing_count,
+            "accepted": sum(len(slots) for slots in repaired_items.values()),
+            "rejected": int(repair_meta.get("rejected") or 0),
+            "latency_ms": int(repair_meta.get("latency_ms") or 0),
+        }
+    elif repair_days:
+        batch_meta["repair"] = {"requested": missing_count, "skipped": "limit_exceeded"}
 
     for day in payload.days:
         date_iso = day.date

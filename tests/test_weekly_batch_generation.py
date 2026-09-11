@@ -85,6 +85,12 @@ def test_weekly_targets_rebalance_a_malformed_prior_meal_split():
     assert sum(meal.carbs_g for meal in targets.values()) == 240
 
 
+def test_usda_failure_codes_distinguish_matching_from_measurement_errors():
+    assert llm_recommend._usda_error_code("Ambiguous USDA match for 'rice'") == "usda_ambiguous_match"
+    assert llm_recommend._usda_error_code("No unambiguous USDA match for 'rice'") == "usda_no_match"
+    assert llm_recommend._usda_error_code("Ingredient has no valid gram weight") == "usda_invalid_measurement"
+
+
 def test_preferred_snacks_split_existing_daily_targets_without_adding_calories():
     day = llm_recommend.WeeklyDayRequest(
         date="2026-09-01",
@@ -203,6 +209,137 @@ def test_weekly_day_generation_respects_memory_safe_worker_limit(monkeypatch):
     assert peak == 3
     assert len(output) == 7
     assert meta["day_generations"] == 7
+
+
+def test_weekly_batch_schema_supports_one_compact_variable_slot_repair(monkeypatch):
+    dates = ["2026-09-01", "2026-09-02"]
+    response_body = {
+        "days": [
+            {"date": dates[0], "meals": [_meal("breakfast", 1)]},
+            {"date": dates[1], "meals": [_meal("breakfast", 2), _meal("lunch", 2)]},
+        ]
+    }
+    calls = []
+
+    class Completions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response_body)))],
+                usage=None,
+            )
+
+    days = [
+        {
+            "date": dates[0],
+            "training": {},
+            "meals": [
+                {
+                    "slot": "breakfast",
+                    "target_macros": {"kcal": 500, "protein_g": 40, "carbs_g": 50, "fat_g": 15},
+                }
+            ],
+        },
+        {
+            "date": dates[1],
+            "training": {},
+            "meals": [
+                {
+                    "slot": slot,
+                    "target_macros": {"kcal": 500, "protein_g": 40, "carbs_g": 50, "fat_g": 15},
+                }
+                for slot in ("breakfast", "lunch")
+            ],
+        },
+    ]
+    monkeypatch.setattr(llm_recommend, "_circuit_open", lambda: False)
+    monkeypatch.setattr(llm_recommend, "_daily_budget_usd", lambda: 100.0)
+
+    recommendations, meta = llm_recommend._batch_week_recommendations(
+        SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+        days=days,
+        primary_diet="omnivore",
+        diet_tags=[],
+        exclusions=[],
+        flexible_meal_count=True,
+    )
+
+    meal_schema = calls[0]["response_format"]["json_schema"]["schema"]["properties"]["days"]["items"]["properties"][
+        "meals"
+    ]
+    assert meal_schema["minItems"] == 1
+    assert meal_schema["maxItems"] == 2
+    assert meta["accepted"] == 3
+    assert set(recommendations[dates[0]]) == {"breakfast"}
+    assert set(recommendations[dates[1]]) == {"breakfast", "lunch"}
+
+
+def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    date_iso = "2026-09-01"
+    targets = {"kcal": 500.0, "protein_g": 40.0, "carbs_g": 50.0, "fat_g": 15.0}
+    calls = []
+
+    def recommendation(slot):
+        return llm_recommend.SlotRecommendation(
+            slot=slot,
+            target=targets,
+            ai_idea={"title": f"Verified {slot}"},
+            meta={"mode": "create", "batch": True},
+        )
+
+    def generate(_client, *, days, flexible_meal_count=False, **_kwargs):
+        calls.append({"days": days, "flexible": flexible_meal_count})
+        if flexible_meal_count:
+            return {date_iso: {"snack": recommendation("snack")}}, {"rejected": 0, "latency_ms": 25}
+        return {date_iso: {slot: recommendation(slot) for slot in ("breakfast", "lunch", "dinner")}}, {
+            "accepted": 3,
+            "rejected": 1,
+            "latency_ms": 100,
+        }
+
+    monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", generate)
+    monkeypatch.setattr(llm_recommend, "_get_openai_client", lambda: object())
+    monkeypatch.setattr(llm_recommend._RATE, "check_and_add", lambda *_args: None)
+    monkeypatch.setattr(
+        llm_recommend,
+        "_persist_day_recommendations",
+        lambda **kwargs: {
+            "date": kwargs["day_iso"],
+            "skipped": False,
+            "applied": len(kwargs["day_items"]),
+            "created_recipes": len(kwargs["day_items"]),
+        },
+    )
+
+    with Session(engine) as db:
+        user = User(email="repair@example.com", password_hash="test")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        payload = llm_recommend.WeeklyRecommendRequest(
+            days=[
+                llm_recommend.WeeklyDayRequest(
+                    date=date_iso,
+                    meals=[llm_recommend.MealTarget(slot=slot, **targets) for slot in llm_recommend.SLOTS],
+                )
+            ]
+        )
+        request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+
+        result = llm_recommend.recommend_weekly_apply(request, payload, db, user)
+
+    assert len(calls) == 2
+    assert calls[1]["flexible"] is True
+    assert [meal["slot"] for meal in calls[1]["days"][0]["meals"]] == ["snack"]
+    assert result["generation"]["repair"] == {
+        "requested": 1,
+        "accepted": 1,
+        "rejected": 0,
+        "latency_ms": 25,
+    }
+    assert len(result["days"][0]["items"]) == 4
 
 
 def test_llm_cache_evicts_oldest_entry_at_memory_limit(monkeypatch):
