@@ -13,6 +13,7 @@ import re
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -60,6 +61,8 @@ ClientType = Any
 router = APIRouter()
 logger = logging.getLogger(__name__)
 _WEEKLY_JOB_CONTEXT = threading.local()
+_OPENAI_CLIENT: ClientType | None = None
+_OPENAI_CLIENT_LOCK = threading.Lock()
 
 
 def _verify_ingredient_nutrition(
@@ -1045,6 +1048,7 @@ def _recipe_violates_exclusions(recipe: Recipe, exclusions: list[str]) -> bool:
 
 
 def _get_openai_client() -> ClientType | None:
+    global _OPENAI_CLIENT
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
         logger.warning("LLM: OPENAI_API_KEY is not set; falling back to heuristic mode")
@@ -1054,13 +1058,19 @@ def _get_openai_client() -> ClientType | None:
     except Exception as e:
         logger.exception("LLM: failed to import OpenAI client: %s", e)
         return None
-    # Weekly planning must have a firm UX ceiling. Disable SDK-level retries;
-    # Glycofy owns retries at the job level and can preserve the old plan.
-    return OpenAI(
-        api_key=api_key,
-        timeout=float(os.environ.get("OPENAI_REQUEST_TIMEOUT_SECONDS", "52")),
-        max_retries=0,
-    )
+    # Reuse one thread-safe connection pool for the process. Constructing a new
+    # SDK client for every plan retained multiple HTTP pools until garbage
+    # collection, which is costly on a 512 MB web instance.
+    with _OPENAI_CLIENT_LOCK:
+        if _OPENAI_CLIENT is None:
+            # Weekly planning must have a firm UX ceiling. Disable SDK-level
+            # retries; Glycofy owns retries and preserves the previous plan.
+            _OPENAI_CLIENT = OpenAI(
+                api_key=api_key,
+                timeout=float(os.environ.get("OPENAI_REQUEST_TIMEOUT_SECONDS", "52")),
+                max_retries=0,
+            )
+    return _OPENAI_CLIENT
 
 
 def _openai_model() -> str:
@@ -2406,7 +2416,8 @@ def _llm_pick_or_create(
 
 class _Cache:
     def __init__(self) -> None:
-        self.data: dict[str, tuple[float, dict[str, Any]]] = {}
+        self.data: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
+        self.lock = threading.Lock()
 
     def _ttl(self) -> float:
         try:
@@ -2416,17 +2427,31 @@ class _Cache:
 
     def get(self, key: str) -> dict[str, Any] | None:
         now = time.time()
-        rec = self.data.get(key)
-        if not rec:
-            return None
-        ts, val = rec
-        if (now - ts) > self._ttl():
-            self.data.pop(key, None)
-            return None
-        return val
+        with self.lock:
+            rec = self.data.get(key)
+            if not rec:
+                return None
+            ts, val = rec
+            if (now - ts) > self._ttl():
+                self.data.pop(key, None)
+                return None
+            self.data.move_to_end(key)
+            return val
 
     def set(self, key: str, val: dict[str, Any]) -> None:
-        self.data[key] = (time.time(), val)
+        try:
+            max_entries = max(1, int(os.environ.get("LLM_CACHE_MAX_ENTRIES", "64")))
+        except ValueError:
+            max_entries = 64
+        with self.lock:
+            self.data[key] = (time.time(), val)
+            self.data.move_to_end(key)
+            while len(self.data) > max_entries:
+                self.data.popitem(last=False)
+
+    def discard(self, key: str) -> None:
+        with self.lock:
+            self.data.pop(key, None)
 
 
 _CACHE = _Cache()
@@ -3351,7 +3376,7 @@ def recommend_recipes(
         cached_items = cached.get("items") or []
         if cached_items and all(item.get("recipe") or item.get("ai_idea") for item in cached_items):
             return cached
-        _CACHE.data.pop(key, None)
+        _CACHE.discard(key)
         logger.warning("LLM cache: discarded incomplete recommendation key=%s", key)
 
     client = _get_openai_client()
@@ -3830,7 +3855,13 @@ def _parallel_week_recommendations(
             week_context=themed_days,
         )
 
-    with ThreadPoolExecutor(max_workers=min(7, len(themed_days)), thread_name_prefix="weekly-day") as executor:
+    try:
+        configured_workers = max(1, int(os.environ.get("WEEKLY_DAY_MAX_WORKERS", "3")))
+    except ValueError:
+        configured_workers = 3
+    with ThreadPoolExecutor(
+        max_workers=min(configured_workers, len(themed_days)), thread_name_prefix="weekly-day"
+    ) as executor:
         futures = [executor.submit(generate, day) for day in themed_days]
         for future in futures:
             day_output, day_meta = future.result()
@@ -4120,7 +4151,13 @@ def recommend_weekly_apply(
     return resp
 
 
-_WEEKLY_JOB_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="weekly-plan")
+# Keep expensive AI planning serialized inside the 512 MB web instance. Jobs
+# remain durable and queued in PostgreSQL; a dedicated worker can raise this
+# safely when the service is moved to larger/shared infrastructure.
+_WEEKLY_JOB_EXECUTOR = ThreadPoolExecutor(
+    max_workers=max(1, int(os.environ.get("WEEKLY_JOB_MAX_WORKERS", "1"))),
+    thread_name_prefix="weekly-plan",
+)
 _WEEKLY_WORKER_ID = f"web-{uuid.uuid4().hex[:12]}"
 
 

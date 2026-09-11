@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -173,6 +175,47 @@ def test_weekly_batch_parallelizes_bounded_day_calls_and_accepts_complete_week(m
     assert all(set(recommendations[date]) == set(llm_recommend.SLOTS) for date in dates)
     assert all(item.meta["batch"] is True for slots in recommendations.values() for item in slots.values())
     assert all(item.ai_idea["total_time_min"] == 25 for slots in recommendations.values() for item in slots.values())
+
+
+def test_weekly_day_generation_respects_memory_safe_worker_limit(monkeypatch):
+    monkeypatch.setenv("WEEKLY_DAY_MAX_WORKERS", "3")
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def generate(_client, *, days, **_kwargs):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return {days[0]["date"]: {}}, {"accepted": 0, "rejected": 0}
+
+    monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", generate)
+    days = [{"date": f"2026-09-{day:02d}", "meals": []} for day in range(1, 8)]
+
+    output, meta = llm_recommend._parallel_week_recommendations(
+        object(), days=days, primary_diet="omnivore", diet_tags=[], exclusions=[]
+    )
+
+    assert peak == 3
+    assert len(output) == 7
+    assert meta["day_generations"] == 7
+
+
+def test_llm_cache_evicts_oldest_entry_at_memory_limit(monkeypatch):
+    monkeypatch.setenv("LLM_CACHE_MAX_ENTRIES", "2")
+    cache = llm_recommend._Cache()
+
+    cache.set("oldest", {"value": 1})
+    cache.set("middle", {"value": 2})
+    cache.set("newest", {"value": 3})
+
+    assert cache.get("oldest") is None
+    assert cache.get("middle") == {"value": 2}
+    assert cache.get("newest") == {"value": 3}
 
 
 def test_weekly_job_status_is_scoped_to_owner():
