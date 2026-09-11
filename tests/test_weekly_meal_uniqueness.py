@@ -582,7 +582,7 @@ def test_missing_slot_detection_covers_snacks_and_main_meals():
     assert llm_recommend._missing_recommendation_slots(items) == ["snack"]
 
 
-def test_incomplete_weekly_batch_fails_atomically_without_slow_per_slot_repairs(monkeypatch):
+def test_incomplete_weekly_batch_fails_atomically_without_slow_per_slot_ai_repairs(monkeypatch):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -590,8 +590,17 @@ def test_incomplete_weekly_batch_fails_atomically_without_slow_per_slot_repairs(
     )
     Base.metadata.create_all(engine)
 
+    fallback_calls = []
+
     def fake_recommendation(**kwargs):
-        raise AssertionError("an incomplete weekly batch must not trigger per-slot AI calls")
+        fallback_calls.append(kwargs)
+        assert kwargs["client"] is None
+        assert kwargs["prefer_fast_catalog"] is True
+        return llm_recommend.SlotRecommendation(
+            slot=kwargs["tgt"].slot,
+            target=kwargs["tgt"].model_dump(exclude={"slot"}),
+            meta={"provider": "catalog", "mode": "empty"},
+        )
 
     monkeypatch.setattr(llm_recommend, "_recommend_for_single_meal", fake_recommendation)
     monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", lambda *_args, **_kwargs: ({}, {"mode": "test"}))
@@ -626,6 +635,7 @@ def test_incomplete_weekly_batch_fails_atomically_without_slow_per_slot_repairs(
 
     assert exc_info.value.status_code == 422
     assert "nutrition-safe" in str(exc_info.value.detail)
+    assert fallback_calls
 
 
 def test_weekly_generation_fails_closed_without_ai_or_verified_catalog(monkeypatch):

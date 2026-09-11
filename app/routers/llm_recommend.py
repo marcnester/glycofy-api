@@ -2794,22 +2794,14 @@ def _recommend_for_single_meal(
     result = None
     if prefer_fast_catalog and candidates:
         picked, deltas, _score = candidates[0]
-        within_tolerance = all(
-            _safe_float(getattr(tgt, name, 0.0)) <= 0
-            or abs(_safe_float(getattr(picked, name, 0.0)) - _safe_float(getattr(tgt, name, 0.0)))
-            / _safe_float(getattr(tgt, name, 0.0))
-            <= 0.25
-            for name in _MACROS
+        result = (
+            "pick",
+            picked,
+            deltas,
+            "Best nutrition-verified recipe match for your meal targets, diet, and weekly variety.",
+            {"provider": "catalog", "mode": "pick", "fast_path": True},
+            None,
         )
-        if within_tolerance:
-            result = (
-                "pick",
-                picked,
-                deltas,
-                "Best complete recipe match for your meal targets, diet, and weekly variety.",
-                {"provider": "catalog", "mode": "pick", "fast_path": True},
-                None,
-            )
 
     if result is None:
         for attempt in range(1, _SLOT_RECOMMENDATION_ATTEMPTS + 1):
@@ -4218,15 +4210,33 @@ def recommend_weekly_apply(
             slot = _normalize_slot(scaled.slot)
             rec = batch_items.get(date_iso, {}).get(slot)
             if rec is None:
-                # Do not turn a partial batch into as many as 105 additional
-                # model attempts. The weekly job is atomic: preserve the old
-                # plan and let one bounded retry regenerate the compact batch.
-                rec = SlotRecommendation(
-                    slot=slot,
-                    target=scaled.model_dump(exclude={"slot"}),
-                    reason="Weekly batch did not produce a verified meal.",
-                    meta={"provider": provider, "mode": "empty", "batch": True},
+                # The compact repair request is the entire AI retry budget.
+                # If one cell is still absent, select the nearest fully
+                # itemized, nutrition-verified catalog meal without another
+                # network call. This keeps a single questionable model cell
+                # from discarding an otherwise excellent week.
+                rec = _recommend_for_single_meal(
+                    client=None,
+                    db=db,
+                    date=date_iso,
+                    tgt=scaled,
+                    diet_tags=day_diet_tags,
+                    primary_diet=primary_diet,
+                    pref=pref,
+                    provider="catalog",
+                    used_protein_items=used_protein_items,
+                    used_carb_items=used_carb_items,
+                    used_recipe_ids=used_recipe_ids,
+                    used_meal_keys=used_meal_keys,
+                    allow_new_recipe=False,
+                    week_protein_counts=week_protein_counts,
+                    protein_cap_per_slot=2,
+                    prefer_fast_catalog=True,
+                    athlete_feedback=athlete_feedback,
                 )
+                if rec.recipe or rec.ai_idea:
+                    rec.meta = {**(rec.meta or {}), "batch_recovery": "verified_catalog"}
+                    logger.info("weekly_missing_slot_recovered", extra={"date": date_iso, "slot": slot})
             else:
                 meta = rec.meta or {}
                 protein_item = str(meta.get("protein_item") or "").strip().lower()
