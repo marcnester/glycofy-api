@@ -95,6 +95,36 @@ def test_select_match_accepts_omitted_zero_macros_when_energy_is_explained():
     assert match.nutrients_per_100g == {"kcal": 884.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 100.0}
 
 
+def test_select_match_accepts_foundation_atwater_energy():
+    oats = _food(18, "Oats, whole grain, rolled, old fashioned")
+    oats["foodNutrients"] = [
+        {"nutrientId": 2047, "value": 379},
+        {"nutrientId": 1003, "value": 13.2},
+        {"nutrientId": 1005, "value": 67.7},
+        {"nutrientId": 1004, "value": 6.5},
+    ]
+
+    match = select_match("rolled oats", [oats])
+
+    assert match.nutrients_per_100g["kcal"] == 379.0
+
+
+def test_select_match_prefers_food_specific_atwater_energy():
+    oats = _food(19, "Oats, whole grain, rolled, old fashioned")
+    oats["foodNutrients"] = [
+        {"nutrientId": 1008, "value": 370},
+        {"nutrientId": 2047, "value": 375},
+        {"nutrientId": 2048, "value": 379},
+        {"nutrientId": 1003, "value": 13.2},
+        {"nutrientId": 1005, "value": 67.7},
+        {"nutrientId": 1004, "value": 6.5},
+    ]
+
+    match = select_match("rolled oats", [oats])
+
+    assert match.nutrients_per_100g["kcal"] == 379.0
+
+
 def test_select_match_rejects_missing_macro_when_energy_is_not_explained():
     incomplete = _food(17, "Mystery food")
     incomplete["foodNutrients"] = [

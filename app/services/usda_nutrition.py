@@ -25,7 +25,11 @@ _FDC_GATE = threading.BoundedSemaphore(_FDC_CONCURRENCY)
 
 FDC_API_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
 FDC_DATA_TYPES = ["Foundation", "SR Legacy", "Survey (FNDDS)"]
-NUTRIENT_IDS = {"kcal": 1008, "protein_g": 1003, "carbs_g": 1005, "fat_g": 1004}
+NUTRIENT_IDS = {"protein_g": 1003, "carbs_g": 1005, "fat_g": 1004}
+# Foundation Foods stopped publishing the legacy Energy nutrient (1008) in
+# 2020. Prefer its food-specific Atwater calculation, then the general Atwater
+# value, while retaining 1008 for SR Legacy and Survey foods.
+ENERGY_NUTRIENT_IDS = (2048, 2047, 1008)
 _STOP_WORDS = {"fresh", "large", "medium", "small", "sliced", "diced", "chopped", "plain"}
 _DISQUALIFIERS = {
     "baby food",
@@ -92,10 +96,11 @@ def _nutrients(food: dict[str, Any]) -> dict[str, float] | None:
     # no carbohydrate/protein row). Accept omitted macros only when the listed
     # energy is already explained by the nutrients FDC did return; otherwise an
     # omitted row could be unknown rather than zero and must fail closed.
-    energy_id = NUTRIENT_IDS["kcal"]
-    if energy_id not in by_id:
+    energy = next((by_id[nutrient_id] for nutrient_id in ENERGY_NUTRIENT_IDS if nutrient_id in by_id), None)
+    if energy is None:
         return None
     nutrients = {name: by_id.get(nutrient_id, 0.0) for name, nutrient_id in NUTRIENT_IDS.items()}
+    nutrients = {"kcal": energy, **nutrients}
     missing_macros = [name for name in ("protein_g", "carbs_g", "fat_g") if NUTRIENT_IDS[name] not in by_id]
     if missing_macros:
         explained = 4 * nutrients["protein_g"] + 4 * nutrients["carbs_g"] + 9 * nutrients["fat_g"]
