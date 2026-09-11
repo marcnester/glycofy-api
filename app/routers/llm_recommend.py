@@ -3176,8 +3176,21 @@ def _apply_recipe_to_planmeal(pm: PlanMeal, rec: Recipe) -> None:
 
 
 def _apply_ai_idea_to_planmeal(pm: PlanMeal, ai: dict[str, Any], created_recipe: Recipe) -> None:
-    # Apply via the created recipe (so behavior matches "pick")
+    # Apply via the created recipe, then copy the generated fields directly as
+    # a persistence invariant. This prevents a newly-created snack slot from
+    # retaining its placeholder title/zero macros if ORM relationship state is
+    # stale while an entire week is being created in one transaction.
     _apply_recipe_to_planmeal(pm, created_recipe)
+    title = str(ai.get("title") or "").strip()
+    if title:
+        pm.title = title
+    instructions = _coerce_ai_instructions_to_text(ai.get("instructions"))
+    if instructions:
+        pm.instructions = instructions
+    approx = ai.get("approx_macros") or {}
+    for field in _MACROS:
+        if approx.get(field) is not None:
+            setattr(pm, field, _safe_float(approx.get(field)))
 
 
 def _recompute_plan_totals_from_meals(by_slot: dict[str, PlanMeal]) -> dict[str, float]:

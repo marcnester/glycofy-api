@@ -419,6 +419,43 @@ def test_weekly_persistence_saves_ai_reason(monkeypatch):
         assert [item.name for item in meal.items] == ["salmon", "rice"]
 
 
+def test_ai_persistence_replaces_new_snack_placeholder_fields():
+    placeholder = PlanMeal(
+        plan_id=1,
+        meal_type="snack_2",
+        order_index=3,
+        title="Snack_2",
+        instructions="",
+        kcal=0,
+        protein_g=0,
+        carbs_g=0,
+        fat_g=0,
+    )
+    recipe = Recipe(
+        id=1,
+        title="Temporary recipe state",
+        meal_type="snack",
+        ingredients=[{"name": "Greek yogurt", "amount": 150, "unit": "g"}],
+        instructions="",
+        kcal=0,
+        protein_g=0,
+        carbs_g=0,
+        fat_g=0,
+    )
+    idea = {
+        "title": "Greek Yogurt Banana Crunch",
+        "ingredients": recipe.ingredients,
+        "instructions": ["Add yogurt to a bowl.", "Top with banana and granola."],
+        "approx_macros": {"kcal": 305, "protein_g": 18, "carbs_g": 44, "fat_g": 7},
+    }
+
+    llm_recommend._apply_ai_idea_to_planmeal(placeholder, idea, recipe)
+
+    assert placeholder.title == idea["title"]
+    assert placeholder.instructions == "Add yogurt to a bowl.\nTop with banana and granola."
+    assert (placeholder.kcal, placeholder.protein_g, placeholder.carbs_g, placeholder.fat_g) == (305, 18, 44, 7)
+
+
 def test_empty_slot_is_retried_until_it_has_an_applicable_meal(monkeypatch):
     attempts = iter(
         [
