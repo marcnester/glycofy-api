@@ -181,6 +181,9 @@
   if (logoutBtn) {
     logoutBtn.addEventListener('click', async (e) => {
       e.preventDefault();
+      // A job may finish after the user leaves, but a failed/completed job must
+      // never reopen as a stale modal in their next authenticated session.
+      sessionStorage.removeItem('glycofy.weeklyPlanningJob');
       try {
         if (typeof logout === 'function') {
           await logout();
@@ -638,7 +641,7 @@
     if (busyCancel) busyCancel.hidden = false;
     sessionStorage.setItem(
       WEEKLY_JOB_STORAGE_KEY,
-      JSON.stringify({ jobId: job.job_id, ...context })
+      JSON.stringify({ jobId: job.job_id, createdAt: Date.now(), ...context })
     );
     const result = await pollWeeklyJob(job.job_id);
     sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
@@ -1474,6 +1477,21 @@
       if (latest && ['queued', 'running'].includes(latest.status)) saved = { jobId: latest.job_id };
     }
     if (!saved?.jobId) return;
+    // Inspect a saved job before opening the reconnecting overlay. Only active
+    // work should be resumed; terminal records belong to the previous visit.
+    try {
+      const statusResponse = await fetch(
+        `/v1/llm/recommend/weekly/jobs/${saved.jobId}`,
+        { credentials: 'include' }
+      );
+      const statusJob = statusResponse.ok ? await statusResponse.json() : null;
+      if (!statusJob || !['queued', 'running'].includes(statusJob.status)) {
+        sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
+        return;
+      }
+    } catch (_) {
+      // A transient connection failure is handled by the resilient poller.
+    }
     activeWeeklyJobId = saved.jobId;
     if (busyCancel) busyCancel.hidden = false;
     setBusy(true, 'Reconnecting to your AI week…');
