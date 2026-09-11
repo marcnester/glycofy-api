@@ -101,8 +101,20 @@ def _match_score(query: str, food: dict[str, Any]) -> float | None:
     required_overlap = 1 if len(query_tokens) <= 2 else max(2, (len(query_tokens) + 1) // 2)
     if len(overlap) < required_overlap:
         return None
-    for preparation in ("raw", "cooked", "roasted", "boiled", "baked"):
-        if preparation in query_tokens and preparation not in description_tokens:
+    # USDA descriptions commonly express recipe preparation using controlled
+    # terms (for example, "dry heat") instead of the user's word ("baked").
+    # Keep raw/cooked distinct, while accepting equivalent cooking methods.
+    preparation_terms = {
+        "raw": {"raw"},
+        "cooked": {"cooked", "roasted", "boiled", "baked", "grilled", "steamed", "heat"},
+        "roasted": {"roasted", "baked", "grilled", "heat"},
+        "baked": {"baked", "roasted", "heat"},
+        "grilled": {"grilled", "roasted", "heat"},
+        "boiled": {"boiled", "steamed", "cooked", "heat"},
+        "steamed": {"steamed", "boiled", "cooked", "heat"},
+    }
+    for preparation, equivalents in preparation_terms.items():
+        if preparation in query_tokens and not (equivalents & description_tokens):
             return None
     lowered_query = query.lower()
     lowered_description = description.lower()

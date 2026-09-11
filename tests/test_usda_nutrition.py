@@ -57,6 +57,25 @@ def test_select_match_normalizes_plural_food_words():
     assert match.fdc_id == 13
 
 
+@pytest.mark.parametrize(
+    ("query", "description"),
+    [
+        ("salmon baked", "Fish, salmon, cooked, dry heat"),
+        ("chicken breast grilled", "Chicken breast, cooked, roasted"),
+        ("broccoli steamed", "Broccoli, cooked"),
+    ],
+)
+def test_select_match_accepts_equivalent_usda_preparation_terms(query, description):
+    match = select_match(query, [_food(14, description)])
+
+    assert match.fdc_id == 14
+
+
+def test_select_match_keeps_raw_and_cooked_foods_distinct():
+    with pytest.raises(USDANutritionError, match="No unambiguous"):
+        select_match("chicken breast raw", [_food(15, "Chicken breast, cooked, roasted")])
+
+
 def test_verify_ingredients_replaces_model_values_with_usda(monkeypatch):
     match = FDCMatch(
         fdc_id=171077,

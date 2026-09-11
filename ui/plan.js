@@ -155,11 +155,14 @@
     activeWeeklyJobId = null;
     sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
     if (busyTitle) busyTitle.textContent = 'Weekly planning needs another try';
-    if (busyMsg) busyMsg.textContent = error.message || 'We couldn’t finish this week plan.';
+    if (busyMsg) {
+      const reason = error.message || 'We couldn’t finish this week plan.';
+      busyMsg.textContent = `${reason} No changes were applied—your previous week is still shown.`;
+    }
     if (busyMeta) {
       busyMeta.textContent = error.errorReference
         ? `Error reference: ${error.errorReference}`
-        : 'Your existing meal plan was not changed.';
+        : 'Your previous week is safe and unchanged.';
     }
     if (busyCancel) busyCancel.hidden = true;
     weeklyRetryAction = retryAction;
