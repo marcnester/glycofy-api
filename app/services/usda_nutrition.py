@@ -14,7 +14,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 FDC_API_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
-FDC_DATA_TYPES = ["Foundation", "SR Legacy"]
+FDC_DATA_TYPES = ["Foundation", "SR Legacy", "Survey (FNDDS)"]
 NUTRIENT_IDS = {"kcal": 1008, "protein_g": 1003, "carbs_g": 1005, "fat_g": 1004}
 _STOP_WORDS = {"fresh", "large", "medium", "small", "sliced", "diced", "chopped", "plain"}
 _DISQUALIFIERS = {
@@ -42,8 +42,29 @@ class FDCMatch:
     nutrients_per_100g: dict[str, float]
 
 
+def _canonical_token(token: str) -> str:
+    aliases = {
+        "chickpeas": "chickpea",
+        "garbanzo": "chickpea",
+        "yoghurt": "yogurt",
+        "bellpeppers": "bellpepper",
+    }
+    token = aliases.get(token, token)
+    if len(token) > 4 and token.endswith("ies"):
+        return f"{token[:-3]}y"
+    if len(token) > 4 and token.endswith("es"):
+        return token[:-2]
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
 def _tokens(value: str) -> set[str]:
-    return {token for token in re.findall(r"[a-z0-9]+", value.lower()) if len(token) > 1 and token not in _STOP_WORDS}
+    return {
+        _canonical_token(token)
+        for token in re.findall(r"[a-z0-9]+", value.lower())
+        if len(token) > 1 and token not in _STOP_WORDS
+    }
 
 
 def _nutrients(food: dict[str, Any]) -> dict[str, float] | None:
@@ -181,6 +202,13 @@ def verify_ingredients(
             raise USDANutritionError(f"Ingredient {name!r} cannot be verified")
         normalized_query = query.lower()
         match = resolved_foods.get(normalized_query) if resolved_foods is not None else lookup_food(normalized_query)
+        # The model supplies a USDA-oriented description, but a concise recipe
+        # name can be a better FDC search for foods whose controlled name omits
+        # culinary modifiers. Both candidates are resolved up front in weekly
+        # mode, so this fallback adds no request-path latency.
+        normalized_name = name.lower()
+        if isinstance(match, USDANutritionError) and normalized_name != normalized_query:
+            match = resolved_foods.get(normalized_name) if resolved_foods is not None else lookup_food(normalized_name)
         if isinstance(match, USDANutritionError):
             raise match
         if match is None:

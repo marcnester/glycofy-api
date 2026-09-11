@@ -48,6 +48,15 @@ def test_select_match_tolerates_natural_language_modifiers():
     assert match.fdc_id == 12
 
 
+def test_select_match_normalizes_plural_food_words():
+    match = select_match(
+        "whole wheat tortillas",
+        [_food(13, "Tortilla, whole-wheat, ready-to-eat", data_type="Survey (FNDDS)")],
+    )
+
+    assert match.fdc_id == 13
+
+
 def test_verify_ingredients_replaces_model_values_with_usda(monkeypatch):
     match = FDCMatch(
         fdc_id=171077,
@@ -73,6 +82,34 @@ def test_verify_ingredients_replaces_model_values_with_usda(monkeypatch):
     assert ingredients[0]["nutrition"] == {"kcal": 247.5, "protein_g": 46.5, "carbs_g": 0.0, "fat_g": 5.4}
     assert ingredients[0]["food_ref_id"] == "171077"
     assert ingredients[0]["nutrition_source"]["provider"] == "USDA FoodData Central"
+
+
+def test_verify_ingredients_falls_back_to_concise_name():
+    match = FDCMatch(
+        fdc_id=171077,
+        description="Chicken breast, cooked",
+        data_type="Foundation",
+        nutrients_per_100g={"kcal": 165.0, "protein_g": 31.0, "carbs_g": 0.0, "fat_g": 3.6},
+    )
+    resolved = {
+        "premium boneless chicken breast cooked": USDANutritionError("no match"),
+        "chicken breast": match,
+    }
+
+    ingredients = verify_ingredients(
+        [
+            {
+                "name": "chicken breast",
+                "amount": 100,
+                "unit": "g",
+                "amount_g": 100,
+                "usda_search_query": "premium boneless chicken breast cooked",
+            }
+        ],
+        resolved_foods=resolved,
+    )
+
+    assert ingredients[0]["food_ref_id"] == "171077"
 
 
 def test_lookup_reports_rejected_key_without_logging_url_or_query(monkeypatch, caplog):

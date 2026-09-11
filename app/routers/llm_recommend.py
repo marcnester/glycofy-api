@@ -3605,11 +3605,15 @@ def _batch_week_recommendations(
     # quantity math locally. This keeps authoritative validation from becoming
     # hundreds of sequential network round-trips.
     usda_queries = [
-        str(ingredient.get("usda_search_query") or ingredient.get("name") or "")
+        candidate
         for day in parsed.get("days", [])
         for meal in day.get("meals", [])
         for ingredient in (meal.get("ingredients") or [])
         if isinstance(ingredient, dict)
+        for candidate in (
+            str(ingredient.get("usda_search_query") or ingredient.get("name") or ""),
+            str(ingredient.get("name") or ""),
+        )
     ]
     resolved_usda = resolve_foods(usda_queries) if settings.USDA_FDC_API_KEY else None
 
