@@ -39,6 +39,15 @@ def test_select_match_fails_closed_when_ambiguous():
         )
 
 
+def test_select_match_tolerates_natural_language_modifiers():
+    match = select_match(
+        "extra virgin olive oil",
+        [_food(12, "Oil, olive, salad or cooking")],
+    )
+
+    assert match.fdc_id == 12
+
+
 def test_verify_ingredients_replaces_model_values_with_usda(monkeypatch):
     match = FDCMatch(
         fdc_id=171077,

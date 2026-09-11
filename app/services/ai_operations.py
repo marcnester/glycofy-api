@@ -34,7 +34,7 @@ def record_ai_operation(
                     operation=operation,
                     provider=provider,
                     model=model,
-                    prompt_version=prompt_version,
+                    prompt_version=prompt_version[:100] if prompt_version else None,
                     status=status,
                     latency_ms=latency_ms,
                     input_tokens=int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0),

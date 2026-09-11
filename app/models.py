@@ -489,7 +489,7 @@ class AIOperationMetric(Base):
     operation: Mapped[str] = mapped_column(String(40), nullable=False)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     model: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    prompt_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -61,16 +61,28 @@ def _match_score(query: str, food: dict[str, Any]) -> float | None:
     query_tokens = _tokens(query)
     description = str(food.get("description") or "")
     description_tokens = _tokens(description)
-    if not query_tokens or not query_tokens.issubset(description_tokens):
+    if not query_tokens:
         return None
+    overlap = query_tokens & description_tokens
+    # FDC descriptions use a controlled vocabulary (for example "Oil, olive")
+    # that rarely contains every natural-language modifier emitted by a recipe.
+    # Require the food identity to overlap strongly, while treating modifiers as
+    # ranking signals instead of making otherwise valid foods impossible to match.
+    required_overlap = 1 if len(query_tokens) <= 2 else max(2, (len(query_tokens) + 1) // 2)
+    if len(overlap) < required_overlap:
+        return None
+    for preparation in ("raw", "cooked", "roasted", "boiled", "baked"):
+        if preparation in query_tokens and preparation not in description_tokens:
+            return None
     lowered_query = query.lower()
     lowered_description = description.lower()
     for term in _DISQUALIFIERS:
         if term in lowered_description and term not in lowered_query:
             return None
+    missing = len(query_tokens - description_tokens)
     extra = len(description_tokens - query_tokens)
     type_bonus = 3.0 if food.get("dataType") == "Foundation" else 1.0
-    return (10.0 * len(query_tokens)) - extra + type_bonus
+    return (10.0 * len(overlap)) - (4.0 * missing) - extra + type_bonus
 
 
 def select_match(query: str, foods: list[dict[str, Any]]) -> FDCMatch:
@@ -108,7 +120,7 @@ def lookup_food(query: str) -> FDCMatch:
                     "query": query,
                     "dataType": FDC_DATA_TYPES,
                     "pageSize": 20,
-                    "requireAllWords": True,
+                    "requireAllWords": False,
                 },
             )
             response.raise_for_status()
