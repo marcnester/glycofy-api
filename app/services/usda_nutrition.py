@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from functools import lru_cache
@@ -12,6 +14,13 @@ import httpx
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Weekly planning already runs its seven model calls concurrently. Each call
+# can then validate dozens of ingredients, so an unbounded nested executor can
+# exhaust a small production web instance. This process-wide gate keeps FDC
+# I/O parallel without allowing a request to starve health checks/job polling.
+_FDC_CONCURRENCY = max(1, int(os.environ.get("USDA_FDC_MAX_CONCURRENCY", "8")))
+_FDC_GATE = threading.BoundedSemaphore(_FDC_CONCURRENCY)
 
 FDC_API_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
 FDC_DATA_TYPES = ["Foundation", "SR Legacy", "Survey (FNDDS)"]
@@ -133,7 +142,7 @@ def lookup_food(query: str) -> FDCMatch:
     if not api_key:
         raise USDANutritionError("USDA_FDC_API_KEY is not configured")
     try:
-        with httpx.Client(timeout=settings.USDA_FDC_TIMEOUT_SECONDS) as client:
+        with _FDC_GATE, httpx.Client(timeout=settings.USDA_FDC_TIMEOUT_SECONDS) as client:
             response = client.post(
                 FDC_API_URL,
                 params={"api_key": api_key},
@@ -157,7 +166,7 @@ def lookup_food(query: str) -> FDCMatch:
     return select_match(query, response.json().get("foods", []))
 
 
-def resolve_foods(queries: list[str], *, max_workers: int = 12) -> dict[str, FDCMatch | USDANutritionError]:
+def resolve_foods(queries: list[str], *, max_workers: int = 2) -> dict[str, FDCMatch | USDANutritionError]:
     """Resolve unique USDA descriptions concurrently for a whole planning request."""
     normalized = sorted({query.strip().lower() for query in queries if query.strip()})
     if not normalized:

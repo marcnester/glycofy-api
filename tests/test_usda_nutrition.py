@@ -156,6 +156,32 @@ def test_resolve_foods_deduplicates_queries_and_reuses_results(monkeypatch):
     assert resolved["banana raw"] == match
 
 
+def test_resolve_foods_bounds_nested_weekly_concurrency(monkeypatch):
+    active = 0
+    peak = 0
+    lock = usda_nutrition.threading.Lock()
+
+    def lookup(query):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        usda_nutrition.threading.Event().wait(0.01)
+        with lock:
+            active -= 1
+        return FDCMatch(
+            fdc_id=len(query),
+            description=query,
+            data_type="Foundation",
+            nutrients_per_100g={"kcal": 1, "protein_g": 1, "carbs_g": 1, "fat_g": 1},
+        )
+
+    monkeypatch.setattr(usda_nutrition, "lookup_food", lookup)
+    resolve_foods([f"food {index}" for index in range(12)])
+
+    assert peak <= 2
+
+
 @pytest.mark.parametrize("amount_g", [None, 0, -1, "not-a-number"])
 def test_verify_ingredients_rejects_missing_or_invalid_weight(monkeypatch, amount_g):
     monkeypatch.setattr(usda_nutrition, "lookup_food", lambda query: pytest.fail("lookup should not run"))
