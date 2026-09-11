@@ -4354,12 +4354,18 @@ def weekly_job_status(job_id: str, db: Session = Depends(get_db), user: User = D
     result = _weekly_job_dict(job)
     if job.status in {"queued", "running"}:
         elapsed = result["elapsed_seconds"]
+        pref = db.query(UserPreference).filter(UserPreference.user_id == user.id).first()
+        try:
+            request_payload = WeeklyRecommendRequest.model_validate(job.payload or {})
+            planned_meals = sum(len(_targets_for_preferences(day, pref)) for day in request_payload.days)
+        except Exception:
+            planned_meals = max(1, int(job.total_days or 7)) * (3 + len(_snack_schedule(pref)))
         phases = (
             (45, "saving", "Saving your personalized week…"),
             (32, "instructions", "Adding quantities and cooking instructions…"),
             (22, "safety", "Checking diet and ingredient exclusions…"),
             (12, "balancing", "Balancing macros and weekly variety…"),
-            (0, "generating", "Designing 28 meals as one balanced week…"),
+            (0, "generating", f"Designing {planned_meals} meals and snacks as one balanced week…"),
         )
         for threshold, stage, message in phases:
             if elapsed >= threshold:

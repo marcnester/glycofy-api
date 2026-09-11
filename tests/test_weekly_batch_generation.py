@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.models import User, WeeklyPlanningJob
+from app.models import User, UserPreference, WeeklyPlanningJob
 from app.routers import llm_recommend
 
 
@@ -244,6 +244,46 @@ def test_weekly_job_can_be_cancelled_by_its_owner():
         assert response.status == "running"
         job = db.get(WeeklyPlanningJob, "cancel-me")
         assert job is not None and job.cancel_requested is True
+
+
+def test_weekly_job_status_reports_dynamic_meal_count_for_preferred_snacks():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        user = User(id=42, email="snacks@example.com", password_hash="x")
+        db.add(user)
+        db.add(UserPreference(user_id=42, daily_snack_count=2, snack_times=["10:00", "15:00"]))
+        days = [
+            llm_recommend.WeeklyDayRequest(
+                date=f"2026-09-{day:02d}",
+                totals={"kcal": 2400, "protein_g": 180, "carbs_g": 300, "fat_g": 80},
+                meals=[
+                    llm_recommend.MealTarget(slot=slot, kcal=600, protein_g=45, carbs_g=75, fat_g=20)
+                    for slot in llm_recommend.SLOTS
+                ],
+            )
+            for day in range(1, 8)
+        ]
+        db.add(
+            WeeklyPlanningJob(
+                id="dynamic-count",
+                user_id=42,
+                status="running",
+                stage="generating",
+                message="Working",
+                completed_days=0,
+                total_days=7,
+                payload=llm_recommend.WeeklyRecommendRequest(days=days).model_dump(mode="json"),
+                cancel_requested=False,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+        )
+        db.commit()
+
+        response = llm_recommend.weekly_job_status("dynamic-count", db, user)
+
+        assert response.message == "Designing 35 meals and snacks as one balanced week…"
 
 
 def test_weekly_job_status_includes_the_planned_date_range():
