@@ -387,7 +387,7 @@ def test_account_deletion_dialog_supports_escape_key():
 def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     page = Path("ui/plan.html").read_text(encoding="utf-8")
     script = Path("ui/plan.js").read_text(encoding="utf-8")
-    assert "plan.js?v=2026-09-10-job-resume" in page
+    assert "plan.js?v=2026-09-10-cancel-week" in page
     assert 'id="nutrition-confidence"' in page
     assert "plan.nutrition_verified" in script
     assert "nutrition-checked plan" in script
@@ -399,6 +399,8 @@ def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     assert "Error reference:" in script
     assert "sessionStorage.removeItem('glycofy.weeklyPlanningJob')" in script
     assert "!['queued', 'running'].includes(statusJob.status)" in script
+    assert "Weekly planning cancellation requested. Your existing week is unchanged." in script
+    assert "await fetchJSON(`/v1/llm/recommend/weekly/jobs/${jobId}/cancel`" in script
     assert "Verified fallback" not in script
     assert "AI pick" not in script
     assert 'class="meal-badge"' not in page

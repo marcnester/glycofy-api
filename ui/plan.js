@@ -94,6 +94,7 @@
   let busyTimer = null;
   let busyCanContinueInBackground = true;
   let activeWeeklyJobId = null;
+  const locallyCancelledWeeklyJobs = new Set();
   let weeklyRetryAction = null;
 
   const TODAY_PROGRESS_STAGES = [
@@ -613,7 +614,12 @@
       transientFailures = 0;
       const job = await response.json();
       if (job.status === 'completed') return job.result;
-      if (job.status === 'cancelled') throw new Error('Weekly planning was cancelled.');
+      if (job.status === 'cancelled') {
+        const error = new Error('Weekly planning was cancelled.');
+        error.userCancelled = locallyCancelledWeeklyJobs.has(jobId);
+        locallyCancelledWeeklyJobs.delete(jobId);
+        throw error;
+      }
       if (job.status === 'failed') {
         const error = new Error(job.error || 'Weekly AI planning failed.');
         error.weeklyFailure = true;
@@ -652,11 +658,21 @@
 
   busyCancel?.addEventListener('click', async () => {
     if (!activeWeeklyJobId) return;
+    const jobId = activeWeeklyJobId;
     busyCancel.disabled = true;
     busyCancel.textContent = 'Cancelling…';
     try {
-      await fetch(`/v1/llm/recommend/weekly/jobs/${activeWeeklyJobId}/cancel`, { method: 'POST', credentials: 'include' });
-      if (busyMsg) busyMsg.textContent = 'Cancelling after the current AI request…';
+      await fetchJSON(`/v1/llm/recommend/weekly/jobs/${jobId}/cancel`, {
+        method: 'POST',
+      });
+      locallyCancelledWeeklyJobs.add(jobId);
+      activeWeeklyJobId = null;
+      sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
+      setBusy(false);
+      if (busyCancel) busyCancel.hidden = true;
+      flash('Weekly planning cancellation requested. Your existing week is unchanged.');
+    } catch (error) {
+      flash(String(error.message || 'Could not cancel weekly planning.'), 'error');
     } finally {
       busyCancel.disabled = false;
       busyCancel.textContent = 'Cancel weekly planning';
@@ -1451,7 +1467,9 @@
         );
       } catch (err) {
         console.error(err);
-        if (err.weeklyFailure) {
+        if (err.userCancelled) {
+          // The cancellation control already confirmed this outcome.
+        } else if (err.weeklyFailure) {
           showWeeklyFailure(err, () => weekBtn.click());
         } else {
           flash(String(err.message || 'Failed to plan the week with AI.'), 'error');
@@ -1505,7 +1523,9 @@
       );
     } catch (err) {
       sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
-      if (err.weeklyFailure) {
+      if (err.userCancelled) {
+        // The cancellation control already confirmed this outcome.
+      } else if (err.weeklyFailure) {
         showWeeklyFailure(err, () => weekBtn?.click());
       } else {
         flash(String(err.message || 'Failed to resume weekly planning.'), 'error');
