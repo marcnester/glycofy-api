@@ -2,7 +2,7 @@ services:
   - type: web
     name: glycofy-api
     runtime: docker
-    plan: starter
+    plan: 1c-2g
     region: oregon
     dockerfilePath: ./Dockerfile
     dockerContext: .
