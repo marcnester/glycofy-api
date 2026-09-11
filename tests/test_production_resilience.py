@@ -10,7 +10,15 @@ from sqlalchemy.pool import StaticPool
 
 from app import db as db_module
 from app.db import Base
-from app.models import AIOperationMetric, NutritionCatalogEntry, NutritionValidationJob, User, WeeklyPlanningJob
+from app.models import (
+    AIOperationMetric,
+    NutritionCatalogEntry,
+    NutritionValidationJob,
+    Plan,
+    PlanMeal,
+    User,
+    WeeklyPlanningJob,
+)
 from app.routers import llm_recommend, operations
 from app.services import usda_nutrition
 from app.services.usda_nutrition import FDCMatch, USDAUnavailableError
@@ -127,6 +135,41 @@ def test_reconcile_fails_job_after_bounded_recovery_attempts(monkeypatch):
         assert job.status == "failed"
         assert job.error_code == "recovery_attempts_exhausted"
         assert len(job.error_reference) == 32
+
+
+def test_cancellation_poll_preserves_pending_meal_updates():
+    sessions = _database()
+    with sessions() as db:
+        user = User(id=1, email="owner@example.com", password_hash="x")
+        plan = Plan(user_id=1, date=datetime.utcnow().date(), locked=False)
+        db.add_all([user, plan])
+        db.flush()
+        meal = PlanMeal(
+            plan_id=plan.id,
+            meal_type="snack_2",
+            title="Snack_2",
+            kcal=0,
+            protein_g=0,
+            carbs_g=0,
+            fat_g=0,
+            order_index=3,
+        )
+        db.add(meal)
+        db.add(_job("active-week", status="running", attempts=1))
+        db.commit()
+
+        meal.title = "Yogurt Banana Oat Cup"
+        meal.kcal = 302
+        llm_recommend._WEEKLY_JOB_CONTEXT.job_id = "active-week"
+        try:
+            llm_recommend._raise_if_weekly_job_cancelled(db)
+            db.commit()
+        finally:
+            llm_recommend._WEEKLY_JOB_CONTEXT.job_id = None
+
+        db.refresh(meal)
+        assert meal.title == "Yogurt Banana Oat Cup"
+        assert meal.kcal == 302
 
 
 def test_ai_summary_is_aggregate_only(monkeypatch):

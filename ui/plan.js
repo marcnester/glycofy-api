@@ -1437,25 +1437,16 @@
         );
         console.log('LLM weekly response', data);
 
-        const outDays = Array.isArray(data.days) ? data.days : [];
         const startIso = isoDate(start);
 
-        // 3) Use LLM metadata for overlays (AI badges / "Why") on the start day only
+        // 3) Persisted weekly meals are authoritative. The weekly endpoint has
+        // already saved and normalized every meal, so replaying raw generation
+        // payloads as UI overlays can make an older draft appear on top of the
+        // correct database row (especially for snack_2/snack_3).
         AI_REASONS = {};
         AI_FREEFORM = {};
-        const todayData =
-          outDays.find((d) => isoDate(d.date || '') === startIso) || null;
-        if (todayData) {
-          const itemsArr = normalizeItemsArray(todayData);
-          itemsArr.forEach((it) => {
-            const slot = normalizeSlot(it.slot);
-            if (!slot) return;
-            if (it.reason) AI_REASONS[slot] = String(it.reason);
-            extractFreeformForSlot(slot, it);
-          });
-        }
 
-        // 4) Reload the start day's plan from the backend and render with overlays
+        // 4) Reload the start day's plan from the backend.
         const refreshed = await loadPlan(startIso);
         if (refreshed) {
           setDate(startIso);
@@ -1516,6 +1507,8 @@
     try {
       await pollWeeklyJob(saved.jobId);
       sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
+      AI_REASONS = {};
+      AI_FREEFORM = {};
       const refreshed = await loadPlan(saved.startIso || getCurrentDate());
       if (refreshed) renderPlan(refreshed);
       flash(

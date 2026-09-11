@@ -387,7 +387,7 @@ def test_account_deletion_dialog_supports_escape_key():
 def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     page = Path("ui/plan.html").read_text(encoding="utf-8")
     script = Path("ui/plan.js").read_text(encoding="utf-8")
-    assert "plan.js?v=2026-09-10-cancel-week" in page
+    assert "plan.js?v=2026-09-11-authoritative-plan" in page
     assert 'id="nutrition-confidence"' in page
     assert "plan.nutrition_verified" in script
     assert "nutrition-checked plan" in script
@@ -398,6 +398,7 @@ def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     assert 'id="plan-busy-retry"' in page
     assert "Error reference:" in script
     assert "sessionStorage.removeItem('glycofy.weeklyPlanningJob')" in script
+    assert "Persisted weekly meals are authoritative" in script
     assert "!['queued', 'running'].includes(statusJob.status)" in script
     assert "Weekly planning cancellation requested. Your existing week is unchanged." in script
     assert "await fetchJSON(`/v1/llm/recommend/weekly/jobs/${jobId}/cancel`" in script

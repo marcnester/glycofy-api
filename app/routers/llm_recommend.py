@@ -100,7 +100,10 @@ def _raise_if_weekly_job_cancelled(db: Session) -> None:
     job_id = getattr(_WEEKLY_JOB_CONTEXT, "job_id", None)
     if not job_id:
         return
-    db.expire_all()
+    # A scalar query always reads the current cancellation flag without
+    # expiring unrelated ORM objects. expire_all() used to discard unflushed
+    # meal titles/macros between weekly days while pending ingredient inserts
+    # survived, producing blank meals with accumulating ingredient lists.
     cancelled = db.query(WeeklyPlanningJob.cancel_requested).filter(WeeklyPlanningJob.id == job_id).scalar()
     if cancelled:
         raise WeeklyJobCancelled("Weekly planning cancelled")
