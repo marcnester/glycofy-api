@@ -39,6 +39,7 @@ from app.services.meal_feedback import feedback_context
 from app.services.meal_quality import (
     PROMPT_VERSION,
     QUALITY_POLICY_VERSION,
+    ensure_safe_doneness_instruction,
     ingredient_nutrition_totals,
     validate_meal,
 )
@@ -3812,12 +3813,15 @@ def _batch_week_recommendations(
                 # for validation, retain the bounded model estimate.
                 "macros": reconciled_macros or macros,
             }
+            quality_candidate = ensure_safe_doneness_instruction(quality_candidate)
+            instructions = quality_candidate.get("instructions") or []
             quality_report = validate_meal(
                 quality_candidate,
                 target=target,
                 exclusions=exclusions,
                 diet=primary_diet,
                 require_ingredient_nutrition=unresolved_nutrition == 0,
+                target_miss_severity="warning" if unresolved_nutrition else "error",
             )
             invalid = (
                 slot not in ALL_SLOTS

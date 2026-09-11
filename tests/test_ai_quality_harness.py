@@ -7,6 +7,7 @@ from app.services.meal_quality import (
     EVALUATION_PROFILES,
     PROMPT_VERSION,
     QUALITY_POLICY_VERSION,
+    ensure_safe_doneness_instruction,
     evaluate_plan,
     ingredient_nutrition_totals,
     validate_meal,
@@ -68,6 +69,30 @@ def test_nutrition_plausibility_checks_macro_energy_and_single_meal_bounds():
     )
     extreme = meal(macros={"kcal": 2200, "protein_g": 250, "carbs_g": 250, "fat_g": 100})
     assert "implausible_macros" in validate_meal(extreme).codes()
+
+
+def test_provisional_target_miss_can_be_recorded_as_a_warning():
+    candidate = meal(macros={"kcal": 400, "protein_g": 30, "carbs_g": 45, "fat_g": 11})
+    report = validate_meal(
+        candidate,
+        target={"kcal": 600, "protein_g": 30, "carbs_g": 45, "fat_g": 11},
+        target_miss_severity="warning",
+    )
+    assert "target_miss" in report.codes()
+    assert report.safe
+
+
+def test_missing_doneness_cue_is_added_deterministically():
+    candidate = meal(
+        ingredients=[
+            {"name": "chicken breast", "amount": "150", "unit": "g"},
+            {"name": "rice", "amount": "200", "unit": "g"},
+        ],
+        instructions=["Heat a skillet.", "Cook the chicken and serve with rice."],
+    )
+    repaired = ensure_safe_doneness_instruction(candidate)
+    assert "165°F" in repaired["instructions"][-1]
+    assert "missing_doneness_cue" not in validate_meal(repaired).codes()
 
 
 def test_itemized_nutrition_is_required_and_must_equal_meal_totals():

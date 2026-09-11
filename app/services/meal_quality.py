@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 PROMPT_VERSION = "meal-planner-2026-09-10-v8-usda-canonical"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-10-v6-usda-equivalent-records"
+QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-10-v7-resilient-targets"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 ANIMAL_MEAT = {"beef", "chicken", "cod", "fish", "lamb", "pork", "salmon", "shrimp", "steak", "turkey", "tuna"}
@@ -177,6 +177,32 @@ def ingredient_text(meal: dict[str, Any]) -> str:
     return recipe_text(meal)
 
 
+def ensure_safe_doneness_instruction(meal: dict[str, Any]) -> dict[str, Any]:
+    """Add a deterministic food-safety cue when an otherwise usable recipe omits one."""
+    instructions = meal.get("instructions")
+    cook = _number(meal.get("cook_time_min"))
+    if not isinstance(instructions, list) or not cook or cook <= 0:
+        return meal
+
+    text = ingredient_text(meal)
+    instruction_text = _words(" ".join(str(step) for step in instructions))
+    if not any(_contains(text, marker) for marker in RAW_PROTEIN_MARKERS) or any(
+        marker in instruction_text for marker in DONENESS_MARKERS
+    ):
+        return meal
+
+    if any(_contains(text, marker) for marker in ("chicken", "turkey")):
+        cue = "Cook until no longer pink and the internal temperature reaches 165°F."
+    elif any(_contains(text, marker) for marker in ("egg", "eggs")):
+        cue = "Cook until the eggs are fully set and the internal temperature reaches 160°F."
+    elif any(_contains(text, marker) for marker in ("cod", "fish", "salmon", "shrimp", "tuna")):
+        cue = "Cook until opaque and the internal temperature reaches 145°F."
+    else:
+        cue = "Cook until the internal temperature reaches 145°F, then rest for 3 minutes."
+    meal["instructions"] = [*instructions, cue]
+    return meal
+
+
 def violates_exclusions(meal: dict[str, Any], exclusions: list[str]) -> list[str]:
     text = ingredient_text(meal)
     hits: list[str] = []
@@ -208,6 +234,7 @@ def validate_meal(
     exclusions: list[str] | None = None,
     diet: str | None = None,
     require_ingredient_nutrition: bool = False,
+    target_miss_severity: str = "error",
 ) -> MealQualityReport:
     report = MealQualityReport()
     title = str(meal.get("title") or "").strip()
@@ -289,7 +316,13 @@ def validate_meal(
                 target_value = _number(target.get(name))
                 actual = values[name]
                 if target_value and actual is not None and abs(actual - target_value) / target_value > 0.18:
-                    report.issues.append(QualityIssue("target_miss", f"{name} is more than 18% from its target."))
+                    report.issues.append(
+                        QualityIssue(
+                            "target_miss",
+                            f"{name} is more than 18% from its target.",
+                            severity=target_miss_severity,
+                        )
+                    )
                     break
 
     prep = _number(meal.get("prep_time_min"))
