@@ -110,6 +110,34 @@ def test_preferred_snacks_split_existing_daily_targets_without_adding_calories()
     assert llm_recommend._snack_schedule(pref) == [("snack", "10:00"), ("snack_2", "15:00")]
 
 
+def test_training_targets_replace_prior_plan_totals_instead_of_ratcheting_them():
+    final = llm_recommend.MacroTargets(kcal=3120, protein_g=163, carbs_g=454, fat_g=73)
+    nutrition = SimpleNamespace(final=final)
+
+    def allocated(prior_kcal: float):
+        meals = [
+            llm_recommend.MealTarget(
+                slot=slot,
+                kcal=prior_kcal * share,
+                protein_g=200 * share,
+                carbs_g=600 * share,
+                fat_g=100 * share,
+            )
+            for slot, share in (("breakfast", 0.25), ("lunch", 0.30), ("dinner", 0.30), ("snack", 0.15))
+        ]
+        return llm_recommend._apply_nutrition_targets(meals, nutrition)
+
+    formerly_high = allocated(4100)
+    formerly_low = allocated(1750)
+
+    for targets in (formerly_high, formerly_low):
+        assert round(sum(meal.kcal for meal in targets), 6) == final.kcal
+        assert round(sum(meal.protein_g for meal in targets), 6) == final.protein_g
+        assert round(sum(meal.carbs_g for meal in targets), 6) == final.carbs_g
+        assert round(sum(meal.fat_g for meal in targets), 6) == final.fat_g
+    assert formerly_high == formerly_low
+
+
 def test_weekly_batch_parallelizes_bounded_day_calls_and_accepts_complete_week(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5.6-luna")
     dates = ["2026-09-01", "2026-09-02"]

@@ -317,21 +317,28 @@ def _apply_nutrition_targets(
     meals: list[MealTarget],
     nutrition: TrainingNutritionResult,
 ) -> list[MealTarget]:
-    baseline = nutrition.baseline
     final = nutrition.final
-    scales = {
-        "kcal": final.kcal / baseline.kcal if baseline.kcal > 0 else 1.0,
-        "protein_g": final.protein_g / baseline.protein_g if baseline.protein_g > 0 else 1.0,
-        "carbs_g": final.carbs_g / baseline.carbs_g if baseline.carbs_g > 0 else 1.0,
-        "fat_g": final.fat_g / baseline.fat_g if baseline.fat_g > 0 else 1.0,
-    }
+    # Incoming meal values describe only how the day should be distributed.
+    # They may come from an older generated plan and therefore must never be
+    # treated as the athlete's current baseline. Allocate the stable absolute
+    # profile/training target across the requested slots by their proportions;
+    # otherwise repeated planning can ratchet a high day upward or preserve an
+    # under-fueled day indefinitely.
+    totals = {name: sum(max(0.0, _safe_float(getattr(meal, name, 0.0))) for meal in meals) for name in _MACROS}
     return [
         MealTarget(
             slot=meal.slot,
-            kcal=max(0.0, meal.kcal * scales["kcal"]),
-            protein_g=max(0.0, meal.protein_g * scales["protein_g"]),
-            carbs_g=max(0.0, meal.carbs_g * scales["carbs_g"]),
-            fat_g=max(0.0, meal.fat_g * scales["fat_g"]),
+            **{
+                name: (
+                    max(
+                        0.0,
+                        _safe_float(getattr(final, name, 0.0)) * _safe_float(getattr(meal, name, 0.0)) / totals[name],
+                    )
+                    if totals[name] > 0
+                    else 0.0
+                )
+                for name in _MACROS
+            },
         )
         for meal in meals
     ]
