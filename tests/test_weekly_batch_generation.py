@@ -375,6 +375,76 @@ def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch)
     assert len(result["days"][0]["items"]) == 4
 
 
+def test_weekly_apply_relaxes_only_variety_for_final_verified_catalog_recovery(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    date_iso = "2026-09-13"
+    targets = {"kcal": 500.0, "protein_g": 40.0, "carbs_g": 50.0, "fat_g": 15.0}
+
+    def recommendation(slot):
+        return llm_recommend.SlotRecommendation(
+            slot=slot,
+            target=targets,
+            ai_idea={"title": f"Verified {slot}"},
+            meta={"mode": "create", "batch": True},
+        )
+
+    def generate(_client, *, flexible_meal_count=False, **_kwargs):
+        if flexible_meal_count:
+            return {date_iso: {}}, {"rejected": 1, "latency_ms": 25}
+        return {date_iso: {slot: recommendation(slot) for slot in ("lunch", "dinner", "snack")}}, {
+            "accepted": 3,
+            "rejected": 1,
+            "latency_ms": 100,
+        }
+
+    catalog_calls = []
+
+    def catalog_recovery(**kwargs):
+        catalog_calls.append(kwargs)
+        if len(catalog_calls) == 1:
+            return llm_recommend.SlotRecommendation(slot="breakfast", target=targets, meta={"mode": "empty"})
+        return llm_recommend.SlotRecommendation(
+            slot="breakfast",
+            target=targets,
+            ai_idea={"title": "Verified repeat breakfast"},
+            meta={"mode": "create"},
+        )
+
+    monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", generate)
+    monkeypatch.setattr(llm_recommend, "_recommend_for_single_meal", catalog_recovery)
+    monkeypatch.setattr(llm_recommend, "_get_openai_client", lambda: object())
+    monkeypatch.setattr(llm_recommend._RATE, "check_and_add", lambda *_args: None)
+    monkeypatch.setattr(
+        llm_recommend,
+        "_persist_day_recommendations",
+        lambda **kwargs: {"date": kwargs["day_iso"], "skipped": False, "applied": len(kwargs["day_items"])},
+    )
+
+    with Session(engine) as db:
+        user = User(email="relaxed-recovery@example.com", password_hash="test")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        payload = llm_recommend.WeeklyRecommendRequest(
+            days=[
+                llm_recommend.WeeklyDayRequest(
+                    date=date_iso,
+                    meals=[llm_recommend.MealTarget(slot=slot, **targets) for slot in llm_recommend.SLOTS],
+                )
+            ]
+        )
+        result = llm_recommend.recommend_weekly_apply(
+            SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")), payload, db, user
+        )
+
+    assert len(catalog_calls) == 2
+    assert catalog_calls[1]["used_recipe_ids"] == set()
+    assert catalog_calls[1]["used_meal_keys"] == set()
+    recovered = next(item for item in result["days"][0]["items"] if item["slot"] == "breakfast")
+    assert recovered["meta"]["batch_recovery"] == "verified_catalog_relaxed_variety"
+
+
 def test_llm_cache_evicts_oldest_entry_at_memory_limit(monkeypatch):
     monkeypatch.setenv("LLM_CACHE_MAX_ENTRIES", "2")
     cache = llm_recommend._Cache()

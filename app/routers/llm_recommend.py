@@ -4255,8 +4255,40 @@ def recommend_weekly_apply(
                     prefer_fast_catalog=True,
                     athlete_feedback=athlete_feedback,
                 )
+                if rec.recipe is None and not rec.ai_idea:
+                    # Completion and nutrition safety outrank weekly novelty.
+                    # A replan may have every safe catalog recipe present in
+                    # the prior week, so retry without historical diversity
+                    # exclusions before failing the entire atomic update.
+                    rec = _recommend_for_single_meal(
+                        client=None,
+                        db=db,
+                        date=date_iso,
+                        tgt=scaled,
+                        diet_tags=day_diet_tags,
+                        primary_diet=primary_diet,
+                        pref=pref,
+                        provider="catalog",
+                        used_protein_items=[],
+                        used_carb_items=[],
+                        used_recipe_ids=set(),
+                        used_meal_keys=set(),
+                        allow_new_recipe=False,
+                        week_protein_counts={},
+                        protein_cap_per_slot=10_000,
+                        prefer_fast_catalog=True,
+                        athlete_feedback=athlete_feedback,
+                    )
+                    if rec.recipe or rec.ai_idea:
+                        rec.meta = {
+                            **(rec.meta or {}),
+                            "batch_recovery": "verified_catalog_relaxed_variety",
+                        }
                 if rec.recipe or rec.ai_idea:
-                    rec.meta = {**(rec.meta or {}), "batch_recovery": "verified_catalog"}
+                    rec.meta = {
+                        **(rec.meta or {}),
+                        "batch_recovery": (rec.meta or {}).get("batch_recovery", "verified_catalog"),
+                    }
                     logger.info("weekly_missing_slot_recovered", extra={"date": date_iso, "slot": slot})
             else:
                 meta = rec.meta or {}
