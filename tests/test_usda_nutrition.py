@@ -254,6 +254,36 @@ def test_fit_portions_uses_verified_foods_to_reach_macro_targets():
     assert fitted[0]["nutrition"]["protein_g"] != ingredients[0]["nutrition"]["protein_g"]
 
 
+def test_fit_portions_keeps_cooked_grains_practical_and_uses_whole_grams():
+    ingredients = [
+        {
+            "name": "couscous",
+            "usda_search_query": "couscous cooked",
+            "amount": 200.4,
+            "unit": "g",
+            "amount_g": 200.4,
+            "nutrition": {"kcal": 224.4, "protein_g": 7.6, "carbs_g": 46.4, "fat_g": 0.4},
+        },
+        {
+            "name": "chicken breast",
+            "usda_search_query": "chicken breast cooked",
+            "amount": 100.2,
+            "unit": "g",
+            "amount_g": 100.2,
+            "nutrition": {"kcal": 165.3, "protein_g": 31.1, "carbs_g": 0.0, "fat_g": 3.6},
+        },
+    ]
+
+    fitted = fit_portions_to_targets(
+        ingredients,
+        {"kcal": 1200, "protein_g": 60, "carbs_g": 190, "fat_g": 20},
+    )
+
+    assert fitted[0]["amount_g"] <= 350
+    assert fitted[1]["amount_g"] <= 300
+    assert all(float(item["amount_g"]).is_integer() for item in fitted)
+
+
 def test_verify_ingredients_falls_back_to_concise_name():
     match = FDCMatch(
         fdc_id=171077,

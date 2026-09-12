@@ -454,6 +454,7 @@
           name: name || 'Item',
           amount,
           unit,
+          displayAmount: it.display_amount || '',
         });
         continue;
       }
@@ -1119,7 +1120,7 @@
                 it.amount ||
                 (it.qty != null && it.qty !== '' ? String(it.qty) : '');
               const unit = it.unit || '';
-              const displayAmt = amt || unit ? `${amt} ${unit}`.trim() : '';
+              const displayAmt = it.displayAmount || (amt || unit ? `${amt} ${unit}`.trim() : '');
 
               if (displayAmt) {
                 const amtSpan = document.createElement('span');

@@ -120,6 +120,69 @@ def _plan_nutrition_verified(meals) -> bool:
     return True
 
 
+def _quarter_cup_label(cups: float) -> str:
+    quarters = max(1, round(cups * 4))
+    whole, remainder = divmod(quarters, 4)
+    fraction = {0: "", 1: "¼", 2: "½", 3: "¾"}[remainder]
+    if whole and fraction:
+        return f"{whole}{fraction}"
+    return str(whole) if whole else fraction
+
+
+def _practical_ingredient_amount(item: Any) -> str | None:
+    """Translate exact nutrition grams into a quantity a cook can use."""
+    qty = item.qty if not isinstance(item, dict) else item.get("qty", item.get("quantity", item.get("amount")))
+    unit = str(item.unit if not isinstance(item, dict) else item.get("unit") or "").strip().lower()
+    try:
+        grams = float(qty)
+    except (TypeError, ValueError):
+        return None
+    if unit not in {"g", "gram", "grams"}:
+        return None
+
+    meta = (item.meta if not isinstance(item, dict) else item.get("meta")) or {}
+    source = meta.get("nutrition_source") if isinstance(meta.get("nutrition_source"), dict) else {}
+    identity = " ".join(
+        (
+            str(item.name if not isinstance(item, dict) else item.get("name") or ""),
+            str(meta.get("usda_search_query") or ""),
+            str(source.get("description") or ""),
+        )
+    ).lower()
+    rounded_g = max(1, round(grams))
+
+    grain_weights = {
+        "couscous": (173.0, 157.0),
+        "rice": (185.0, 158.0),
+        "quinoa": (170.0, 185.0),
+        "pasta": (100.0, 140.0),
+        "barley": (200.0, 157.0),
+        "bulgur": (140.0, 182.0),
+        "oat": (80.0, 234.0),
+    }
+    for grain, (dry_per_cup, cooked_per_cup) in grain_weights.items():
+        if grain in identity:
+            cooked = "cooked" in identity or "prepared" in identity
+            per_cup = cooked_per_cup if cooked else dry_per_cup
+            cups = _quarter_cup_label(grams / per_cup)
+            state = "cooked" if cooked else "dry"
+            return f"{cups} cup{'s' if cups != '1' else ''} {state} ({rounded_g} g)"
+
+    if any(token in identity for token in ("olive oil", "avocado oil", "sesame oil", "canola oil")):
+        tablespoons = grams / 13.5
+        if tablespoons < 0.75:
+            return f"{max(1, round(tablespoons * 3))} tsp ({rounded_g} g)"
+        return (
+            f"{_quarter_cup_label(tablespoons / 4)} cup ({rounded_g} g)"
+            if tablespoons >= 4
+            else f"{max(1, round(tablespoons * 2)) / 2:g} tbsp ({rounded_g} g)"
+        )
+    if "egg" in identity:
+        count = max(1, round(grams / 50.0))
+        return f"{count} egg{'s' if count != 1 else ''} ({rounded_g} g)"
+    return f"{rounded_g} g"
+
+
 def _plan_to_dict(plan: Plan) -> dict[str, Any]:
     meals = sorted(
         list(getattr(plan, "meals", []) or []),
@@ -175,6 +238,7 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
                         "name": (i.name if not isinstance(i, dict) else i.get("name")) or "Item",
                         "qty": i.qty if not isinstance(i, dict) else i.get("qty", i.get("quantity", i.get("amount"))),
                         "unit": i.unit if not isinstance(i, dict) else i.get("unit"),
+                        "display_amount": _practical_ingredient_amount(i),
                         "kcal": i.kcal if not isinstance(i, dict) else i.get("kcal"),
                         "protein_g": i.protein_g if not isinstance(i, dict) else i.get("protein_g"),
                         "carbs_g": i.carbs_g if not isinstance(i, dict) else i.get("carbs_g"),

@@ -63,6 +63,55 @@ class TrainingNutritionResult:
         }
 
 
+def athlete_profile_baseline(user: User, plan_date: date) -> MacroTargets:
+    """Return a stable, exercise-exclusive daily baseline for an athlete.
+
+    Structured workouts are applied separately below.  Keeping them out of the
+    baseline prevents an AI replan from using yesterday's already-adjusted meal
+    totals and adding the same training fuel again.
+    """
+    weight_kg = _safe_float(getattr(user, "weight_kg", None))
+    height_cm = _safe_float(getattr(user, "height_cm", None))
+    dob = getattr(user, "dob", None)
+    sex = str(getattr(user, "sex", None) or "unspecified").strip().lower()
+
+    if weight_kg <= 0 or height_cm <= 0 or not isinstance(dob, date):
+        # A consistent conservative default is safer than recycling mutable
+        # plan totals for an incomplete profile.
+        kcal = 2400.0
+        protein_g = 150.0
+        fat_g = 75.0
+        carbs_g = (kcal - protein_g * 4.0 - fat_g * 9.0) / 4.0
+        return MacroTargets(kcal=kcal, protein_g=protein_g, carbs_g=round(carbs_g, 1), fat_g=fat_g)
+
+    age = plan_date.year - dob.year - ((plan_date.month, plan_date.day) < (dob.month, dob.day))
+    sex_constant = 5.0 if sex == "male" else -161.0 if sex == "female" else -78.0
+    bmr = 10.0 * weight_kg + 6.25 * height_cm - 5.0 * max(13, age) + sex_constant
+
+    # 1.4 covers ordinary daily living and unstructured movement. Recorded or
+    # planned workouts are intentionally excluded and periodized separately.
+    kcal = bmr * 1.4
+    goal = str(getattr(user, "goal", None) or "maintain").strip().lower()
+    if goal in {"lose", "cut", "fat_loss"}:
+        kcal -= 300.0
+    elif goal in {"gain", "bulk", "lean_gain"}:
+        kcal += 250.0
+    kcal = min(4000.0, max(1500.0, kcal))
+
+    protein_g = 1.8 * weight_kg
+    fat_g = max(0.8 * weight_kg, kcal * 0.22 / 9.0)
+    carbs_g = max(3.0 * weight_kg, (kcal - protein_g * 4.0 - fat_g * 9.0) / 4.0)
+    # Keep energy internally consistent if the minimum carbohydrate floor is
+    # higher than the initial Mifflin-derived estimate.
+    kcal = protein_g * 4.0 + carbs_g * 4.0 + fat_g * 9.0
+    return MacroTargets(
+        kcal=round(kcal, 1),
+        protein_g=round(protein_g, 1),
+        carbs_g=round(carbs_g, 1),
+        fat_g=round(fat_g, 1),
+    )
+
+
 def _safe_float(value: Any) -> float:
     try:
         return max(0.0, float(value or 0.0))
@@ -158,15 +207,32 @@ def _carb_recovery_g_per_kg(duration_min: float, kcal_per_hour: float) -> float:
 
 
 def _planned_carb_g_per_kg(duration_min: float, intensity: str) -> float:
-    """Conservative daily carbohydrate uplift for an upcoming session."""
+    """Daily carbohydrate target band for an upcoming session."""
     duration_band = 0 if duration_min < 45 else 1 if duration_min < 90 else 2 if duration_min < 150 else 3
     table = {
-        "easy": (0.0, 0.25, 0.5, 0.75),
-        "moderate": (0.25, 0.5, 1.0, 1.5),
-        "hard": (0.5, 1.0, 1.5, 2.0),
-        "race": (0.75, 1.5, 2.0, 2.5),
+        "easy": (3.0, 3.5, 4.0, 5.0),
+        "moderate": (3.5, 4.0, 5.0, 6.0),
+        "hard": (4.0, 5.0, 6.0, 7.0),
+        "race": (4.5, 5.5, 7.0, 8.0),
     }
     return table.get(intensity, table["moderate"])[duration_band]
+
+
+def _targets_with_carb_floor(baseline: MacroTargets, carb_floor_g: float) -> tuple[MacroTargets, NutritionAdjustment]:
+    carbs_g = max(baseline.carbs_g, carb_floor_g)
+    final = MacroTargets(
+        kcal=round(baseline.kcal + (carbs_g - baseline.carbs_g) * 4.0, 1),
+        protein_g=baseline.protein_g,
+        carbs_g=round(carbs_g, 1),
+        fat_g=baseline.fat_g,
+    )
+    adjustment = NutritionAdjustment(
+        kcal=round(final.kcal - baseline.kcal, 1),
+        protein_g=0.0,
+        carbs_g=round(final.carbs_g - baseline.carbs_g, 1),
+        fat_g=0.0,
+    )
+    return final, adjustment
 
 
 def _apply_planned_fueling(
@@ -185,28 +251,12 @@ def _apply_planned_fueling(
         )
 
     intensity_rank = {"easy": 0, "moderate": 1, "hard": 2, "race": 3}
-    carb_g = min(
-        weight_kg * 3.0,
-        sum(weight_kg * _planned_carb_g_per_kg(workout.duration_min, workout.intensity) for workout in workouts),
-    )
     duration_min = sum(workout.duration_min for workout in workouts)
     intensity = max(workouts, key=lambda row: intensity_rank.get(row.intensity, 1)).intensity
     starts = sorted(workout.start_time for workout in workouts if workout.start_time)
-    planned_adjustment = NutritionAdjustment(
-        kcal=round(carb_g * 4.0, 1), protein_g=0.0, carbs_g=round(carb_g, 1), fat_g=0.0
-    )
-    adjustment = NutritionAdjustment(
-        kcal=round(result.adjustment.kcal + planned_adjustment.kcal, 1),
-        protein_g=result.adjustment.protein_g,
-        carbs_g=round(result.adjustment.carbs_g + planned_adjustment.carbs_g, 1),
-        fat_g=result.adjustment.fat_g,
-    )
-    final = MacroTargets(
-        kcal=round(result.final.kcal + planned_adjustment.kcal, 1),
-        protein_g=result.final.protein_g,
-        carbs_g=round(result.final.carbs_g + planned_adjustment.carbs_g, 1),
-        fat_g=result.final.fat_g,
-    )
+    planned_carb_floor = weight_kg * _planned_carb_g_per_kg(duration_min, intensity)
+    final, adjustment = _targets_with_carb_floor(result.baseline, max(result.final.carbs_g, planned_carb_floor))
+    planned_added_carbs = max(0.0, final.carbs_g - result.final.carbs_g)
     context = replace(
         result.training,
         planned_workout_count=len(workouts),
@@ -217,7 +267,7 @@ def _apply_planned_fueling(
     )
     rationale = result.rationale + (
         f"Fueling {len(workouts)} upcoming {intensity} session(s), totaling {duration_min} minutes.",
-        f"Added {planned_adjustment.carbs_g:.0f} g carbohydrate for planned training demand.",
+        f"Added {planned_added_carbs:.0f} g carbohydrate for planned training demand.",
     )
     return TrainingNutritionResult(
         baseline=result.baseline,
@@ -295,30 +345,15 @@ def calculate_from_activities(
         )
 
     kcal_per_hour = exercise_kcal / max(duration_min / 60.0, 0.25)
-    carbs_g = weight_kg * _carb_recovery_g_per_kg(duration_min, kcal_per_hour)
-    protein_g = min(15.0, weight_kg * 0.1) if duration_min >= 60 else 0.0
-    macro_kcal = carbs_g * 4.0 + protein_g * 4.0
-    recovery_kcal = min(1200.0, exercise_kcal * _recovery_fraction(getattr(user, "goal", None), confidence))
-    adjustment_kcal = max(macro_kcal, recovery_kcal)
-    fat_g = min(10.0, max(0.0, adjustment_kcal - macro_kcal) / 9.0)
-    adjustment_kcal = carbs_g * 4.0 + protein_g * 4.0 + fat_g * 9.0
-
-    adjustment = NutritionAdjustment(
-        kcal=round(adjustment_kcal, 1),
-        protein_g=round(protein_g, 1),
-        carbs_g=round(carbs_g, 1),
-        fat_g=round(fat_g, 1),
-    )
-    final = MacroTargets(
-        kcal=round(baseline.kcal + adjustment.kcal, 1),
-        protein_g=round(baseline.protein_g + adjustment.protein_g, 1),
-        carbs_g=round(baseline.carbs_g + adjustment.carbs_g, 1),
-        fat_g=round(baseline.fat_g + adjustment.fat_g, 1),
-    )
+    recovery_band = 3.0 + _carb_recovery_g_per_kg(duration_min, kcal_per_hour)
+    if kcal_per_hour >= 600:
+        recovery_band += 0.5
+    recovery_band = min(8.0, recovery_band)
+    final, adjustment = _targets_with_carb_floor(baseline, weight_kg * recovery_band)
     rationale = (
         f"Used {len(activity_rows)} recent workout(s) from the prior {window_hours} hours.",
         f"Added {adjustment.carbs_g:.0f} g carbohydrate for estimated glycogen recovery.",
-        f"Added {adjustment.protein_g:.0f} g protein and {adjustment.kcal:.0f} kcal with {confidence} confidence.",
+        f"Periodized total energy by {adjustment.kcal:.0f} kcal with {confidence} confidence.",
     )
     return TrainingNutritionResult(
         baseline=baseline,

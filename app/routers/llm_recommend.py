@@ -46,6 +46,7 @@ from app.services.meal_quality import (
 from app.services.training_nutrition import (
     MacroTargets,
     TrainingNutritionResult,
+    athlete_profile_baseline,
     calculate_training_nutrition,
 )
 from app.services.usda_nutrition import (
@@ -1994,6 +1995,10 @@ def _llm_pick_or_create(
         "numeric value. Also include a concise "
         "generic usda_search_query including its raw/cooked preparation state, and its nutrition contribution "
         "for that exact quantity: kcal, protein_g, carbs_g, and fat_g.\n"
+        "- Use practical single-person portions. Prefer dry/uncooked weights for grains, pasta, and legumes and include "
+        "their cooking step. Use cooked weights only when the food is explicitly leftover or ready-cooked. Keep dry "
+        "grains/pasta at or below 200 g, cooked grains/pasta at or below 350 g, protein foods at or below 300 g, "
+        "oils at or below 30 g, and sweeteners at or below 40 g per meal.\n"
         "- Calculate the meal macros by summing the ingredient nutrition values. Never copy the target macros into "
         "the result. Adjust ingredient quantities until the ingredient sum is within 15% of the target.\n"
         "- Prefer grams or ounces for proteins/starches and cups, tablespoons, teaspoons, or item counts where natural.\n"
@@ -3182,6 +3187,7 @@ def _apply_recipe_to_planmeal(pm: PlanMeal, rec: Recipe) -> None:
                                 else "ingredient_quantity_estimate"
                             ),
                             "food_ref_id": raw.get("food_ref_id"),
+                            "usda_search_query": raw.get("usda_search_query"),
                             "nutrition_source": raw.get("nutrition_source"),
                         }
                         if nutrition and isinstance(raw, dict)
@@ -3417,7 +3423,7 @@ def recommend_recipes(
         db=db,
         user=user,
         plan_date=target_date,
-        baseline=_baseline_from_meals(scheduled_meals),
+        baseline=athlete_profile_baseline(user, target_date),
     )
     adjusted_meals = _apply_nutrition_targets(scheduled_meals, nutrition)
     athlete_feedback = feedback_context(db, user.id)
@@ -3672,6 +3678,11 @@ def _batch_week_recommendations(
         "including the relevant raw/cooked preparation state. Each query must describe one common, independently "
         "searchable food—not a recipe or composite ingredient. Specify cooked versus raw for grains and proteins, "
         "and specify fat percentage for dairy when relevant. Use plain canonical terms; omit marketing adjectives. "
+        "Prefer dry/uncooked weights for grains, pasta, and legumes and include their cooking step; use cooked weights "
+        "only for explicitly leftover or ready-cooked food. Keep dry grains/pasta at or below 200 g, cooked grains/pasta "
+        "at or below 350 g, protein foods at or below 300 g, oils at or below 30 g, and sweeteners at or below 40 g per "
+        "single-person meal. If a target cannot be met within those limits, add another practical food instead of "
+        "inflating one ingredient. "
         "Never use a branded food or an unmeasured serving. "
         "Do not calculate or return nutrition for individual ingredients; Glycofy computes it authoritatively from "
         "USDA FoodData Central after generation. Estimate meal macros from the stated foods and quantities, never copy "
@@ -4091,7 +4102,7 @@ def recommend_weekly_apply(
             db=db,
             user=user,
             plan_date=requested_date,
-            baseline=_baseline_from_meals(balanced_meals),
+            baseline=athlete_profile_baseline(user, requested_date),
         )
         requested_targets = _apply_nutrition_targets(balanced_meals, requested_nutrition)
         batch_days.append(
@@ -4195,7 +4206,7 @@ def recommend_weekly_apply(
             db=db,
             user=user,
             plan_date=plan_date,
-            baseline=_baseline_from_meals(balanced_meals),
+            baseline=athlete_profile_baseline(user, plan_date),
         )
         adjusted_meals = _apply_nutrition_targets(balanced_meals, nutrition)
         factor = nutrition.final.kcal / nutrition.baseline.kcal if nutrition.baseline.kcal > 0 else 1.0

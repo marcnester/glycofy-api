@@ -5,7 +5,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
 from app.main import app
-from app.models import GroceryApproval
+from app.models import GroceryApproval, PlanItem
 from app.routers.plans import (
     _format_grocery_measurements,
     _grocery_category,
@@ -14,6 +14,7 @@ from app.routers.plans import (
     _grocery_unit,
     _instacart_items,
     _package_suggestion,
+    _practical_ingredient_amount,
 )
 
 
@@ -62,6 +63,20 @@ def test_package_suggestion_rounds_up_to_purchasable_amounts():
         "source": "estimated",
     }
     assert _package_suggestion("olive oil", "Pantry", 2, "tbsp") is None
+
+
+def test_meal_display_translates_exact_cooked_grain_weight_to_kitchen_measure():
+    item = PlanItem(
+        name="couscous",
+        qty=350,
+        unit="g",
+        meta={
+            "usda_search_query": "couscous cooked",
+            "nutrition_source": {"description": "Couscous, cooked"},
+        },
+    )
+
+    assert _practical_ingredient_amount(item) == "2¼ cups cooked (350 g)"
 
 
 def test_instacart_payload_uses_measurements_and_excludes_pantry():

@@ -634,6 +634,27 @@ def fit_portions_to_targets(
     # Coordinate descent over serving multipliers minimizes normalized target
     # error with a small preference for the model's original practical amount.
     factors = [1.0 for _ in ingredients]
+    upper_factors: list[float] = []
+    for index, ingredient in enumerate(ingredients):
+        identity = " ".join(str(ingredient.get(field) or "").lower() for field in ("name", "usda_search_query"))
+        if any(token in identity for token in ("oil", "butter")):
+            cap_g = 30.0
+        elif any(token in identity for token in ("honey", "syrup", "jam")):
+            cap_g = 40.0
+        elif any(token in identity for token in ("nut", "seed", "peanut butter", "almond butter")):
+            cap_g = 60.0
+        elif "oat" in identity and "cooked" not in identity:
+            cap_g = 120.0
+        elif any(token in identity for token in ("rice", "couscous", "pasta", "quinoa", "barley", "bulgur")):
+            cap_g = 350.0 if "cooked" in identity else 200.0
+        elif any(
+            token in identity
+            for token in ("chicken", "turkey", "beef", "pork", "fish", "salmon", "cod", "tuna", "tofu")
+        ):
+            cap_g = 300.0
+        else:
+            cap_g = 450.0
+        upper_factors.append(max(0.05, min(3.0, cap_g / max(base_weights[index], 0.1))))
     normalized = [[value / target[pos] for pos, value in enumerate(row)] for row in evidence]
     regularization = 0.002
     for _ in range(60):
@@ -647,7 +668,9 @@ def fit_portions_to_targets(
                 sum(contribution[metric] * (1.0 - other[metric]) for metric in range(len(macro_names))) + regularization
             )
             denominator = sum(value * value for value in contribution) + regularization
-            factors[index] = min(4.0, max(0.25, numerator / denominator))
+            upper = upper_factors[index]
+            lower = min(0.25, upper)
+            factors[index] = min(upper, max(lower, numerator / denominator))
 
     fitted: list[dict[str, Any]] = []
     for index, ingredient in enumerate(ingredients):
@@ -655,10 +678,15 @@ def fit_portions_to_targets(
             fitted.append(ingredient)
             continue
         factor = factors[index]
-        amount_g = round(base_weights[index] * factor, 1)
+        # Whole grams are accurate enough for food planning and avoid exposing
+        # optimizer artifacts such as 71.3 g or 587.6 g to cooks.
+        amount_g = float(max(1, round(base_weights[index] * factor)))
         if amount_g <= 0 or amount_g > 5000:
             return ingredients
-        nutrition = {name: round(evidence[index][position] * factor, 1) for position, name in enumerate(macro_names)}
+        exact_factor = amount_g / base_weights[index]
+        nutrition = {
+            name: round(evidence[index][position] * exact_factor, 1) for position, name in enumerate(macro_names)
+        }
         fitted.append(
             {
                 **ingredient,

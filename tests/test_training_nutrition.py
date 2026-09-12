@@ -9,6 +9,7 @@ from app.db import Base
 from app.models import Activity, PlannedWorkout, User
 from app.services.training_nutrition import (
     MacroTargets,
+    athlete_profile_baseline,
     calculate_from_activities,
     calculate_training_nutrition,
 )
@@ -59,7 +60,9 @@ def test_recent_strava_workout_adds_bounded_recovery_targets():
     assert result.training.confidence == "high"
     assert result.training.duration_min == 90
     assert result.adjustment.carbs_g > 0
-    assert 0 < result.adjustment.protein_g <= 15
+    # The baseline already supplies adequate daily protein; recovery energy is
+    # periodized through carbohydrate instead of double-counting protein.
+    assert result.adjustment.protein_g == 0
     assert 0 < result.adjustment.kcal <= 1200
     assert result.final.kcal > BASELINE.kcal
 
@@ -217,9 +220,25 @@ def test_future_hard_workout_adds_planned_fueling_without_completed_activity():
     assert result.training.planned_workout_count == 1
     assert result.training.planned_duration_min == 120
     assert result.training.planned_intensity == "hard"
-    assert result.adjustment.carbs_g == 105
-    assert result.adjustment.kcal == 420
-    assert result.final.carbs_g == BASELINE.carbs_g + 105
+    assert result.adjustment.carbs_g == 160
+    assert result.adjustment.kcal == 640
+    assert result.final.carbs_g == 70 * 6
+
+
+def test_profile_baseline_is_stable_and_excludes_structured_training():
+    user = _user()
+    user.sex = "male"
+    user.dob = date(1980, 6, 1)
+    user.height_cm = 180
+
+    first = athlete_profile_baseline(user, date(2026, 9, 11))
+    repeated = athlete_profile_baseline(user, date(2026, 9, 11))
+
+    assert first == repeated
+    assert 2000 <= first.kcal <= 3000
+    assert first.protein_g == 126
+    assert first.carbs_g >= 210
+    assert first.kcal == round(first.protein_g * 4 + first.carbs_g * 4 + first.fat_g * 9, 1)
 
 
 def test_completed_time_on_today_planned_workout_is_not_double_counted():
