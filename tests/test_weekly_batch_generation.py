@@ -106,7 +106,9 @@ def test_preferred_snacks_split_existing_daily_targets_without_adding_calories()
 
     assert [target.slot for target in targets] == ["breakfast", "lunch", "dinner", "snack", "snack_2"]
     assert sum(target.kcal for target in targets) == 2400
-    assert targets[-2].kcal == targets[-1].kcal == 180
+    assert abs(targets[-2].kcal - 240) <= 0.1
+    assert abs(targets[-1].kcal - 240) <= 0.1
+    assert all(target.protein_g == 36 for target in targets)
     assert llm_recommend._snack_schedule(pref) == [("snack", "10:00"), ("snack_2", "15:00")]
 
 

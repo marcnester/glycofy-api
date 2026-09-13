@@ -9,6 +9,7 @@ from app.db import Base
 from app.models import Activity, PlannedWorkout, User
 from app.services.training_nutrition import (
     MacroTargets,
+    _apply_planned_fueling,
     athlete_profile_baseline,
     calculate_from_activities,
     calculate_training_nutrition,
@@ -60,9 +61,7 @@ def test_recent_strava_workout_adds_bounded_recovery_targets():
     assert result.training.confidence == "high"
     assert result.training.duration_min == 90
     assert result.adjustment.carbs_g > 0
-    # The baseline already supplies adequate daily protein; recovery energy is
-    # periodized through carbohydrate instead of double-counting protein.
-    assert result.adjustment.protein_g == 0
+    assert result.final.protein_g >= BASELINE.protein_g
     assert 0 < result.adjustment.kcal <= 1200
     assert result.final.kcal > BASELINE.kcal
 
@@ -220,9 +219,9 @@ def test_future_hard_workout_adds_planned_fueling_without_completed_activity():
     assert result.training.planned_workout_count == 1
     assert result.training.planned_duration_min == 120
     assert result.training.planned_intensity == "hard"
-    assert result.adjustment.carbs_g == 160
-    assert result.adjustment.kcal == 640
-    assert result.final.carbs_g == 70 * 6
+    assert result.adjustment.carbs_g >= 160
+    assert result.adjustment.kcal >= 640
+    assert result.final.carbs_g >= 70 * 6
 
 
 def test_profile_baseline_is_stable_and_excludes_structured_training():
@@ -278,3 +277,104 @@ def test_completed_time_on_today_planned_workout_is_not_double_counted():
 
     assert result.training.planned_workout_count == 0
     assert result.final == BASELINE
+
+
+def _planned_result(*, duration: int, intensity: str, sport: str = "Cycling", weight_kg: float = 70):
+    user = _user()
+    user.weight_kg = weight_kg
+    protein_g = 1.6 * weight_kg
+    carbs_g = 3.0 * weight_kg
+    fat_g = 0.8 * weight_kg
+    baseline = MacroTargets(
+        kcal=protein_g * 4 + carbs_g * 4 + fat_g * 9,
+        protein_g=protein_g,
+        carbs_g=carbs_g,
+        fat_g=fat_g,
+    )
+    empty = calculate_from_activities(baseline=baseline, user=user, activities=[])
+    workout = PlannedWorkout(
+        user_id=1,
+        workout_date=date(2026, 9, 12),
+        start_time=datetime(2026, 9, 12, 9),
+        sport=sport,
+        duration_min=duration,
+        intensity=intensity,
+        priority="normal",
+        source="manual",
+    )
+    return _apply_planned_fueling(empty, user, [workout])
+
+
+def test_exhaustive_planned_workload_matrix_is_monotonic_and_plausible():
+    """Exercise 960 athlete/session combinations across key boundary values."""
+    durations = (15, 30, 44, 45, 60, 89, 90, 120, 149, 150, 180, 240)
+    intensities = ("easy", "moderate", "hard", "race")
+    for weight_kg in (50, 70, 90, 120):
+        for sport in ("Cycling", "Running", "Strength", "HYROX", "Rowing"):
+            by_intensity = {
+                intensity: [
+                    _planned_result(duration=duration, intensity=intensity, sport=sport, weight_kg=weight_kg)
+                    for duration in durations
+                ]
+                for intensity in intensities
+            }
+            for results in by_intensity.values():
+                assert [row.final.kcal for row in results] == sorted(row.final.kcal for row in results)
+                assert [row.final.carbs_g for row in results] == sorted(row.final.carbs_g for row in results)
+                assert [row.final.protein_g for row in results] == sorted(row.final.protein_g for row in results)
+                for row in results:
+                    assert 1.4 <= row.final.protein_g / weight_kg <= 2.2
+                    assert 3.0 <= row.final.carbs_g / weight_kg <= 8.0
+                    macro_kcal = row.final.protein_g * 4 + row.final.carbs_g * 4 + row.final.fat_g * 9
+                    assert abs(row.final.kcal - macro_kcal) < 1.0
+            for index in range(len(durations)):
+                workload_rows = [by_intensity[intensity][index] for intensity in intensities]
+                assert [row.final.kcal for row in workload_rows] == sorted(row.final.kcal for row in workload_rows)
+                assert [row.final.carbs_g for row in workload_rows] == sorted(
+                    row.final.carbs_g for row in workload_rows
+                )
+
+
+def test_hard_hybrid_training_receives_modest_protein_periodization():
+    easy = _planned_result(duration=60, intensity="easy", sport="Cycling")
+    hard_hyrox = _planned_result(duration=60, intensity="hard", sport="HYROX")
+
+    assert easy.final.protein_g == 70 * 1.6
+    assert hard_hyrox.final.protein_g == 70 * 2.0
+    assert hard_hyrox.final.carbs_g > easy.final.carbs_g
+    assert hard_hyrox.final.kcal > easy.final.kcal
+
+
+def test_completed_workload_duration_and_energy_scale_recovery_targets():
+    durations = (30, 60, 90, 150, 240)
+    results = []
+    for duration in durations:
+        workout = SimpleNamespace(
+            kcal=duration * 10,
+            duration_s=duration * 60,
+            distance_m=duration * 200,
+            sport="Run",
+            source_provider="strava",
+            start_time=datetime(2026, 9, 12, 8),
+        )
+        results.append(calculate_from_activities(baseline=BASELINE, user=_user(), activities=[workout]))
+
+    assert [row.final.kcal for row in results] == sorted(row.final.kcal for row in results)
+    assert [row.final.carbs_g for row in results] == sorted(row.final.carbs_g for row in results)
+    assert [row.final.protein_g for row in results] == sorted(row.final.protein_g for row in results)
+    assert results[-1].final.kcal > results[0].final.kcal
+
+
+def test_implausible_device_calories_are_bounded_before_fueling():
+    workout = SimpleNamespace(
+        kcal=10000,
+        duration_s=3600,
+        distance_m=10000,
+        sport="Run",
+        source_provider="strava",
+        start_time=datetime(2026, 9, 12, 8),
+    )
+    result = calculate_from_activities(baseline=BASELINE, user=_user(), activities=[workout])
+
+    assert result.training.exercise_kcal == 14 * 70
+    assert result.final.carbs_g <= 8 * 70

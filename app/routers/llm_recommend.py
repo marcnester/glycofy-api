@@ -257,7 +257,7 @@ def _snack_schedule(pref: UserPreference | None) -> list[tuple[str, str]]:
 
 
 def _targets_for_preferences(day: WeeklyDayRequest, pref: UserPreference | None) -> list[MealTarget]:
-    """Redistribute the same daily totals across the user's chosen eating schedule."""
+    """Redistribute daily totals with athlete-appropriate protein spacing."""
     totals = day.totals or {}
     daily = {
         name: _safe_float(totals.get(name), sum(_safe_float(getattr(meal, name, 0.0)) for meal in day.meals))
@@ -266,15 +266,33 @@ def _targets_for_preferences(day: WeeklyDayRequest, pref: UserPreference | None)
     if not all(value > 0 for value in daily.values()):
         return day.meals
     snacks = _snack_schedule(pref)
-    snack_share = 0.15 if snacks else 0.0
+    snack_share = {0: 0.0, 1: 0.15, 2: 0.20, 3: 0.24}[len(snacks)]
     main_scale = (1.0 - snack_share) / sum(_MAIN_TARGET_SPLITS.values())
     splits = {slot: share * main_scale for slot, share in _MAIN_TARGET_SPLITS.items()}
     for slot, _ in snacks:
         splits[slot] = snack_share / len(snacks)
-    return [
-        MealTarget(slot=slot, **{name: round(daily[name] * fraction, 1) for name in _MACROS})
+    # Daily protein is most useful when spread across regular eating occasions.
+    # Keep calories, carbohydrate and fat periodized by meal size, but give each
+    # meal/snack an equal share of the daily protein target.
+    protein_share = 1.0 / len(splits)
+    targets = [
+        MealTarget(
+            slot=slot,
+            **{name: round(daily[name] * (protein_share if name == "protein_g" else fraction), 1) for name in _MACROS},
+        )
         for slot, fraction in splits.items()
     ]
+    # Put any one-decimal rounding remainder into the final eating occasion so
+    # the meal targets still reconcile exactly to the daily prescription.
+    if targets:
+        last = targets[-1]
+        targets[-1] = last.model_copy(
+            update={
+                name: round(getattr(last, name) + daily[name] - sum(getattr(target, name) for target in targets), 1)
+                for name in _MACROS
+            }
+        )
+    return targets
 
 
 def _balanced_weekly_targets(day: WeeklyDayRequest) -> list[MealTarget]:
