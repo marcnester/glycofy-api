@@ -1,4 +1,5 @@
 from app.models import PlanMeal, Recipe
+from app.routers.llm_recommend import _apply_recipe_to_planmeal, _recipe_has_complete_cooking_guidance
 from app.routers.plans import AIIdeaPayload, LLMNewRecipe, _apply_ai_idea_to_meal, _apply_recipe_to_meal
 
 
@@ -64,3 +65,55 @@ def test_new_recipe_accepts_cooking_time():
     recipe = LLMNewRecipe(title="Fast dinner", total_time_min=20)
 
     assert recipe.total_time_min == 20
+
+
+def test_catalog_recipe_replaces_stale_plan_timing():
+    meal = PlanMeal(
+        meal_type="dinner",
+        items=[],
+        meta={"reason": "Fueling", "prep_time_min": 8, "cook_time_min": 20, "total_time_min": 20},
+    )
+    recipe = Recipe(
+        id=7,
+        title="Safe chicken bowl",
+        meal_type="dinner",
+        kcal=500,
+        protein_g=40,
+        carbs_g=55,
+        fat_g=12,
+        ingredients=[
+            {"name": "chicken breast", "amount": 120, "unit": "g"},
+            {"name": "cooked rice", "amount": 180, "unit": "g"},
+        ],
+        instructions="Cook chicken to 165°F.\nServe with cooked rice.",
+        prep_time_min=8,
+        cook_time_min=15,
+        total_time_min=23,
+    )
+
+    _apply_recipe_to_planmeal(meal, recipe)
+
+    assert meal.meta == {"reason": "Fueling", "prep_time_min": 8, "cook_time_min": 15, "total_time_min": 23}
+
+
+def test_catalog_recipe_requires_its_own_complete_safe_timing():
+    recipe = Recipe(
+        title="Chicken bowl",
+        meal_type="dinner",
+        kcal=500,
+        protein_g=40,
+        carbs_g=55,
+        fat_g=12,
+        ingredients=[
+            {"name": "chicken breast", "amount": 120, "unit": "g"},
+            {"name": "cooked rice", "amount": 180, "unit": "g"},
+        ],
+        instructions="Cook chicken to 165°F.\nServe with cooked rice.",
+        prep_time_min=8,
+        cook_time_min=15,
+        total_time_min=20,
+    )
+
+    assert not _recipe_has_complete_cooking_guidance(recipe)
+    recipe.total_time_min = 23
+    assert _recipe_has_complete_cooking_guidance(recipe)

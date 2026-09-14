@@ -152,6 +152,9 @@ class RecipePick(BaseModel):
     # keep this loose so JSON from DB passes through unchanged
     ingredients: Any | None = None
     instructions: str | None = None
+    prep_time_min: int | None = None
+    cook_time_min: int | None = None
+    total_time_min: int | None = None
 
 
 class SlotRecommendation(BaseModel):
@@ -721,6 +724,23 @@ def _recipe_has_reconciled_nutrition(recipe: Recipe) -> bool:
     )
 
 
+def _recipe_has_complete_cooking_guidance(recipe: Recipe) -> bool:
+    """Only reuse catalog meals whose own instructions and timing are safe."""
+    instructions = [
+        step.strip() for step in str(getattr(recipe, "instructions", "") or "").splitlines() if step.strip()
+    ]
+    candidate = {
+        "title": getattr(recipe, "title", None),
+        "ingredients": getattr(recipe, "ingredients", None) or [],
+        "instructions": instructions,
+        "prep_time_min": getattr(recipe, "prep_time_min", None),
+        "cook_time_min": getattr(recipe, "cook_time_min", None),
+        "total_time_min": getattr(recipe, "total_time_min", None),
+        "macros": {name: getattr(recipe, name, None) for name in _MACROS},
+    }
+    return validate_meal(candidate, target_miss_severity="warning").safe
+
+
 def _top_k_candidates(
     db: Session,
     slot: str,
@@ -757,6 +777,16 @@ def _top_k_candidates(
             "LLM top_k_candidates: slot=%s excluded_unverified_nutrition=%d remaining=%d",
             slot,
             before_verified - len(items),
+            len(items),
+        )
+
+    before_guidance = len(items)
+    items = [recipe for recipe in items if _recipe_has_complete_cooking_guidance(recipe)]
+    if before_guidance != len(items):
+        logger.info(
+            "LLM top_k_candidates: slot=%s excluded_incomplete_cooking_guidance=%d remaining=%d",
+            slot,
+            before_guidance - len(items),
             len(items),
         )
 
@@ -911,6 +941,9 @@ def _recipe_pick_from_model(r: Recipe) -> RecipePick:
         fat_g=getattr(r, "fat_g", None),
         ingredients=getattr(r, "ingredients", None),
         instructions=getattr(r, "instructions", None),
+        prep_time_min=getattr(r, "prep_time_min", None),
+        cook_time_min=getattr(r, "cook_time_min", None),
+        total_time_min=getattr(r, "total_time_min", None),
     )
 
 
@@ -3179,6 +3212,19 @@ def _apply_recipe_to_planmeal(pm: PlanMeal, rec: Recipe) -> None:
     pm.recipe_id = int(rec.id)
     pm.title = getattr(rec, "title", pm.title) or pm.title
     pm.instructions = getattr(rec, "instructions", pm.instructions) or (pm.instructions or "")
+    # Replace the prior placement's timing instead of retaining unrelated
+    # values when a catalog recipe replaces a different meal.
+    timing = {
+        key: int(getattr(rec, key))
+        for key in ("prep_time_min", "cook_time_min", "total_time_min")
+        if getattr(rec, key, None) is not None
+    }
+    prior_meta = {
+        key: value
+        for key, value in (pm.meta or {}).items()
+        if key not in {"prep_time_min", "cook_time_min", "total_time_min"}
+    }
+    pm.meta = {**prior_meta, **timing}
     # Set macros if present
     for f in ("kcal", "protein_g", "carbs_g", "fat_g"):
         if hasattr(pm, f) and hasattr(rec, f):
@@ -3380,6 +3426,9 @@ def _create_recipe_from_ai_idea(
         fat_g=_safe_float(approx.get("fat_g", 0.0), 0.0),
         ingredients=ingredients,
         instructions=instructions,
+        prep_time_min=int(_safe_float(ai_idea.get("prep_time_min"), 0.0)),
+        cook_time_min=int(_safe_float(ai_idea.get("cook_time_min"), 0.0)),
+        total_time_min=int(_safe_float(ai_idea.get("total_time_min"), 0.0)),
         diet_tags=tags,
         protein_group=protein_group,
     )

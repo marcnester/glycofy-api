@@ -210,6 +210,11 @@ class Recipe(Base):
     fat_g: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ingredients: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     instructions: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Persist timing with the reusable recipe. PlanMeal timing belongs to one
+    # placement and must not be inherited when another recipe replaces it.
+    prep_time_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cook_time_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_time_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     def __repr__(self) -> str:
         return f"<Recipe id={self.id} title={self.title!r}>"
