@@ -3651,6 +3651,21 @@ def recommend_recipes(
             },
         )
 
+    day_target_totals = _rebalance_verified_day(items, adjusted_meals)
+    target_misses = _day_target_misses(items, day_target_totals)
+    if target_misses:
+        logger.warning(
+            "daily_target_rejected",
+            extra={"reason_codes": [f"daily_{name}_target_miss" for name in target_misses]},
+        )
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "AI could not safely balance the complete day. Your existing plan was not changed.",
+                "target_misses": target_misses,
+            },
+        )
+
     resp = RecommendResponse(
         provider=provider,
         items=items,
@@ -3969,7 +3984,10 @@ def _batch_week_recommendations(
                 exclusions=exclusions,
                 diet=primary_diet,
                 require_ingredient_nutrition=unresolved_nutrition == 0,
-                target_miss_severity="warning" if unresolved_nutrition else "error",
+                # A single verified recipe can miss one slot target because
+                # its ingredient mix is constrained. Accept it here, then
+                # reconcile all meals together and enforce the daily totals.
+                target_miss_severity="warning",
             )
             invalid = (
                 slot not in ALL_SLOTS

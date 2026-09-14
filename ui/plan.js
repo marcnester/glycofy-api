@@ -167,7 +167,27 @@
     }
     if (busyCancel) busyCancel.hidden = true;
     weeklyRetryAction = retryAction;
-    if (busyRetry) busyRetry.hidden = false;
+    if (busyRetry) {
+      busyRetry.textContent = 'Retry weekly planning';
+      busyRetry.hidden = false;
+    }
+  }
+
+  function showTodayFailure(error, retryAction) {
+    clearInterval(busyTimer);
+    busyTimer = null;
+    busyStartedAt = 0;
+    if (busyTitle) busyTitle.textContent = "Today's planning needs another try";
+    if (busyMsg) {
+      busyMsg.textContent = `${error.message || "We couldn’t finish today's plan."} Your existing plan is still shown.`;
+    }
+    if (busyMeta) busyMeta.textContent = 'No meal changes were applied.';
+    if (busyCancel) busyCancel.hidden = true;
+    weeklyRetryAction = retryAction;
+    if (busyRetry) {
+      busyRetry.textContent = 'Retry today’s planning';
+      busyRetry.hidden = false;
+    }
   }
 
   busyRetry?.addEventListener('click', () => {
@@ -742,7 +762,12 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!r.ok) throw new Error(`LLM recommend failed: ${r.status}`);
+    if (!r.ok) {
+      const body = await r.json().catch(() => null);
+      const detail = body?.detail;
+      const message = typeof detail === 'string' ? detail : detail?.message;
+      throw new Error(message || 'We could not finish today’s meal plan. Please retry.');
+    }
     const rec = await r.json();
     console.log('LLM recommend response', d, rec);
     return rec;
@@ -1371,17 +1396,16 @@
         background: false,
         stages: TODAY_PROGRESS_STAGES,
       });
+      let keepFailureOpen = false;
       try {
         await runAIForDate(d, true);
         flash('Today’s personalized plan is ready.');
       } catch (err) {
         console.error(err);
-        flash(
-          String(err.message || 'Failed to apply AI suggestions.'),
-          'error'
-        );
+        keepFailureOpen = true;
+        showTodayFailure(err, () => btn.click());
       } finally {
-        setBusy(false);
+        if (!keepFailureOpen) setBusy(false);
       }
     });
   })();
