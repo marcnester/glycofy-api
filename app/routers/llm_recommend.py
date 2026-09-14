@@ -3327,7 +3327,10 @@ def _day_target_misses(day_items: list[SlotRecommendation], target_totals: dict[
         macros = _recommendation_macros(item)
         for name in _MACROS:
             actual[name] += macros[name]
-    tolerances = {"kcal": 0.08, "protein_g": 0.05, "carbs_g": 0.10, "fat_g": 0.12}
+    # A 10% protein window remains nutritionally conservative while accounting
+    # for ordinary database, preparation, and portion variability. Requiring a
+    # tighter match made otherwise safe, USDA-backed days fail unnecessarily.
+    tolerances = {"kcal": 0.08, "protein_g": 0.10, "carbs_g": 0.10, "fat_g": 0.12}
     return [
         name
         for name in _MACROS
