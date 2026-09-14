@@ -169,6 +169,22 @@ def test_cache_key_changes_when_weekly_meal_history_changes():
     assert before != after
 
 
+def test_cache_key_changes_with_prompt_and_quality_policy(monkeypatch):
+    request = llm_recommend.RecommendRequest(
+        date="2026-09-22",
+        meals=[llm_recommend.MealTarget(slot="lunch", kcal=650, protein_g=42, carbs_g=70, fat_g=18)],
+    )
+    before = llm_recommend._cache_key(1, request, [])
+
+    monkeypatch.setattr(llm_recommend, "PROMPT_VERSION", "next-prompt")
+    after_prompt_change = llm_recommend._cache_key(1, request, [])
+    monkeypatch.setattr(llm_recommend, "QUALITY_POLICY_VERSION", "next-policy")
+    after_policy_change = llm_recommend._cache_key(1, request, [])
+
+    assert before != after_prompt_change
+    assert after_prompt_change != after_policy_change
+
+
 def test_weekly_recipe_apply_replaces_placeholders_with_real_ingredients():
     meal = PlanMeal(meal_type="breakfast", title="Breakfast", order_index=0)
     meal.items.extend(

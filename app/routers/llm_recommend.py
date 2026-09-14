@@ -2538,6 +2538,11 @@ def _cache_key(
     blob = json.dumps(
         {
             "u": user_id,
+            # Scope cached output to the rules that accepted it. A deployment
+            # that tightens recipe or nutrition safety must never replay an
+            # older recommendation merely because the inputs are unchanged.
+            "prompt_version": PROMPT_VERSION,
+            "quality_policy_version": QUALITY_POLICY_VERSION,
             "date": req.date,
             "totals": req.totals or {},
             "meals": [m.model_dump() for m in req.meals],
