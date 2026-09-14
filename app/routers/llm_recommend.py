@@ -3612,6 +3612,62 @@ def recommend_recipes(
                 synchronous_lookup_limit=0,
             )
             slots.update(repaired.get(batch_day["date"], {}))
+
+        # The model gets one compact repair request. If an individual cell is
+        # still unsafe, complete the day from the nutrition-verified catalog
+        # without another network call. Weekly planning already uses this
+        # recovery path; Today must be equally resilient.
+        for target in adjusted_meals:
+            if target.slot in slots:
+                continue
+            recovered = _recommend_for_single_meal(
+                client=None,
+                db=db,
+                date=payload.date,
+                tgt=target,
+                diet_tags=diet_tags,
+                primary_diet=primary_diet,
+                pref=pref,
+                provider="catalog",
+                used_protein_items=[],
+                used_carb_items=[],
+                used_recipe_ids=used_recipe_ids,
+                used_meal_keys=used_meal_keys,
+                allow_new_recipe=False,
+                week_protein_counts=week_protein_counts,
+                protein_cap_per_slot=2,
+                prefer_fast_catalog=True,
+                athlete_feedback=athlete_feedback,
+            )
+            if recovered.recipe is None and not recovered.ai_idea:
+                # Completion and safety outrank novelty when the current week
+                # has already used every suitable catalog option.
+                recovered = _recommend_for_single_meal(
+                    client=None,
+                    db=db,
+                    date=payload.date,
+                    tgt=target,
+                    diet_tags=diet_tags,
+                    primary_diet=primary_diet,
+                    pref=pref,
+                    provider="catalog",
+                    used_protein_items=[],
+                    used_carb_items=[],
+                    used_recipe_ids=set(),
+                    used_meal_keys=set(),
+                    allow_new_recipe=False,
+                    week_protein_counts={},
+                    protein_cap_per_slot=10_000,
+                    prefer_fast_catalog=True,
+                    athlete_feedback=athlete_feedback,
+                )
+                recovery_mode = "verified_catalog_relaxed_variety"
+            else:
+                recovery_mode = "verified_catalog"
+            if recovered.recipe or recovered.ai_idea:
+                recovered.meta = {**(recovered.meta or {}), "batch_recovery": recovery_mode}
+                slots[target.slot] = recovered
+                logger.info("daily_missing_slot_recovered", extra={"slot": target.slot})
         items = [
             slots.get(
                 meal.slot,

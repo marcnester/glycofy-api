@@ -378,6 +378,65 @@ def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch)
     assert len(result["days"][0]["items"]) == 4
 
 
+def test_daily_recommend_uses_verified_catalog_after_ai_repair_fails(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    date_iso = "2026-09-22"
+    targets = {"kcal": 500.0, "protein_g": 40.0, "carbs_g": 50.0, "fat_g": 15.0}
+
+    def recommendation(slot):
+        return llm_recommend.SlotRecommendation(
+            slot=slot,
+            target=targets,
+            ai_idea={"title": f"Verified {slot}", "approx_macros": targets},
+            meta={"mode": "create", "batch": True},
+        )
+
+    batch_calls = []
+
+    def generate(_client, *, flexible_meal_count=False, **_kwargs):
+        batch_calls.append(flexible_meal_count)
+        if flexible_meal_count:
+            return {date_iso: {}}, {"rejected": 1}
+        return {date_iso: {slot: recommendation(slot) for slot in ("breakfast", "lunch", "dinner")}}, {"rejected": 1}
+
+    catalog_calls = []
+
+    def catalog_recovery(**kwargs):
+        catalog_calls.append(kwargs)
+        return llm_recommend.SlotRecommendation(
+            slot=kwargs["tgt"].slot,
+            target=targets,
+            ai_idea={"title": "Verified catalog snack", "approx_macros": targets},
+            meta={"provider": "catalog", "mode": "create"},
+        )
+
+    monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", generate)
+    monkeypatch.setattr(llm_recommend, "_recommend_for_single_meal", catalog_recovery)
+    monkeypatch.setattr(llm_recommend, "_get_openai_client", lambda: object())
+    monkeypatch.setattr(llm_recommend._RATE, "check_and_add", lambda *_args: None)
+    monkeypatch.setattr(llm_recommend, "_day_target_misses", lambda *_args: [])
+    monkeypatch.setattr(llm_recommend._CACHE, "get", lambda *_args: None)
+
+    with Session(engine) as db:
+        user = User(email="daily-recovery@example.com", password_hash="test")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        payload = llm_recommend.RecommendRequest(
+            date=date_iso,
+            meals=[llm_recommend.MealTarget(slot=slot, **targets) for slot in llm_recommend.SLOTS],
+        )
+        result = llm_recommend.recommend_recipes(
+            SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")), payload, db, user
+        )
+
+    assert batch_calls == [False, True]
+    assert len(catalog_calls) == 1
+    recovered = next(item for item in result["items"] if item["slot"] == "snack")
+    assert recovered["meta"]["batch_recovery"] == "verified_catalog"
+
+
 def test_weekly_apply_relaxes_only_variety_for_final_verified_catalog_recovery(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
