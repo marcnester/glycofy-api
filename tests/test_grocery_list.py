@@ -96,6 +96,23 @@ def test_meal_display_names_whole_fruit_instead_of_generic_items():
     assert _practical_ingredient_amount(item) == "1 banana (118 g)"
 
 
+def test_meal_display_formats_pita_before_generic_bread():
+    item = PlanItem(
+        name="whole wheat pita bread",
+        qty=31,
+        unit="g",
+        meta={"usda_search_query": "whole wheat pita bread"},
+    )
+
+    assert _practical_ingredient_amount(item) == "0.5 pita (31 g)"
+
+
+def test_meal_display_does_not_overstate_token_fruit_portion():
+    item = PlanItem(name="banana", qty=7, unit="g")
+
+    assert _practical_ingredient_amount(item) == "a few banana slices (7 g)"
+
+
 def test_instacart_payload_uses_measurements_and_excludes_pantry():
     approval = GroceryApproval(
         items=[

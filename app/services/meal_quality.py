@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 PROMPT_VERSION = "meal-planner-2026-09-13-v9-beta-quality"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-13-v8-beta-quality"
+QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-13-v9-beta-quality"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 ANIMAL_MEAT = {"beef", "chicken", "cod", "fish", "lamb", "pork", "salmon", "shrimp", "steak", "turkey", "tuna"}
@@ -28,6 +28,18 @@ ALLERGEN_ALIASES = {
     "wheat": {"bread", "couscous", "flour tortilla", "pasta", "seitan", "wheat"},
 }
 RAW_PROTEIN_MARKERS = ANIMAL_MEAT | {"egg", "eggs"}
+READY_TO_EAT_PROTEIN_MARKERS = {
+    "canned",
+    "cooked",
+    "deli",
+    "hard boiled",
+    "leftover",
+    "precooked",
+    "ready to eat",
+    "roasted",
+    "rotisserie",
+    "smoked",
+}
 GROUND_MEAT_MARKERS = {
     "ground beef",
     "ground lamb",
@@ -212,6 +224,23 @@ def ingredient_text(meal: dict[str, Any]) -> str:
     return recipe_text(meal)
 
 
+def _has_raw_animal_protein(meal: dict[str, Any]) -> bool:
+    """Return whether a listed animal protein still needs to be cooked."""
+    ingredients = meal.get("ingredients")
+    if not isinstance(ingredients, list):
+        return False
+    for item in ingredients:
+        if not isinstance(item, dict):
+            continue
+        name = _words(item.get("name"))
+        if not any(_contains(name, marker) for marker in RAW_PROTEIN_MARKERS):
+            continue
+        if any(_contains(name, marker) for marker in READY_TO_EAT_PROTEIN_MARKERS):
+            continue
+        return True
+    return False
+
+
 def ensure_safe_doneness_instruction(meal: dict[str, Any]) -> dict[str, Any]:
     """Add a deterministic food-safety cue when an otherwise usable recipe omits one."""
     instructions = meal.get("instructions")
@@ -219,12 +248,11 @@ def ensure_safe_doneness_instruction(meal: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(instructions, list) or not cook or cook <= 0:
         return meal
 
-    text = ingredient_text(meal)
     instruction_text = _words(" ".join(str(step) for step in instructions))
-    if not any(_contains(text, marker) for marker in RAW_PROTEIN_MARKERS) or any(
-        marker in instruction_text for marker in DONENESS_MARKERS
-    ):
+    if not _has_raw_animal_protein(meal) or any(marker in instruction_text for marker in DONENESS_MARKERS):
         return meal
+
+    text = ingredient_text(meal)
 
     if any(_contains(text, marker) for marker in GROUND_MEAT_MARKERS):
         cue = "Cook ground meat until the internal temperature reaches 160°F (71°C)."
@@ -333,7 +361,15 @@ def validate_meal(
             unit = _words(item.get("unit"))
             if amount is None or unit not in {"g", "gram", "grams"}:
                 continue
-            if amount < 5 and not any(_contains(name, marker) for marker in SMALL_AMOUNT_EXEMPTIONS):
+            fruit_minimum = (
+                30
+                if any(
+                    _contains(name, marker)
+                    for marker in ("apple", "banana", "berries", "berry", "grape", "orange", "pear", "pineapple")
+                )
+                else 5
+            )
+            if amount < fruit_minimum and not any(_contains(name, marker) for marker in SMALL_AMOUNT_EXEMPTIONS):
                 report.issues.append(
                     QualityIssue(
                         "impractical_serving",
@@ -460,8 +496,9 @@ def validate_meal(
             QualityIssue("unsafe_nonfood_ingredient", f"Recipe contains a non-food hazard: {', '.join(hazards)}.")
         )
     contains_animal_protein = any(_contains(text, marker) for marker in RAW_PROTEIN_MARKERS)
-    explicitly_raw = _contains(text, "raw") and contains_animal_protein
-    needs_doneness = contains_animal_protein and bool(cook and cook > 0) or explicitly_raw
+    contains_raw_animal_protein = _has_raw_animal_protein(meal)
+    explicitly_raw = _contains(text, "raw") and contains_raw_animal_protein
+    needs_doneness = contains_raw_animal_protein and bool(cook and cook > 0) or explicitly_raw
     if explicitly_raw and cook == 0:
         report.issues.append(QualityIssue("uncooked_raw_protein", "Raw animal protein cannot have zero cooking time."))
     if needs_doneness and not any(marker in instruction_text for marker in DONENESS_MARKERS):

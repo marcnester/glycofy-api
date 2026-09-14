@@ -154,15 +154,17 @@ def _practical_ingredient_amount(item: Any) -> str | None:
     if "rice cake" in identity:
         count = max(1, round(grams / 9.0))
         return f"{count} rice cake{'s' if count != 1 else ''} ({rounded_g} g)"
-    if any(token in identity for token in ("bread", "toast")):
-        slices = max(1, round(grams / 32.0))
-        return f"{slices} slice{'s' if slices != 1 else ''} ({rounded_g} g)"
     if "pita" in identity:
         count = max(0.5, round((grams / 60.0) * 2) / 2)
         return f"{count:g} pita ({rounded_g} g)"
+    if any(token in identity for token in ("bread", "toast")):
+        slices = max(1, round(grams / 32.0))
+        return f"{slices} slice{'s' if slices != 1 else ''} ({rounded_g} g)"
     if any(token in identity for token in ("banana", "apple", "orange", "pear")):
         fruit = next(token for token in ("banana", "apple", "orange", "pear") if token in identity)
         per_item = {"banana": 118.0, "apple": 182.0, "orange": 140.0, "pear": 178.0}[fruit]
+        if grams < per_item * 0.20:
+            return f"a few {fruit} slices ({rounded_g} g)"
         count = max(0.25, round((grams / per_item) * 4) / 4)
         return f"{count:g} {fruit}{'s' if count != 1 else ''} ({rounded_g} g)"
 

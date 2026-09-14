@@ -107,6 +107,23 @@ def test_ground_poultry_uses_poultry_temperature_not_ground_red_meat_temperature
     assert "165°F" in repaired["instructions"][-1]
 
 
+def test_ready_to_eat_poultry_is_not_given_raw_meat_doneness_directions():
+    candidate = meal(
+        title="Turkey Hummus Pita Snack",
+        ingredients=[
+            {"name": "roasted turkey breast", "amount": 75, "amount_g": 75, "unit": "g"},
+            {"name": "whole wheat pita", "amount": 60, "amount_g": 60, "unit": "g"},
+        ],
+        instructions=["Warm the pita for 2 minutes.", "Fill with roasted turkey and serve."],
+        cook_time_min=2,
+    )
+
+    repaired = ensure_safe_doneness_instruction(candidate)
+
+    assert repaired["instructions"] == candidate["instructions"]
+    assert "missing_doneness_cue" not in validate_meal(repaired).codes()
+
+
 def test_itemized_nutrition_is_required_and_must_equal_meal_totals():
     candidate = meal()
     assert "missing_ingredient_nutrition" in validate_meal(candidate, require_ingredient_nutrition=True).codes()
@@ -246,6 +263,17 @@ def test_missing_seasoning_and_impractical_food_portions_are_rejected():
 
     codes = set(validate_meal(candidate).codes())
     assert {"unlisted_instruction_ingredient", "impractical_serving", "impractical_primary_protein"} <= codes
+
+
+def test_token_fruit_portions_are_rejected():
+    candidate = meal(
+        ingredients=[
+            {"name": "low-fat cottage cheese", "amount": 220, "amount_g": 220, "unit": "g"},
+            {"name": "banana", "amount": 7, "amount_g": 7, "unit": "g"},
+        ]
+    )
+
+    assert "impractical_serving" in validate_meal(candidate).codes()
 
 
 def test_overnight_or_long_chill_time_must_be_in_advertised_total():

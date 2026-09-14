@@ -304,6 +304,32 @@ def test_fit_portions_keeps_cooked_grains_practical_and_uses_whole_grams():
     assert all(float(item["amount_g"]).is_integer() for item in fitted)
 
 
+def test_fit_portions_does_not_create_token_fruit_servings():
+    ingredients = [
+        {
+            "name": "banana",
+            "amount": 100.0,
+            "unit": "g",
+            "amount_g": 100.0,
+            "nutrition": {"kcal": 89.0, "protein_g": 1.1, "carbs_g": 22.8, "fat_g": 0.3},
+        },
+        {
+            "name": "low-fat cottage cheese",
+            "amount": 200.0,
+            "unit": "g",
+            "amount_g": 200.0,
+            "nutrition": {"kcal": 164.0, "protein_g": 24.0, "carbs_g": 8.0, "fat_g": 4.0},
+        },
+    ]
+
+    fitted = fit_portions_to_targets(
+        ingredients,
+        {"kcal": 260, "protein_g": 27, "carbs_g": 18, "fat_g": 5},
+    )
+
+    assert fitted[0]["amount_g"] >= 30
+
+
 def test_verify_ingredients_falls_back_to_concise_name():
     match = FDCMatch(
         fdc_id=171077,

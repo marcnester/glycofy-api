@@ -696,6 +696,11 @@ def fit_portions_to_targets(
             minimum_g = 25.0
         elif "egg" in identity:
             minimum_g = 50.0
+        elif any(
+            token in identity
+            for token in ("apple", "banana", "berries", "berry", "grape", "orange", "pear", "pineapple")
+        ):
+            minimum_g = 30.0
         else:
             minimum_g = 5.0
         upper_factors.append(upper)
