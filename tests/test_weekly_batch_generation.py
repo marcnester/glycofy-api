@@ -605,6 +605,15 @@ def test_day_recovery_limits_only_reject_material_macro_variance():
         [recommendation(1680)], target_totals, llm_recommend._DAY_RECOVERY_LIMITS
     ) == ["kcal"]
 
+    carb_macros = {**target_totals, "carbs_g": 180}
+    carb_recovery = llm_recommend.SlotRecommendation(
+        slot="dinner",
+        target=target_totals,
+        ai_idea={"title": "Verified recovery meal", "approx_macros": carb_macros},
+        meta={"mode": "create", "batch_recovery": "verified_catalog"},
+    )
+    assert llm_recommend._day_target_misses([carb_recovery], target_totals, llm_recommend._DAY_RECOVERY_LIMITS) == []
+
 
 def test_llm_cache_evicts_oldest_entry_at_memory_limit(monkeypatch):
     monkeypatch.setenv("LLM_CACHE_MAX_ENTRIES", "2")
