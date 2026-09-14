@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 PROMPT_VERSION = "meal-planner-2026-09-13-v11-beta-quality"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-13-v12-beta-quality"
+QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-14-v13-beta-quality"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 ANIMAL_MEAT = {"beef", "chicken", "cod", "fish", "lamb", "pork", "salmon", "shrimp", "steak", "turkey", "tuna"}
