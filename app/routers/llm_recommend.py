@@ -3321,7 +3321,15 @@ def _rebalance_verified_day(
     return target_totals
 
 
-def _day_target_misses(day_items: list[SlotRecommendation], target_totals: dict[str, float]) -> list[str]:
+_DAY_TARGET_TOLERANCES = {"kcal": 0.08, "protein_g": 0.15, "carbs_g": 0.15, "fat_g": 0.12}
+_DAY_RECOVERY_LIMITS = {"kcal": 0.15, "protein_g": 0.20, "carbs_g": 0.20, "fat_g": 0.20}
+
+
+def _day_target_misses(
+    day_items: list[SlotRecommendation],
+    target_totals: dict[str, float],
+    tolerances: dict[str, float] | None = None,
+) -> list[str]:
     actual = {name: 0.0 for name in _MACROS}
     for item in day_items:
         macros = _recommendation_macros(item)
@@ -3332,7 +3340,7 @@ def _day_target_misses(day_items: list[SlotRecommendation], target_totals: dict[
     # needs are the most flexible day-level target, especially when no future
     # training is available, so a safe catalog recovery should not invalidate
     # an otherwise complete week for a small difference.
-    tolerances = {"kcal": 0.08, "protein_g": 0.15, "carbs_g": 0.15, "fat_g": 0.12}
+    tolerances = tolerances or _DAY_TARGET_TOLERANCES
     return [
         name
         for name in _MACROS
@@ -3721,6 +3729,16 @@ def recommend_recipes(
 
     day_target_totals = _rebalance_verified_day(items, adjusted_meals)
     target_misses = _day_target_misses(items, day_target_totals)
+    if target_misses:
+        hard_misses = _day_target_misses(items, day_target_totals, _DAY_RECOVERY_LIMITS)
+        if not hard_misses:
+            logger.warning(
+                "daily_target_variance_accepted",
+                extra={"reason_codes": [f"daily_{name}_target_variance" for name in target_misses]},
+            )
+            for item in items:
+                item.meta = {**(item.meta or {}), "day_target_variance": target_misses}
+            target_misses = []
     if target_misses:
         logger.warning(
             "daily_target_rejected",
@@ -4553,6 +4571,19 @@ def recommend_weekly_apply(
 
         day_target_totals = _rebalance_verified_day(day_items, adjusted_meals)
         target_misses = _day_target_misses(day_items, day_target_totals)
+        if target_misses:
+            hard_misses = _day_target_misses(day_items, day_target_totals, _DAY_RECOVERY_LIMITS)
+            if not hard_misses:
+                logger.warning(
+                    "weekly_day_target_variance_accepted",
+                    extra={
+                        "date": date_iso,
+                        "reason_codes": [f"daily_{name}_target_variance" for name in target_misses],
+                    },
+                )
+                for item in day_items:
+                    item.meta = {**(item.meta or {}), "day_target_variance": target_misses}
+                target_misses = []
         if target_misses:
             db.rollback()
             logger.warning(
