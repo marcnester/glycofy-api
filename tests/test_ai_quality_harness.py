@@ -95,6 +95,18 @@ def test_missing_doneness_cue_is_added_deterministically():
     assert "missing_doneness_cue" not in validate_meal(repaired).codes()
 
 
+def test_ground_poultry_uses_poultry_temperature_not_ground_red_meat_temperature():
+    candidate = meal(
+        ingredients=[
+            {"name": "ground turkey", "amount": "150", "unit": "g"},
+            {"name": "rice", "amount": "200", "unit": "g"},
+        ],
+        instructions=["Brown the ground turkey and serve with rice."],
+    )
+    repaired = ensure_safe_doneness_instruction(candidate)
+    assert "165°F" in repaired["instructions"][-1]
+
+
 def test_itemized_nutrition_is_required_and_must_equal_meal_totals():
     candidate = meal()
     assert "missing_ingredient_nutrition" in validate_meal(candidate, require_ingredient_nutrition=True).codes()
@@ -202,6 +214,57 @@ def test_recipe_timing_and_safe_doneness_are_consistent():
     )
     codes = set(validate_meal(salmon).codes())
     assert {"inconsistent_timing", "uncooked_raw_protein", "missing_doneness_cue"} <= codes
+
+
+def test_ground_lamb_requires_160f_and_rejects_conflicting_lower_temperature():
+    candidate = meal(
+        title="Lamb Keema",
+        ingredients=[
+            {"name": "ground lamb", "amount": 150, "amount_g": 150, "unit": "g"},
+            {"name": "peas", "amount": 120, "amount_g": 120, "unit": "g"},
+        ],
+        instructions=[
+            "Cook ground lamb until its internal temperature reaches 160°F.",
+            "Serve when its internal temperature reaches 145°F.",
+        ],
+    )
+
+    assert "unsafe_internal_temperature" in validate_meal(candidate).codes()
+
+
+def test_missing_seasoning_and_impractical_food_portions_are_rejected():
+    candidate = meal(
+        slot="dinner",
+        protein_item="salmon",
+        ingredients=[
+            {"name": "salmon", "amount": 45, "amount_g": 45, "unit": "g"},
+            {"name": "whole wheat pasta", "amount": 160, "amount_g": 160, "unit": "g"},
+            {"name": "walnuts", "amount": 2, "amount_g": 2, "unit": "g"},
+        ],
+        instructions=["Season the salmon with paprika.", "Cook and serve with pasta."],
+    )
+
+    codes = set(validate_meal(candidate).codes())
+    assert {"unlisted_instruction_ingredient", "impractical_serving", "impractical_primary_protein"} <= codes
+
+
+def test_overnight_or_long_chill_time_must_be_in_advertised_total():
+    overnight = meal(
+        title="Overnight Oats",
+        instructions=["Combine the ingredients.", "Refrigerate overnight."],
+        prep_time_min=8,
+        cook_time_min=0,
+        total_time_min=8,
+    )
+    chilled = meal(
+        instructions=["Combine the ingredients.", "Chill for 30 minutes."],
+        prep_time_min=8,
+        cook_time_min=0,
+        total_time_min=8,
+    )
+
+    assert "inconsistent_wait_time" in validate_meal(overnight).codes()
+    assert "inconsistent_wait_time" in validate_meal(chilled).codes()
 
 
 def test_complete_meal_passes_every_evaluation_profile_and_versions_are_reported():

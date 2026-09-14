@@ -2006,7 +2006,8 @@ def _llm_pick_or_create(
         '  1) PICKING a catalog recipe (mode="pick"); or\n'
         '  2) CREATING a new, simple recipe (mode="create").\n\n'
         "MACRO + ATHLETE RULES:\n"
-        "- Hit macro targets within roughly ±15%, prioritizing PROTEIN and total KCAL.\n\n"
+        "- Hit macro targets within roughly ±12%, prioritizing total KCAL and training-appropriate carbohydrate. "
+        "Never overshoot protein to supply missing energy.\n\n"
         "DAY VARIETY RULES (HARD FOR MAIN MEALS):\n"
         "- For main meals (breakfast/lunch/dinner):\n"
         "  - You MUST NOT reuse a protein_item that appears in used_protein_items_today.\n"
@@ -2023,17 +2024,21 @@ def _llm_pick_or_create(
         "- Use practical single-person portions. Prefer dry/uncooked weights for grains, pasta, and legumes and include "
         "their cooking step. Use cooked weights only when the food is explicitly leftover or ready-cooked. Keep dry "
         "grains/pasta at or below 200 g, cooked grains/pasta at or below 350 g, protein foods at or below 300 g, "
-        "oils at or below 30 g, and sweeteners at or below 40 g per meal.\n"
+        "oils at or below 30 g, and sweeteners at or below 40 g per meal. Main-meal animal proteins must be at least "
+        "75 g, and non-seasoning foods must not use token portions below 5 g.\n"
         "- Calculate the meal macros by summing the ingredient nutrition values. Never copy the target macros into "
         "the result. Adjust ingredient quantities until the ingredient sum is within 15% of the target.\n"
         "- Prefer grams or ounces for proteins/starches and cups, tablespoons, teaspoons, or item counts where natural.\n"
         "- Never return a bare ingredient name such as 'spinach' or 'olive oil'.\n"
         "- Prefer meals ready within 30 minutes, but never inflate a simple assembly-only meal.\n"
         "- Include prep_time_min, cook_time_min, and total_time_min as realistic integers. Cook time is 0 for "
-        "assembly-only meals; total includes prep plus cooking or waiting. A simple wrap is usually 5–7 minutes.\n"
+        "assembly-only meals; total includes all prep, cooking, chilling, soaking, marinating, and resting. Never label "
+        "overnight food as ready in minutes. A simple wrap is usually 5–7 minutes.\n"
         "- Write 3–6 concise, coordinated steps for the COMPLETE meal, including parallel preparation where useful.\n"
+        "- Every food, seasoning, oil, and sauce named in the steps must appear as a measured ingredient.\n"
         "- For cooked meat, poultry, seafood, or eggs, include heat level or oven temperature, approximate cooking "
-        "time, and a clear safe-doneness cue.\n"
+        "time, and a clear safe-doneness cue. Ground beef, pork, lamb, and veal must reach 160°F/71°C; poultry "
+        "must reach 165°F/74°C; fish must reach 145°F/63°C.\n"
         "- Respect diet_tags + ingredient_exclusions strictly.\n"
         "- Use athlete_feedback as a preference signal: avoid poorly rated or skipped meals, favor patterns from "
         "favorites, and adapt practicality or portion style when repeated signals exist. Do not infer allergies or "
@@ -3252,6 +3257,77 @@ def _recompute_plan_totals_from_meals(by_slot: dict[str, PlanMeal]) -> dict[str,
     return tot
 
 
+def _recommendation_macros(item: SlotRecommendation) -> dict[str, float]:
+    source: Any = item.ai_idea or item.recipe or {}
+    if isinstance(source, dict):
+        source = source.get("approx_macros") or source
+        return {name: _safe_float(source.get(name)) for name in _MACROS}
+    return {name: _safe_float(getattr(source, name, 0.0)) for name in _MACROS}
+
+
+def _rebalance_verified_day(
+    day_items: list[SlotRecommendation],
+    targets: list[MealTarget],
+) -> dict[str, float]:
+    """Make the assembled day honor its targets after per-meal USDA fitting.
+
+    Per-meal tolerance compounds when every meal misses in the same direction.
+    Refit all fully verified AI ingredients together against the residual day
+    target, then write the reconciled macros back to each meal before persist.
+    Catalog and provisional meals remain fixed.
+    """
+    target_totals = {name: sum(_safe_float(getattr(target, name, 0.0)) for target in targets) for name in _MACROS}
+    fixed_totals = {name: 0.0 for name in _MACROS}
+    adjustable: list[tuple[SlotRecommendation, list[dict[str, Any]]]] = []
+    flattened: list[dict[str, Any]] = []
+
+    for item in day_items:
+        idea = item.ai_idea if isinstance(item.ai_idea, dict) else None
+        ingredients = idea.get("ingredients") if idea else None
+        evidence = ingredient_nutrition_totals({"ingredients": ingredients}) if idea else None
+        if evidence is None:
+            macros = _recommendation_macros(item)
+            for name in _MACROS:
+                fixed_totals[name] += macros[name]
+            continue
+        copied = [dict(ingredient) for ingredient in ingredients]
+        adjustable.append((item, copied))
+        flattened.extend(copied)
+
+    residual = {name: target_totals[name] - fixed_totals[name] for name in _MACROS}
+    if not flattened or any(value <= 0 for value in residual.values()):
+        return target_totals
+
+    fitted = fit_portions_to_targets(flattened, residual)
+    cursor = 0
+    for item, original in adjustable:
+        count = len(original)
+        meal_ingredients = fitted[cursor : cursor + count]
+        cursor += count
+        macros = ingredient_nutrition_totals({"ingredients": meal_ingredients})
+        if macros is None:
+            continue
+        idea = {**(item.ai_idea or {}), "ingredients": meal_ingredients, "approx_macros": macros}
+        item.ai_idea = idea
+        item.deltas = {name: abs(macros[name] - _safe_float((item.target or {}).get(name))) for name in _MACROS}
+        item.meta = {**(item.meta or {}), "ai_idea": idea, "day_rebalanced": True}
+    return target_totals
+
+
+def _day_target_misses(day_items: list[SlotRecommendation], target_totals: dict[str, float]) -> list[str]:
+    actual = {name: 0.0 for name in _MACROS}
+    for item in day_items:
+        macros = _recommendation_macros(item)
+        for name in _MACROS:
+            actual[name] += macros[name]
+    tolerances = {"kcal": 0.08, "protein_g": 0.05, "carbs_g": 0.10, "fat_g": 0.12}
+    return [
+        name
+        for name in _MACROS
+        if target_totals[name] > 0 and abs(actual[name] - target_totals[name]) / target_totals[name] > tolerances[name]
+    ]
+
+
 def _create_recipe_from_ai_idea(
     db: Session,
     slot: str,
@@ -3706,13 +3782,15 @@ def _batch_week_recommendations(
         "Prefer dry/uncooked weights for grains, pasta, and legumes and include their cooking step; use cooked weights "
         "only for explicitly leftover or ready-cooked food. Keep dry grains/pasta at or below 200 g, cooked grains/pasta "
         "at or below 350 g, protein foods at or below 300 g, oils at or below 30 g, and sweeteners at or below 40 g per "
-        "single-person meal. If a target cannot be met within those limits, add another practical food instead of "
+        "single-person meal. Main-meal animal proteins must be at least 75 g. Do not create token portions below 5 g "
+        "except herbs, spices, acids, and salt. If a target cannot be met within those limits, add another practical food instead of "
         "inflating one ingredient. "
         "Never use a branded food or an unmeasured serving. "
         "Do not calculate or return nutrition for individual ingredients; Glycofy computes it authoritatively from "
         "USDA FoodData Central after generation. Estimate meal macros from the stated foods and quantities, never copy "
         "target_macros into macros, and adjust actual ingredient quantities until the estimate is close to each slot "
-        "target. A day's training object can describe upcoming training. On those days, favor "
+        "target. Do not overshoot protein to reach calories or carbohydrate; use a carbohydrate or fat source that matches "
+        "the remaining target instead. A day's training object can describe upcoming training. On those days, favor "
         "digestible carbohydrate before the workout and carbohydrate plus protein afterward, using next_workout_at "
         "for timing. Each snack has a preferred_time: create a distinct, practical snack for that eating occasion, "
         "describe its timing purpose in the reason, and never merge multiple snack slots. Mention the workout in "
@@ -3720,10 +3798,13 @@ def _batch_week_recommendations(
         "during the week. Within each day, do not "
         "repeat a protein_item or carb_item across breakfast, lunch, and dinner. Across adjacent days, vary main "
         "proteins. Use no protein_group more than twice for the same slot during the week when alternatives exist. "
-        "Every meal needs realistic prep_time_min, cook_time_min, and total_time_min values. Use cook_time_min=0 "
+        "Every food, seasoning, oil, and sauce named in the instructions must also appear as a measured ingredient. "
+        "Every meal needs realistic prep_time_min, cook_time_min, and total_time_min values. Total time must include "
+        "required chilling, soaking, marinating, and resting; never label overnight food as ready in minutes. Use cook_time_min=0 "
         "for assembly-only food and do not inflate simple meals (a wrap is usually 5–7 minutes total). Total time "
         "includes prep plus cooking or waiting. Every cooked meal needs 3–6 coordinated steps for the complete plate, and "
-        "heat or oven temperature, timing, and a safe-doneness cue for meat, poultry, seafood, or eggs. "
+        "heat or oven temperature, timing, and a safe-doneness cue for meat, poultry, seafood, or eggs. Ground beef, "
+        "pork, lamb, and veal must reach 160°F/71°C; poultry must reach 165°F/74°C; fish must reach 145°F/63°C. "
         "Keep the week practical to shop: intentionally reuse produce, grains, sauces, and seasonings across meals; "
         "avoid one-off ingredients; and target no more than about 40 unique non-pantry grocery products for the week. "
         "Create variety through preparation and seasoning rather than a completely different ingredient set every day. "
@@ -4379,6 +4460,23 @@ def recommend_weekly_apply(
                     "message": "Unable to generate a complete, nutrition-safe weekly meal plan",
                     "date": date_iso,
                     "missing_slots": missing_slots,
+                },
+            )
+
+        day_target_totals = _rebalance_verified_day(day_items, adjusted_meals)
+        target_misses = _day_target_misses(day_items, day_target_totals)
+        if target_misses:
+            db.rollback()
+            logger.warning(
+                "weekly_day_target_rejected",
+                extra={"date": date_iso, "reason_codes": [f"daily_{name}_target_miss" for name in target_misses]},
+            )
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Unable to generate a day that safely matches the athlete's nutrition targets",
+                    "date": date_iso,
+                    "target_misses": target_misses,
                 },
             )
 

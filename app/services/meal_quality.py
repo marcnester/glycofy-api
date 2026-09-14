@@ -5,8 +5,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-PROMPT_VERSION = "meal-planner-2026-09-10-v8-usda-canonical"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-10-v7-resilient-targets"
+PROMPT_VERSION = "meal-planner-2026-09-13-v9-beta-quality"
+QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-13-v8-beta-quality"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 ANIMAL_MEAT = {"beef", "chicken", "cod", "fish", "lamb", "pork", "salmon", "shrimp", "steak", "turkey", "tuna"}
@@ -28,6 +28,16 @@ ALLERGEN_ALIASES = {
     "wheat": {"bread", "couscous", "flour tortilla", "pasta", "seitan", "wheat"},
 }
 RAW_PROTEIN_MARKERS = ANIMAL_MEAT | {"egg", "eggs"}
+GROUND_MEAT_MARKERS = {
+    "ground beef",
+    "ground lamb",
+    "ground pork",
+    "ground veal",
+    "minced beef",
+    "minced lamb",
+    "minced pork",
+    "minced veal",
+}
 DONENESS_MARKERS = {
     "internal temperature",
     "opaque",
@@ -102,6 +112,31 @@ FAT_SOURCE_MARKERS = {
     "seeds",
     "tahini",
     "walnut",
+}
+SEASONING_MARKERS = {
+    "cardamom",
+    "coriander",
+    "cumin",
+    "curry powder",
+    "garam masala",
+    "harissa",
+    "oregano",
+    "paprika",
+    "rosemary",
+    "thyme",
+    "turmeric",
+    "zaatar",
+}
+SMALL_AMOUNT_EXEMPTIONS = SEASONING_MARKERS | {
+    "basil",
+    "cinnamon",
+    "garlic",
+    "lemon juice",
+    "lime juice",
+    "parsley",
+    "pepper",
+    "salt",
+    "vinegar",
 }
 
 
@@ -191,7 +226,9 @@ def ensure_safe_doneness_instruction(meal: dict[str, Any]) -> dict[str, Any]:
     ):
         return meal
 
-    if any(_contains(text, marker) for marker in ("chicken", "turkey")):
+    if any(_contains(text, marker) for marker in GROUND_MEAT_MARKERS):
+        cue = "Cook ground meat until the internal temperature reaches 160°F (71°C)."
+    elif any(_contains(text, marker) for marker in ("chicken", "turkey")):
         cue = "Cook until no longer pink and the internal temperature reaches 165°F."
     elif any(_contains(text, marker) for marker in ("egg", "eggs")):
         cue = "Cook until the eggs are fully set and the internal temperature reaches 160°F."
@@ -270,6 +307,59 @@ def validate_meal(
     if not isinstance(instructions, list) or len([step for step in instructions if str(step).strip()]) < 2:
         report.issues.append(QualityIssue("incomplete_instructions", "At least two preparation steps are required."))
 
+    ingredient_words = _words(
+        " ".join(str(item.get("name") or "") for item in ingredients or [] if isinstance(item, dict))
+    )
+    instruction_words = _words(" ".join(str(step) for step in instructions or []))
+    unlisted_seasonings = sorted(
+        marker
+        for marker in SEASONING_MARKERS
+        if _contains(instruction_words, marker) and not _contains(ingredient_words, marker)
+    )
+    if unlisted_seasonings:
+        report.issues.append(
+            QualityIssue(
+                "unlisted_instruction_ingredient",
+                f"Instructions use ingredients that are not listed: {', '.join(unlisted_seasonings)}.",
+            )
+        )
+
+    if isinstance(ingredients, list):
+        for item in ingredients:
+            if not isinstance(item, dict):
+                continue
+            name = _words(item.get("name"))
+            amount = _number(item.get("amount_g", item.get("amount", item.get("qty"))))
+            unit = _words(item.get("unit"))
+            if amount is None or unit not in {"g", "gram", "grams"}:
+                continue
+            if amount < 5 and not any(_contains(name, marker) for marker in SMALL_AMOUNT_EXEMPTIONS):
+                report.issues.append(
+                    QualityIssue(
+                        "impractical_serving",
+                        f"{item.get('name')} has an impractically small serving.",
+                    )
+                )
+                break
+
+        slot = _words(meal.get("slot"))
+        protein_item = _words(meal.get("protein_item"))
+        if slot in {"breakfast", "lunch", "dinner"} and protein_item:
+            for item in ingredients:
+                if not isinstance(item, dict):
+                    continue
+                name = _words(item.get("name"))
+                amount = _number(item.get("amount_g", item.get("amount", item.get("qty"))))
+                unit = _words(item.get("unit"))
+                if protein_item in name and unit in {"g", "gram", "grams"} and amount is not None and amount < 75:
+                    report.issues.append(
+                        QualityIssue(
+                            "impractical_primary_protein",
+                            f"{item.get('name')} is too small to serve as the main protein.",
+                        )
+                    )
+                    break
+
     values = {name: _number(macros.get(name)) for name in MACROS}
     if any(value is None for value in values.values()):
         report.issues.append(
@@ -315,11 +405,11 @@ def validate_meal(
             for name in MACROS:
                 target_value = _number(target.get(name))
                 actual = values[name]
-                if target_value and actual is not None and abs(actual - target_value) / target_value > 0.18:
+                if target_value and actual is not None and abs(actual - target_value) / target_value > 0.12:
                     report.issues.append(
                         QualityIssue(
                             "target_miss",
-                            f"{name} is more than 18% from its target.",
+                            f"{name} is more than 12% from its target.",
                             severity=target_miss_severity,
                         )
                     )
@@ -340,6 +430,17 @@ def validate_meal(
     elif total < max(prep, cook) or total > prep + cook + 60:
         report.issues.append(
             QualityIssue("inconsistent_timing", "Total time conflicts with preparation and cooking time.")
+        )
+    wait_minutes = [
+        float(value)
+        for value in re.findall(
+            r"(?:rest|chill|refrigerate|soak|marinate)[a-z ]{0,30}?(\d{1,3})\s*(?:minutes?|mins?)",
+            instruction_words,
+        )
+    ]
+    if "overnight" in instruction_words or (wait_minutes and total is not None and max(wait_minutes) > total):
+        report.issues.append(
+            QualityIssue("inconsistent_wait_time", "Advertised total time omits required resting or chilling time.")
         )
 
     exclusion_hits = violates_exclusions(meal, exclusions or [])
@@ -365,20 +466,23 @@ def validate_meal(
         report.issues.append(QualityIssue("uncooked_raw_protein", "Raw animal protein cannot have zero cooking time."))
     if needs_doneness and not any(marker in instruction_text for marker in DONENESS_MARKERS):
         report.issues.append(QualityIssue("missing_doneness_cue", "Cooked animal protein needs a clear doneness cue."))
-    internal_temp = re.search(
-        r"internal temperature(?: of)?\s*(\d{2,3}(?:\.\d+)?)\s*°?\s*([fc])\b",
+    internal_temps = re.findall(
+        r"internal temperature[a-z ]{0,24}?(\d{2,3}(?:\.\d+)?)\s*°?\s*([fc])\b",
         instruction_text,
     )
-    if internal_temp and contains_animal_protein:
-        stated = float(internal_temp.group(1))
-        fahrenheit = stated * 9 / 5 + 32 if internal_temp.group(2) == "c" else stated
-        if any(_contains(text, marker) for marker in ("chicken", "turkey")):
+    if internal_temps and contains_animal_protein:
+        if any(_contains(text, marker) for marker in GROUND_MEAT_MARKERS):
+            minimum_f = 160
+        elif any(_contains(text, marker) for marker in ("chicken", "turkey")):
             minimum_f = 165
         elif any(_contains(text, marker) for marker in ("egg", "eggs")):
             minimum_f = 160
         else:
             minimum_f = 145
-        if fahrenheit < minimum_f:
+        fahrenheit_values = [
+            float(value) * 9 / 5 + 32 if unit == "c" else float(value) for value, unit in internal_temps
+        ]
+        if any(fahrenheit < minimum_f for fahrenheit in fahrenheit_values):
             report.issues.append(
                 QualityIssue(
                     "unsafe_internal_temperature",

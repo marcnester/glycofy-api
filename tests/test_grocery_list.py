@@ -79,6 +79,23 @@ def test_meal_display_translates_exact_cooked_grain_weight_to_kitchen_measure():
     assert _practical_ingredient_amount(item) == "2¼ cups cooked (350 g)"
 
 
+def test_meal_display_uses_count_for_rice_cakes_before_grain_conversion():
+    item = PlanItem(
+        name="rice cakes",
+        qty=28,
+        unit="g",
+        meta={"usda_search_query": "rice cakes plain"},
+    )
+
+    assert _practical_ingredient_amount(item) == "3 rice cakes (28 g)"
+
+
+def test_meal_display_names_whole_fruit_instead_of_generic_items():
+    item = PlanItem(name="banana", qty=118, unit="g")
+
+    assert _practical_ingredient_amount(item) == "1 banana (118 g)"
+
+
 def test_instacart_payload_uses_measurements_and_excludes_pantry():
     approval = GroceryApproval(
         items=[

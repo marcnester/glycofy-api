@@ -17,6 +17,13 @@ from app.services.usda_nutrition import (
 
 def _food(fdc_id: int, description: str, *, data_type: str = "Foundation") -> dict:
     values = {1008: 165, 1003: 31, 1005: 0, 1004: 3.6}
+    lowered = description.lower()
+    if "banana" in lowered:
+        values = {1008: 89, 1003: 1.1, 1005: 22.8, 1004: 0.3}
+    elif "oil" in lowered:
+        values = {1008: 884, 1003: 0, 1005: 0, 1004: 100}
+    elif "tortilla" in lowered:
+        values = {1008: 310, 1003: 8, 1005: 52, 1004: 8}
     return {
         "fdcId": fdc_id,
         "description": description,
@@ -83,6 +90,19 @@ def test_select_match_normalizes_plural_food_words():
     )
 
     assert match.fdc_id == 13
+
+
+def test_select_match_rejects_nutritionally_impossible_named_staple():
+    wrong_bread = _food(20, "Bread, whole wheat")
+    wrong_bread["foodNutrients"] = [
+        {"nutrientId": 1008, "value": 45},
+        {"nutrientId": 1003, "value": 1},
+        {"nutrientId": 1005, "value": 4},
+        {"nutrientId": 1004, "value": 3},
+    ]
+
+    with pytest.raises(USDANutritionError, match="No unambiguous"):
+        select_match("whole wheat bread", [wrong_bread])
 
 
 @pytest.mark.parametrize(

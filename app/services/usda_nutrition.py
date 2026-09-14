@@ -291,12 +291,44 @@ def _nutritionally_equivalent(left: dict[str, float], right: dict[str, float]) -
     return True
 
 
+def _plausible_nutrient_density(query: str, nutrients: dict[str, float]) -> bool:
+    """Reject an official record whose nutrient density cannot represent the queried staple.
+
+    FDC can rank similarly named prepared foods above the plain ingredient. The
+    values are deliberately broad screening ranges, not replacement nutrition
+    data; accepted values still come exclusively from the selected USDA row.
+    """
+    text = query.lower()
+    kcal = nutrients["kcal"]
+    protein = nutrients["protein_g"]
+    carbs = nutrients["carbs_g"]
+    fat = nutrients["fat_g"]
+
+    if "oil" in text:
+        return 750 <= kcal <= 950 and fat >= 80 and protein <= 2 and carbs <= 2
+    if "banana" in text:
+        return 55 <= kcal <= 140 and 12 <= carbs <= 38
+    if "yogurt" in text or "yoghurt" in text:
+        return 30 <= kcal <= 180 and 2 <= protein <= 18 and carbs <= 25
+    if "bread" in text or "pita" in text or "tortilla" in text:
+        return 140 <= kcal <= 450 and 20 <= carbs <= 85
+    if any(grain in text for grain in ("rice", "pasta", "couscous", "quinoa", "oat")):
+        if "cooked" in text or "prepared" in text:
+            return 55 <= kcal <= 230 and 10 <= carbs <= 50
+        return 250 <= kcal <= 470 and 45 <= carbs <= 90
+    if "chicken breast" in text or "turkey breast" in text:
+        return 90 <= kcal <= 260 and 18 <= protein <= 45 and carbs <= 8
+    if any(fish in text for fish in ("salmon", "cod", "tuna", "tilapia", "trout")):
+        return 65 <= kcal <= 350 and 14 <= protein <= 35 and carbs <= 5
+    return True
+
+
 def select_match(query: str, foods: list[dict[str, Any]]) -> FDCMatch:
     candidates: list[tuple[float, int, dict[str, Any], dict[str, float]]] = []
     for relevance_rank, food in enumerate(foods):
         score = _match_score(query, food)
         nutrients = _nutrients(food)
-        if score is not None and nutrients is not None:
+        if score is not None and nutrients is not None and _plausible_nutrient_density(query, nutrients):
             candidates.append((score, relevance_rank, food, nutrients))
     if not candidates:
         raise USDANutritionError(f"No unambiguous USDA match for {query!r}")
@@ -635,6 +667,7 @@ def fit_portions_to_targets(
     # error with a small preference for the model's original practical amount.
     factors = [1.0 for _ in ingredients]
     upper_factors: list[float] = []
+    lower_factors: list[float] = []
     for index, ingredient in enumerate(ingredients):
         identity = " ".join(str(ingredient.get(field) or "").lower() for field in ("name", "usda_search_query"))
         if any(token in identity for token in ("oil", "butter")):
@@ -654,7 +687,19 @@ def fit_portions_to_targets(
             cap_g = 300.0
         else:
             cap_g = 450.0
-        upper_factors.append(max(0.05, min(3.0, cap_g / max(base_weights[index], 0.1))))
+        upper = max(0.05, min(3.0, cap_g / max(base_weights[index], 0.1)))
+        if any(token in identity for token in ("salt", "pepper", "spice", "cinnamon", "paprika", "cumin")):
+            minimum_g = 0.5
+        elif "rice cake" in identity:
+            minimum_g = 9.0
+        elif any(token in identity for token in ("bread", "pita", "tortilla", "wrap")):
+            minimum_g = 25.0
+        elif "egg" in identity:
+            minimum_g = 50.0
+        else:
+            minimum_g = 5.0
+        upper_factors.append(upper)
+        lower_factors.append(min(upper, max(0.05, minimum_g / max(base_weights[index], 0.1))))
     normalized = [[value / target[pos] for pos, value in enumerate(row)] for row in evidence]
     regularization = 0.002
     for _ in range(60):
@@ -669,7 +714,7 @@ def fit_portions_to_targets(
             )
             denominator = sum(value * value for value in contribution) + regularization
             upper = upper_factors[index]
-            lower = min(0.25, upper)
+            lower = lower_factors[index]
             factors[index] = min(upper, max(lower, numerator / denominator))
 
     fitted: list[dict[str, Any]] = []

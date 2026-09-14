@@ -151,6 +151,21 @@ def _practical_ingredient_amount(item: Any) -> str | None:
     ).lower()
     rounded_g = max(1, round(grams))
 
+    if "rice cake" in identity:
+        count = max(1, round(grams / 9.0))
+        return f"{count} rice cake{'s' if count != 1 else ''} ({rounded_g} g)"
+    if any(token in identity for token in ("bread", "toast")):
+        slices = max(1, round(grams / 32.0))
+        return f"{slices} slice{'s' if slices != 1 else ''} ({rounded_g} g)"
+    if "pita" in identity:
+        count = max(0.5, round((grams / 60.0) * 2) / 2)
+        return f"{count:g} pita ({rounded_g} g)"
+    if any(token in identity for token in ("banana", "apple", "orange", "pear")):
+        fruit = next(token for token in ("banana", "apple", "orange", "pear") if token in identity)
+        per_item = {"banana": 118.0, "apple": 182.0, "orange": 140.0, "pear": 178.0}[fruit]
+        count = max(0.25, round((grams / per_item) * 4) / 4)
+        return f"{count:g} {fruit}{'s' if count != 1 else ''} ({rounded_g} g)"
+
     grain_weights = {
         "couscous": (173.0, 157.0),
         "rice": (185.0, 158.0),

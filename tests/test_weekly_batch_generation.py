@@ -320,7 +320,7 @@ def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch)
         return llm_recommend.SlotRecommendation(
             slot=slot,
             target=targets,
-            ai_idea={"title": f"Verified {slot}"},
+            ai_idea={"title": f"Verified {slot}", "approx_macros": targets},
             meta={"mode": "create", "batch": True},
         )
 
@@ -337,6 +337,7 @@ def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch)
     monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", generate)
     monkeypatch.setattr(llm_recommend, "_get_openai_client", lambda: object())
     monkeypatch.setattr(llm_recommend._RATE, "check_and_add", lambda *_args: None)
+    monkeypatch.setattr(llm_recommend, "_day_target_misses", lambda *_args: [])
     monkeypatch.setattr(
         llm_recommend,
         "_persist_day_recommendations",
@@ -387,7 +388,7 @@ def test_weekly_apply_relaxes_only_variety_for_final_verified_catalog_recovery(m
         return llm_recommend.SlotRecommendation(
             slot=slot,
             target=targets,
-            ai_idea={"title": f"Verified {slot}"},
+            ai_idea={"title": f"Verified {slot}", "approx_macros": targets},
             meta={"mode": "create", "batch": True},
         )
 
@@ -409,7 +410,7 @@ def test_weekly_apply_relaxes_only_variety_for_final_verified_catalog_recovery(m
         return llm_recommend.SlotRecommendation(
             slot="breakfast",
             target=targets,
-            ai_idea={"title": "Verified repeat breakfast"},
+            ai_idea={"title": "Verified repeat breakfast", "approx_macros": targets},
             meta={"mode": "create"},
         )
 
@@ -417,6 +418,7 @@ def test_weekly_apply_relaxes_only_variety_for_final_verified_catalog_recovery(m
     monkeypatch.setattr(llm_recommend, "_recommend_for_single_meal", catalog_recovery)
     monkeypatch.setattr(llm_recommend, "_get_openai_client", lambda: object())
     monkeypatch.setattr(llm_recommend._RATE, "check_and_add", lambda *_args: None)
+    monkeypatch.setattr(llm_recommend, "_day_target_misses", lambda *_args: [])
     monkeypatch.setattr(
         llm_recommend,
         "_persist_day_recommendations",
@@ -445,6 +447,51 @@ def test_weekly_apply_relaxes_only_variety_for_final_verified_catalog_recovery(m
     assert catalog_calls[1]["used_meal_keys"] == set()
     recovered = next(item for item in result["days"][0]["items"] if item["slot"] == "breakfast")
     assert recovered["meta"]["batch_recovery"] == "verified_catalog_relaxed_variety"
+
+
+def test_verified_day_is_rebalanced_before_persist_when_meals_all_overshoot_protein():
+    targets = [
+        llm_recommend.MealTarget(slot=slot, kcal=500, protein_g=30, carbs_g=60, fat_g=15)
+        for slot in ("breakfast", "lunch")
+    ]
+
+    def recommendation(slot):
+        ingredients = [
+            {
+                "name": "chicken breast",
+                "amount": 160,
+                "amount_g": 160,
+                "unit": "g",
+                "nutrition": {"kcal": 264, "protein_g": 49.6, "carbs_g": 0, "fat_g": 5.8},
+            },
+            {
+                "name": "cooked rice",
+                "amount": 100,
+                "amount_g": 100,
+                "unit": "g",
+                "nutrition": {"kcal": 130, "protein_g": 2.7, "carbs_g": 28, "fat_g": 0.3},
+            },
+            {
+                "name": "olive oil",
+                "amount": 15,
+                "amount_g": 15,
+                "unit": "g",
+                "nutrition": {"kcal": 132.6, "protein_g": 0, "carbs_g": 0, "fat_g": 15},
+            },
+        ]
+        return llm_recommend.SlotRecommendation(
+            slot=slot,
+            target=targets[0].model_dump(exclude={"slot"}),
+            ai_idea={"title": f"Chicken rice {slot}", "ingredients": ingredients},
+            meta={"mode": "create"},
+        )
+
+    recommendations = [recommendation("breakfast"), recommendation("lunch")]
+    target_totals = llm_recommend._rebalance_verified_day(recommendations, targets)
+
+    assert llm_recommend._day_target_misses(recommendations, target_totals) == []
+    assert all(item.meta["day_rebalanced"] is True for item in recommendations)
+    assert sum(item.ai_idea["approx_macros"]["protein_g"] for item in recommendations) <= 67.2
 
 
 def test_llm_cache_evicts_oldest_entry_at_memory_limit(monkeypatch):
