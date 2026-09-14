@@ -295,6 +295,33 @@ def test_overnight_or_long_chill_time_must_be_in_advertised_total():
     assert "inconsistent_wait_time" in validate_meal(chilled).codes()
 
 
+def test_total_time_includes_rest_after_cooking():
+    candidate = meal(
+        instructions=["Simmer rice for 35 minutes.", "Rest for 5 minutes, then serve."],
+        prep_time_min=10,
+        cook_time_min=35,
+        total_time_min=35,
+    )
+
+    assert "inconsistent_wait_time" in validate_meal(candidate).codes()
+
+
+def test_dry_oats_cannot_be_served_immediately_without_cooking_or_soaking():
+    candidate = meal(
+        title="Yogurt Oat Bowl",
+        ingredients=[
+            {"name": "rolled oats", "amount": 50, "amount_g": 50, "unit": "g"},
+            {"name": "Greek yogurt", "amount": 180, "amount_g": 180, "unit": "g"},
+        ],
+        instructions=["Combine oats and yogurt.", "Serve immediately."],
+        prep_time_min=5,
+        cook_time_min=0,
+        total_time_min=5,
+    )
+
+    assert "uncooked_dry_grain" in validate_meal(candidate).codes()
+
+
 def test_complete_meal_passes_every_evaluation_profile_and_versions_are_reported():
     for profile in EVALUATION_PROFILES:
         result = evaluate_plan([meal()], profile)

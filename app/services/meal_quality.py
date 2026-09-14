@@ -5,8 +5,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-PROMPT_VERSION = "meal-planner-2026-09-13-v9-beta-quality"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-13-v9-beta-quality"
+PROMPT_VERSION = "meal-planner-2026-09-13-v10-beta-quality"
+QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-13-v10-beta-quality"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 ANIMAL_MEAT = {"beef", "chicken", "cod", "fish", "lamb", "pork", "salmon", "shrimp", "steak", "turkey", "tuna"}
@@ -361,15 +361,17 @@ def validate_meal(
             unit = _words(item.get("unit"))
             if amount is None or unit not in {"g", "gram", "grams"}:
                 continue
-            fruit_minimum = (
-                30
-                if any(
-                    _contains(name, marker)
-                    for marker in ("apple", "banana", "berries", "berry", "grape", "orange", "pear", "pineapple")
-                )
-                else 5
-            )
-            if amount < fruit_minimum and not any(_contains(name, marker) for marker in SMALL_AMOUNT_EXEMPTIONS):
+            practical_minimum = 5
+            if any(
+                _contains(name, marker)
+                for marker in ("apple", "banana", "berries", "berry", "grape", "orange", "pear", "pineapple")
+            ):
+                practical_minimum = 30
+            elif _contains(name, "oat"):
+                practical_minimum = 15
+            elif any(_contains(name, marker) for marker in ("almond butter", "peanut butter")):
+                practical_minimum = 8
+            if amount < practical_minimum and not any(_contains(name, marker) for marker in SMALL_AMOUNT_EXEMPTIONS):
                 report.issues.append(
                     QualityIssue(
                         "impractical_serving",
@@ -474,9 +476,41 @@ def validate_meal(
             instruction_words,
         )
     ]
-    if "overnight" in instruction_words or (wait_minutes and total is not None and max(wait_minutes) > total):
+    if "overnight" in instruction_words or (
+        wait_minutes
+        and total is not None
+        and (max(wait_minutes) > total or total < float(cook or 0) + max(wait_minutes))
+    ):
         report.issues.append(
             QualityIssue("inconsistent_wait_time", "Advertised total time omits required resting or chilling time.")
+        )
+
+    preparation_actions = ("boil", "cook", "simmer", "soak", "chill", "refrigerate", "overnight")
+    instruction_steps = [_words(step) for step in instructions or []]
+    has_unprepared_dry_grain = False
+    for item in ingredients or []:
+        if not isinstance(item, dict):
+            continue
+        identity = _words(f"{item.get('name', '')} {item.get('usda_search_query', '')}")
+        if any(_contains(identity, state) for state in ("cooked", "granola", "instant", "prepared", "ready to eat")):
+            continue
+        grain = next(
+            (
+                marker
+                for marker in ("oat", "oats", "rice", "quinoa", "pasta", "couscous", "barley", "bulgur")
+                if _contains(identity, marker)
+            ),
+            None,
+        )
+        if grain and not any(
+            _contains(step, grain) and any(action in step for action in preparation_actions)
+            for step in instruction_steps
+        ):
+            has_unprepared_dry_grain = True
+            break
+    if has_unprepared_dry_grain:
+        report.issues.append(
+            QualityIssue("uncooked_dry_grain", "Dry grains must be cooked or fully soaked before serving.")
         )
 
     exclusion_hits = violates_exclusions(meal, exclusions or [])

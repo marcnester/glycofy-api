@@ -696,6 +696,10 @@ def fit_portions_to_targets(
             minimum_g = 25.0
         elif "egg" in identity:
             minimum_g = 50.0
+        elif "oat" in identity:
+            minimum_g = 15.0
+        elif any(token in identity for token in ("almond butter", "peanut butter")):
+            minimum_g = 8.0
         elif any(
             token in identity
             for token in ("apple", "banana", "berries", "berry", "grape", "orange", "pear", "pineapple")

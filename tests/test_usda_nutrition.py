@@ -330,6 +330,40 @@ def test_fit_portions_does_not_create_token_fruit_servings():
     assert fitted[0]["amount_g"] >= 30
 
 
+def test_fit_portions_does_not_create_token_oat_or_nut_butter_servings():
+    ingredients = [
+        {
+            "name": "rolled oats",
+            "amount": 50.0,
+            "unit": "g",
+            "amount_g": 50.0,
+            "nutrition": {"kcal": 190.0, "protein_g": 6.5, "carbs_g": 34.0, "fat_g": 3.5},
+        },
+        {
+            "name": "peanut butter",
+            "amount": 20.0,
+            "unit": "g",
+            "amount_g": 20.0,
+            "nutrition": {"kcal": 118.0, "protein_g": 5.0, "carbs_g": 4.0, "fat_g": 10.0},
+        },
+        {
+            "name": "low-fat cottage cheese",
+            "amount": 200.0,
+            "unit": "g",
+            "amount_g": 200.0,
+            "nutrition": {"kcal": 164.0, "protein_g": 24.0, "carbs_g": 8.0, "fat_g": 4.0},
+        },
+    ]
+
+    fitted = fit_portions_to_targets(
+        ingredients,
+        {"kcal": 300, "protein_g": 27, "carbs_g": 18, "fat_g": 8},
+    )
+
+    assert fitted[0]["amount_g"] >= 15
+    assert fitted[1]["amount_g"] >= 8
+
+
 def test_verify_ingredients_falls_back_to_concise_name():
     match = FDCMatch(
         fdc_id=171077,
