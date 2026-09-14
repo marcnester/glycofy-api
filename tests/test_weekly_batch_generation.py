@@ -565,8 +565,8 @@ def test_day_target_protein_tolerance_accepts_real_world_variability():
             meta={"mode": "create"},
         )
 
-    assert llm_recommend._day_target_misses([recommendation(91)], target_totals) == []
-    assert llm_recommend._day_target_misses([recommendation(89)], target_totals) == ["protein_g"]
+    assert llm_recommend._day_target_misses([recommendation(86)], target_totals) == []
+    assert llm_recommend._day_target_misses([recommendation(84)], target_totals) == ["protein_g"]
 
 
 def test_day_target_carbohydrate_tolerance_preserves_safe_catalog_recovery():

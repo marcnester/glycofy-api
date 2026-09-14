@@ -3332,7 +3332,7 @@ def _day_target_misses(day_items: list[SlotRecommendation], target_totals: dict[
     # needs are the most flexible day-level target, especially when no future
     # training is available, so a safe catalog recovery should not invalidate
     # an otherwise complete week for a small difference.
-    tolerances = {"kcal": 0.08, "protein_g": 0.10, "carbs_g": 0.15, "fat_g": 0.12}
+    tolerances = {"kcal": 0.08, "protein_g": 0.15, "carbs_g": 0.15, "fat_g": 0.12}
     return [
         name
         for name in _MACROS
