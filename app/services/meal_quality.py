@@ -5,8 +5,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-PROMPT_VERSION = "meal-planner-2026-09-13-v10-beta-quality"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-13-v10-beta-quality"
+PROMPT_VERSION = "meal-planner-2026-09-13-v11-beta-quality"
+QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-13-v11-beta-quality"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 ANIMAL_MEAT = {"beef", "chicken", "cod", "fish", "lamb", "pork", "salmon", "shrimp", "steak", "turkey", "tuna"}
@@ -465,7 +465,7 @@ def validate_meal(
         or not 1 <= total <= 240
     ):
         report.issues.append(QualityIssue("invalid_timing", "Preparation, cooking, and total times must be realistic."))
-    elif total < max(prep, cook) or total > prep + cook + 60:
+    elif total < prep + cook or total > prep + cook + 60:
         report.issues.append(
             QualityIssue("inconsistent_timing", "Total time conflicts with preparation and cooking time.")
         )

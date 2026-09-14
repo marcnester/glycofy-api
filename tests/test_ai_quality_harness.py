@@ -233,6 +233,25 @@ def test_recipe_timing_and_safe_doneness_are_consistent():
     assert {"inconsistent_timing", "uncooked_raw_protein", "missing_doneness_cue"} <= codes
 
 
+def test_total_time_includes_prep_and_cooking():
+    candidate = meal(
+        title="Beef Pasta",
+        ingredients=[
+            {"name": "lean ground beef", "amount": 120, "amount_g": 120, "unit": "g"},
+            {"name": "whole-wheat pasta", "amount": 85, "amount_g": 85, "unit": "g"},
+        ],
+        instructions=[
+            "Boil the pasta until tender, then drain.",
+            "Cook the beef until it reaches 160°F/71°C, then combine with the pasta.",
+        ],
+        prep_time_min=8,
+        cook_time_min=20,
+        total_time_min=20,
+    )
+
+    assert "inconsistent_timing" in validate_meal(candidate).codes()
+
+
 def test_ground_lamb_requires_160f_and_rejects_conflicting_lower_temperature():
     candidate = meal(
         title="Lamb Keema",
