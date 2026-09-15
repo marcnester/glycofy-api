@@ -77,6 +77,12 @@
     $('meals') || document.querySelector('.plan-meals') || document.body;
   const emptyEl = $('empty_state');
   const createBtn = $('create_btn');
+  const emptyWeekBtn = $('empty-plan-week');
+  const emptyPlanTitle = $('empty-plan-title');
+  const emptyTargetKcal = $('empty-target-kcal');
+  const emptyTargetProtein = $('empty-target-protein');
+  const emptyTargetCarbs = $('empty-target-carbs');
+  const emptyTargetFat = $('empty-target-fat');
   const feedbackDialog = $('meal-feedback-dialog');
   const feedbackForm = $('meal-feedback-form');
   const feedbackMealId = $('feedback-meal-id');
@@ -1071,6 +1077,34 @@
     if (tLock) tLock.textContent = plan?.locked ? 'Yes' : 'No';
   }
 
+  function isUnplannedPlan(plan) {
+    if (!plan) return true;
+    const meals = Array.isArray(plan.meals) ? plan.meals : [];
+    return meals.length === 0 || String(plan.source || '').toLowerCase() === 'heuristic';
+  }
+
+  function renderUnplannedState(plan, date) {
+    const unplanned = isUnplannedPlan(plan);
+    if (emptyEl) emptyEl.hidden = !unplanned;
+    if (mealsRoot && mealsRoot !== document.body) mealsRoot.hidden = unplanned;
+    if (totalsEl) totalsEl.hidden = unplanned;
+    if (lockBtn) lockBtn.hidden = unplanned;
+    const dayPlanBtn = $('plan-ai-all') || $('ai_apply_btn');
+    if (dayPlanBtn) dayPlanBtn.hidden = unplanned;
+    if (weekBtn) weekBtn.hidden = unplanned;
+    if (groceryListLink) groceryListLink.hidden = unplanned;
+    if (!unplanned) return false;
+
+    if (emptyPlanTitle) emptyPlanTitle.textContent = `No meal plan yet for ${formatDateFull(date)}`;
+    const totals = plan?.totals || {};
+    if (emptyTargetKcal) emptyTargetKcal.textContent = totals.kcal ? `${fmt(totals.kcal)} kcal` : 'Calculated when planned';
+    if (emptyTargetProtein) emptyTargetProtein.textContent = totals.protein_g ? `${fmt(totals.protein_g)} g` : '—';
+    if (emptyTargetCarbs) emptyTargetCarbs.textContent = totals.carbs_g ? `${fmt(totals.carbs_g)} g` : '—';
+    if (emptyTargetFat) emptyTargetFat.textContent = totals.fat_g ? `${fmt(totals.fat_g)} g` : '—';
+    if (nutritionConfidence) nutritionConfidence.hidden = true;
+    return true;
+  }
+
   function renderMeals(plan) {
     const meals = plan?.meals || [];
     const sorted = meals
@@ -1327,16 +1361,8 @@
     if (dlCsv) dlCsv.href = `/v1/plan/${d}/grocery.csv`;
     if (groceryListLink) groceryListLink.href = `/ui/grocery.html?start=${encodeURIComponent(d)}`;
 
-    if (!plan) {
-      if (mealsRoot && !NEW_LAYOUT) mealsRoot.innerHTML = '';
-      if (emptyEl) emptyEl.style.display = '';
-      if (totalsEl) totalsEl.style.display = 'none';
-      if (nutritionConfidence) nutritionConfidence.hidden = true;
-      return;
-    }
+    if (renderUnplannedState(plan, d)) return;
 
-    if (emptyEl) emptyEl.style.display = 'none';
-    if (totalsEl) totalsEl.style.display = '';
     renderTotals(plan);
     if (nutritionConfidence) {
       nutritionConfidence.hidden = plan.nutrition_verified !== false;
@@ -1391,18 +1417,6 @@
       const plan = await lockToggleAPI(d, next);
       renderPlan(plan);
       flash(next ? 'Plan locked.' : 'Plan unlocked.');
-    });
-  }
-
-  if (createBtn) {
-    createBtn.addEventListener('click', async () => {
-      const d = getCurrentDate();
-      setDate(d);
-      const plan = await createPlan(d, 'heuristic');
-      AI_REASONS = {};
-      AI_FREEFORM = {};
-      renderPlan(plan);
-      flash('Plan created.');
     });
   }
 
@@ -1531,6 +1545,16 @@
         if (!weeklyRetryAction) setBusy(false);
       }
     });
+  }
+
+  if (createBtn && !createBtn.__aiBound) {
+    createBtn.__aiBound = true;
+    createBtn.addEventListener('click', () => ($('plan-ai-all') || $('ai_apply_btn'))?.click());
+  }
+
+  if (emptyWeekBtn && !emptyWeekBtn.__weekBound) {
+    emptyWeekBtn.__weekBound = true;
+    emptyWeekBtn.addEventListener('click', () => weekBtn?.click());
   }
 
   // A weekly job continues on the server if the page is refreshed or the user

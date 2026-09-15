@@ -387,7 +387,7 @@ def test_account_deletion_dialog_supports_escape_key():
 def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     page = Path("ui/plan.html").read_text(encoding="utf-8")
     script = Path("ui/plan.js").read_text(encoding="utf-8")
-    assert "plan.js?v=2026-09-14-dismissible-planning" in page
+    assert "plan.js?v=2026-09-14-unplanned-day" in page
     assert 'id="nutrition-confidence"' in page
     assert "plan.nutrition_verified" in script
     assert "nutrition-checked plan" in script
@@ -414,6 +414,24 @@ def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     assert "Keep this page open while AI finishes." in script
     assert "You can safely leave this page; planning will continue." in script
     assert "Preparation details are missing from this older recommendation." in script
+
+
+def test_unplanned_day_uses_a_focused_ai_empty_state():
+    page = Path("ui/plan.html").read_text(encoding="utf-8")
+    script = Path("ui/plan.js").read_text(encoding="utf-8")
+
+    assert 'id="empty-plan-title"' in page
+    assert "Estimated daily targets" in page
+    assert ">Plan This Day with AI</button>" in page
+    assert ">Plan My Next 7 Days</button>" in page
+    assert ">Add upcoming training</a>" in page
+    assert "function isUnplannedPlan(plan)" in script
+    assert "String(plan.source || '').toLowerCase() === 'heuristic'" in script
+    assert "mealsRoot.hidden = unplanned" in script
+    assert "lockBtn.hidden = unplanned" in script
+    assert "groceryListLink.hidden = unplanned" in script
+    assert "flash('Plan created.')" not in script
+    assert "createBtn.addEventListener('click', () => ($('plan-ai-all') || $('ai_apply_btn'))?.click())" in script
 
 
 def test_profile_exposes_complete_athlete_setup(client: TestClient):
