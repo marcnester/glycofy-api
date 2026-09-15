@@ -553,6 +553,66 @@ def test_verified_day_is_rebalanced_before_persist_when_meals_all_overshoot_prot
     assert sum(item.ai_idea["approx_macros"]["protein_g"] for item in recommendations) <= 67.2
 
 
+def test_complete_day_rebalance_personalizes_verified_catalog_portions():
+    targets = [
+        llm_recommend.MealTarget(slot=slot, kcal=500, protein_g=30, carbs_g=60, fat_g=15)
+        for slot in ("breakfast", "lunch")
+    ]
+
+    def recommendation(slot: str, recipe_id: int) -> llm_recommend.SlotRecommendation:
+        ingredients = [
+            {
+                "name": "chicken breast",
+                "amount": 160,
+                "amount_g": 160,
+                "unit": "g",
+                "nutrition": {"kcal": 264, "protein_g": 49.6, "carbs_g": 0, "fat_g": 5.8},
+            },
+            {
+                "name": "cooked rice",
+                "amount": 100,
+                "amount_g": 100,
+                "unit": "g",
+                "nutrition": {"kcal": 130, "protein_g": 2.7, "carbs_g": 28, "fat_g": 0.3},
+            },
+            {
+                "name": "olive oil",
+                "amount": 15,
+                "amount_g": 15,
+                "unit": "g",
+                "nutrition": {"kcal": 132.6, "protein_g": 0, "carbs_g": 0, "fat_g": 15},
+            },
+        ]
+        return llm_recommend.SlotRecommendation(
+            slot=slot,
+            target=targets[0].model_dump(exclude={"slot"}),
+            recipe=llm_recommend.RecipePick(
+                id=recipe_id,
+                title=f"Chicken rice {slot}",
+                meal_type=slot,
+                kcal=526.6,
+                protein_g=52.3,
+                carbs_g=28,
+                fat_g=21.1,
+                ingredients=ingredients,
+                instructions="Cook chicken thoroughly. Serve with rice.",
+                prep_time_min=5,
+                cook_time_min=15,
+                total_time_min=20,
+            ),
+            meta={"mode": "pick", "protein_group": "poultry"},
+        )
+
+    recommendations = [recommendation("breakfast", 1), recommendation("lunch", 2)]
+    target_totals = llm_recommend._rebalance_complete_verified_day(recommendations, targets)
+
+    assert llm_recommend._day_target_misses(recommendations, target_totals) == []
+    assert all(item.recipe is None for item in recommendations)
+    assert all(item.ai_idea and item.ai_idea["total_time_min"] == 20 for item in recommendations)
+    assert all(item.meta["personalized_catalog_portions"] is True for item in recommendations)
+    assert all(item.meta["mode"] == "create" for item in recommendations)
+
+
 def test_day_target_protein_tolerance_accepts_real_world_variability():
     target_totals = {"kcal": 2000, "protein_g": 100, "carbs_g": 250, "fat_g": 67}
 

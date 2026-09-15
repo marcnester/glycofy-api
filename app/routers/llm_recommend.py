@@ -3318,6 +3318,15 @@ def _recommendation_macros(item: SlotRecommendation) -> dict[str, float]:
     return {name: _safe_float(getattr(source, name, 0.0)) for name in _MACROS}
 
 
+def _day_macro_totals(day_items: list[SlotRecommendation]) -> dict[str, float]:
+    totals = {name: 0.0 for name in _MACROS}
+    for item in day_items:
+        macros = _recommendation_macros(item)
+        for name in _MACROS:
+            totals[name] += macros[name]
+    return {name: round(value, 1) for name, value in totals.items()}
+
+
 def _rebalance_verified_day(
     day_items: list[SlotRecommendation],
     targets: list[MealTarget],
@@ -3364,6 +3373,81 @@ def _rebalance_verified_day(
         item.ai_idea = idea
         item.deltas = {name: abs(macros[name] - _safe_float((item.target or {}).get(name))) for name in _MACROS}
         item.meta = {**(item.meta or {}), "ai_idea": idea, "day_rebalanced": True}
+    return target_totals
+
+
+def _rebalance_complete_verified_day(
+    day_items: list[SlotRecommendation],
+    targets: list[MealTarget],
+) -> dict[str, float]:
+    """Personalize every USDA-verified serving when the first day fit misses.
+
+    A rejected model cell can be recovered from the verified recipe catalog.
+    Those catalog portions used to remain fixed while only newly generated
+    meals were adjusted, which made an otherwise safe day impossible to fit
+    when the recovered recipes collectively overshot protein or fat. Refit all
+    verified ingredients together and turn only the adjusted catalog picks
+    into personalized recipe copies so the stored ingredients and macros stay
+    internally consistent.
+    """
+    target_totals = {name: sum(_safe_float(getattr(target, name, 0.0)) for target in targets) for name in _MACROS}
+    sources: list[tuple[SlotRecommendation, dict[str, Any], list[dict[str, Any]], bool]] = []
+    flattened: list[dict[str, Any]] = []
+
+    for item in day_items:
+        is_catalog = item.ai_idea is None and item.recipe is not None
+        if isinstance(item.ai_idea, dict):
+            idea = dict(item.ai_idea)
+        elif item.recipe is not None:
+            recipe = item.recipe
+            meta = item.meta or {}
+            idea = {
+                "title": recipe.title,
+                "ingredients": recipe.ingredients,
+                "instructions": recipe.instructions or "",
+                "prep_time_min": recipe.prep_time_min,
+                "cook_time_min": recipe.cook_time_min,
+                "total_time_min": recipe.total_time_min,
+                "protein_group": meta.get("protein_group") or "unknown",
+                "protein_item": meta.get("protein_item") or "unknown",
+                "carb_item": meta.get("carb_item") or "unknown",
+            }
+        else:
+            return target_totals
+
+        ingredients = idea.get("ingredients")
+        if not isinstance(ingredients, list) or ingredient_nutrition_totals({"ingredients": ingredients}) is None:
+            return target_totals
+        copied = [dict(ingredient) for ingredient in ingredients if isinstance(ingredient, dict)]
+        if len(copied) != len(ingredients):
+            return target_totals
+        sources.append((item, idea, copied, is_catalog))
+        flattened.extend(copied)
+
+    if not flattened or any(value <= 0 for value in target_totals.values()):
+        return target_totals
+
+    fitted = fit_portions_to_targets(flattened, target_totals)
+    cursor = 0
+    for item, idea, original, is_catalog in sources:
+        count = len(original)
+        meal_ingredients = fitted[cursor : cursor + count]
+        cursor += count
+        macros = ingredient_nutrition_totals({"ingredients": meal_ingredients})
+        if macros is None:
+            continue
+        personalized = {**idea, "ingredients": meal_ingredients, "approx_macros": macros}
+        item.ai_idea = personalized
+        item.recipe = None
+        item.deltas = {name: abs(macros[name] - _safe_float((item.target or {}).get(name))) for name in _MACROS}
+        item.meta = {
+            **(item.meta or {}),
+            "ai_idea": personalized,
+            "day_rebalanced": True,
+            "complete_day_rebalanced": True,
+            "mode": "create",
+            **({"personalized_catalog_portions": True} if is_catalog else {}),
+        }
     return target_totals
 
 
@@ -3779,6 +3863,19 @@ def recommend_recipes(
     day_target_totals = _rebalance_verified_day(items, adjusted_meals)
     target_misses = _day_target_misses(items, day_target_totals)
     if target_misses:
+        before_totals = _day_macro_totals(items)
+        _rebalance_complete_verified_day(items, adjusted_meals)
+        target_misses = _day_target_misses(items, day_target_totals)
+        logger.info(
+            "daily_complete_day_rebalance",
+            extra={
+                "target_totals": day_target_totals,
+                "before_totals": before_totals,
+                "after_totals": _day_macro_totals(items),
+                "remaining_misses": target_misses,
+            },
+        )
+    if target_misses:
         hard_misses = _day_target_misses(items, day_target_totals, _DAY_RECOVERY_LIMITS)
         if not hard_misses:
             logger.warning(
@@ -3791,7 +3888,11 @@ def recommend_recipes(
     if target_misses:
         logger.warning(
             "daily_target_rejected",
-            extra={"reason_codes": [f"daily_{name}_target_miss" for name in target_misses]},
+            extra={
+                "reason_codes": [f"daily_{name}_target_miss" for name in target_misses],
+                "target_totals": day_target_totals,
+                "actual_totals": _day_macro_totals(items),
+            },
         )
         raise HTTPException(
             status_code=422,
@@ -4621,6 +4722,20 @@ def recommend_weekly_apply(
         day_target_totals = _rebalance_verified_day(day_items, adjusted_meals)
         target_misses = _day_target_misses(day_items, day_target_totals)
         if target_misses:
+            before_totals = _day_macro_totals(day_items)
+            _rebalance_complete_verified_day(day_items, adjusted_meals)
+            target_misses = _day_target_misses(day_items, day_target_totals)
+            logger.info(
+                "weekly_complete_day_rebalance",
+                extra={
+                    "date": date_iso,
+                    "target_totals": day_target_totals,
+                    "before_totals": before_totals,
+                    "after_totals": _day_macro_totals(day_items),
+                    "remaining_misses": target_misses,
+                },
+            )
+        if target_misses:
             hard_misses = _day_target_misses(day_items, day_target_totals, _DAY_RECOVERY_LIMITS)
             if not hard_misses:
                 logger.warning(
@@ -4637,7 +4752,12 @@ def recommend_weekly_apply(
             db.rollback()
             logger.warning(
                 "weekly_day_target_rejected",
-                extra={"date": date_iso, "reason_codes": [f"daily_{name}_target_miss" for name in target_misses]},
+                extra={
+                    "date": date_iso,
+                    "reason_codes": [f"daily_{name}_target_miss" for name in target_misses],
+                    "target_totals": day_target_totals,
+                    "actual_totals": _day_macro_totals(day_items),
+                },
             )
             raise HTTPException(
                 status_code=422,
