@@ -258,6 +258,7 @@
     }
 
     .plan-busy__box{
+      position:relative;
       width:min(420px,calc(100vw - 32px));
       padding:22px 24px;
       border-radius:14px;
@@ -268,7 +269,26 @@
       text-align:center;
     }
 
-    .plan-busy__title{font-size:17px;font-weight:700;margin-bottom:8px}
+    .plan-busy__close{
+      position:absolute;
+      top:8px;
+      right:8px;
+      width:44px;
+      height:44px;
+      display:grid;
+      place-items:center;
+      border:0;
+      border-radius:10px;
+      background:transparent;
+      color:rgba(255,255,255,.72);
+      font:inherit;
+      font-size:27px;
+      line-height:1;
+      cursor:pointer;
+    }
+    .plan-busy__close:hover{background:rgba(255,255,255,.08);color:#fff}
+    .plan-busy__close:focus-visible{outline:3px solid #6ee7b7;outline-offset:2px}
+    .plan-busy__title{font-size:17px;font-weight:700;margin-bottom:8px;padding:0 36px}
     .plan-busy__message{color:rgba(255,255,255,.78);min-height:22px}
     .plan-busy__bar{height:6px;margin:18px 0 12px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.1)}
     .plan-busy__bar::after{content:"";display:block;width:42%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#6ee7b7,#60a5fa);animation:plan-progress 1.35s ease-in-out infinite}
@@ -493,9 +513,10 @@
     </form>
   </dialog>
 
-  <div id="plan-busy" class="plan-busy" style="display:none;">
-    <div class="plan-busy__box">
-      <div class="plan-busy__title">Building your week</div>
+  <div id="plan-busy" class="plan-busy" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="plan-busy-title" aria-describedby="plan-busy-msg plan-busy-meta" aria-hidden="true">
+    <div class="plan-busy__box" tabindex="-1">
+      <button id="plan-busy-close" class="plan-busy__close" type="button" aria-label="Close planning status">&times;</button>
+      <div id="plan-busy-title" class="plan-busy__title">Building your week</div>
       <div id="plan-busy-msg" class="plan-busy__message" aria-live="polite">Working…</div>
       <div class="plan-busy__bar" aria-hidden="true"></div>
       <div id="plan-busy-meta" class="plan-busy__meta">Usually 20–40 seconds</div>
@@ -505,7 +526,7 @@
   </div>
 
   <script src="/ui/core.js?v=2025-11-04" defer></script>
-  <script src="/ui/plan.js?v=2026-09-11-practical-portions" defer></script>
+  <script src="/ui/plan.js?v=2026-09-14-dismissible-planning" defer></script>
   <script src="/ui/beta.js?v=2026-09-06-tour" defer></script>
 </body>
 </html>

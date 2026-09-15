@@ -88,6 +88,7 @@
   const busyTitle = busyEl?.querySelector('.plan-busy__title');
   const busyMsg = $('plan-busy-msg');
   const busyMeta = $('plan-busy-meta');
+  const busyClose = $('plan-busy-close');
   const busyCancel = $('plan-busy-cancel');
   const busyRetry = $('plan-busy-retry');
   let busyStartedAt = 0;
@@ -96,6 +97,8 @@
   let activeWeeklyJobId = null;
   const locallyCancelledWeeklyJobs = new Set();
   let weeklyRetryAction = null;
+  let busyDismissed = false;
+  let busyPreviousFocus = null;
 
   const TODAY_PROGRESS_STAGES = [
     [0, 'Reviewing today’s goals and training…'],
@@ -132,7 +135,12 @@
   function setBusy(on, msg, options = {}) {
     if (!busyEl) return;
     busyEl.style.display = on ? 'flex' : 'none';
+    busyEl.setAttribute('aria-hidden', on ? 'false' : 'true');
     if (on) {
+      busyDismissed = false;
+      busyPreviousFocus = document.activeElement;
+      weeklyRetryAction = null;
+      if (busyRetry) busyRetry.hidden = true;
       busyCanContinueInBackground = options.background !== false;
       busyProgressStages = options.stages || WEEKLY_PROGRESS_STAGES;
       if (busyTitle) busyTitle.textContent = options.title || 'Building your week';
@@ -140,13 +148,24 @@
       updateBusyProgress(msg);
       clearInterval(busyTimer);
       busyTimer = setInterval(() => updateBusyProgress(), 1000);
+      requestAnimationFrame(() => busyClose?.focus());
     } else {
       clearInterval(busyTimer);
       busyTimer = null;
       busyStartedAt = 0;
       if (busyRetry) busyRetry.hidden = true;
       weeklyRetryAction = null;
+      if (busyPreviousFocus instanceof HTMLElement && busyPreviousFocus.isConnected) {
+        busyPreviousFocus.focus();
+      }
+      busyPreviousFocus = null;
     }
+  }
+
+  function dismissBusy() {
+    if (!busyEl || busyEl.style.display === 'none') return;
+    busyDismissed = true;
+    setBusy(false);
   }
 
   function showWeeklyFailure(error, retryAction) {
@@ -155,6 +174,11 @@
     busyStartedAt = 0;
     activeWeeklyJobId = null;
     sessionStorage.removeItem(WEEKLY_JOB_STORAGE_KEY);
+    if (busyDismissed) {
+      flash(`${error.message || 'We couldn’t finish this week plan.'} Your previous week is safe and unchanged.`, 'error');
+      weeklyRetryAction = null;
+      return;
+    }
     if (busyTitle) busyTitle.textContent = 'Weekly planning needs another try';
     if (busyMsg) {
       const reason = error.message || 'We couldn’t finish this week plan.';
@@ -177,6 +201,11 @@
     clearInterval(busyTimer);
     busyTimer = null;
     busyStartedAt = 0;
+    if (busyDismissed) {
+      flash(`${error.message || "We couldn’t finish today's plan."} Your existing plan is still shown.`, 'error');
+      weeklyRetryAction = null;
+      return;
+    }
     if (busyTitle) busyTitle.textContent = "Today's planning needs another try";
     if (busyMsg) {
       busyMsg.textContent = `${error.message || "We couldn’t finish today's plan."} Your existing plan is still shown.`;
@@ -194,6 +223,14 @@
     const retry = weeklyRetryAction;
     setBusy(false);
     retry?.();
+  });
+
+  busyClose?.addEventListener('click', dismissBusy);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && busyEl?.style.display !== 'none') {
+      event.preventDefault();
+      dismissBusy();
+    }
   });
 
   // Logout wiring for this page
