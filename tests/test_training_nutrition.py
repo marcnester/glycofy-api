@@ -279,6 +279,59 @@ def test_completed_time_on_today_planned_workout_is_not_double_counted():
     assert result.final == BASELINE
 
 
+def test_completed_strava_strength_replaces_matching_future_manual_estimate():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 7, 24, 12, tzinfo=UTC)
+
+    with Session(engine) as db:
+        user = _user()
+        db.add(user)
+        db.flush()
+        db.add_all(
+            [
+                PlannedWorkout(
+                    user_id=1,
+                    workout_date=now.date(),
+                    start_time=datetime(2026, 7, 24, 15),
+                    sport="Strength",
+                    duration_min=75,
+                    intensity="moderate",
+                    priority="normal",
+                    source="manual",
+                ),
+                Activity(
+                    user_id=1,
+                    provider="strava",
+                    source_provider="strava",
+                    source_id="actual-strength",
+                    start_time=datetime(2026, 7, 24, 8),
+                    duration_s=89 * 60,
+                    kcal=628,
+                    sport="WeightTraining",
+                ),
+            ]
+        )
+        db.commit()
+
+        result = calculate_training_nutrition(
+            db=db,
+            user=user,
+            plan_date=now.date(),
+            baseline=BASELINE,
+            now=now,
+        )
+
+    assert result.training.activity_count == 1
+    assert result.training.exercise_kcal == 628
+    assert result.training.duration_min == 89
+    assert result.training.planned_workout_count == 0
+
+
 def _planned_result(*, duration: int, intensity: str, sport: str = "Cycling", weight_kg: float = 70):
     user = _user()
     user.weight_kg = weight_kg

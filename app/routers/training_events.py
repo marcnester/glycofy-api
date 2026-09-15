@@ -15,6 +15,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import Activity, PlannedWorkout, User
 from app.routers.auth import get_current_user
+from app.services.workout_reconciliation import reconcile_planned_workouts, reconciliation_activity_window
 
 router = APIRouter(prefix="/v1/training-events", tags=["training-events"])
 _CSV_MAX_BYTES = 1_000_000
@@ -231,6 +232,18 @@ def list_training_events(
         .order_by(PlannedWorkout.workout_date, PlannedWorkout.start_time, PlannedWorkout.id)
         .all()
     )
+    match_start, match_end = reconciliation_activity_window(date_from, date_to)
+    activities = (
+        db.query(Activity)
+        .filter(
+            Activity.user_id == user.id,
+            Activity.start_time >= match_start,
+            Activity.start_time < match_end,
+        )
+        .order_by(Activity.start_time)
+        .all()
+    )
+    events, _ = reconcile_planned_workouts(events, activities, user)
     return {"items": [_event_dict(event) for event in events]}
 
 
@@ -271,15 +284,30 @@ def training_context(
         .count()
     )
     range_end = plan_date + timedelta(days=days - 1)
-    planned = (
+    planned_rows = (
         db.query(PlannedWorkout)
         .filter(
             PlannedWorkout.user_id == user.id,
             PlannedWorkout.workout_date >= plan_date,
             PlannedWorkout.workout_date <= range_end,
         )
-        .count()
+        .order_by(PlannedWorkout.workout_date, PlannedWorkout.start_time, PlannedWorkout.id)
+        .all()
     )
+    match_start, match_end = reconciliation_activity_window(plan_date, range_end)
+    matching_activities = (
+        db.query(Activity)
+        .filter(
+            Activity.user_id == user.id,
+            Activity.start_time >= match_start,
+            Activity.start_time < match_end,
+            Activity.start_time <= now,
+        )
+        .order_by(Activity.start_time)
+        .all()
+    )
+    planned_rows, matches = reconcile_planned_workouts(planned_rows, matching_activities, user, now=now)
+    planned = len(planned_rows)
     if recent and planned:
         state = "complete"
         title = "Training-aware meal planning is ready"
@@ -314,6 +342,7 @@ def training_context(
         "message": message,
         "recent_completed": recent,
         "upcoming_planned": planned,
+        "completed_plan_matches": len(matches),
         "from": plan_date.isoformat(),
         "to": range_end.isoformat(),
     }

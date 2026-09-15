@@ -8,8 +8,9 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models import Activity, PlannedWorkout, User
+from app.services.workout_reconciliation import reconcile_planned_workouts, reconciliation_activity_window
 
-FUELING_POLICY_VERSION = "2026-09-12.1"
+FUELING_POLICY_VERSION = "2026-09-14.1"
 
 
 @dataclass(frozen=True)
@@ -526,4 +527,17 @@ def calculate_training_nutrition(
             (PlannedWorkout.start_time.is_(None)) | (PlannedWorkout.start_time >= now_naive)
         )
     planned = planned_query.order_by(PlannedWorkout.start_time, PlannedWorkout.id).all()
+    match_start, match_end = reconciliation_activity_window(plan_date, plan_date)
+    matching_activities = (
+        db.query(Activity)
+        .filter(
+            Activity.user_id == user.id,
+            Activity.start_time >= match_start,
+            Activity.start_time < match_end,
+            Activity.start_time <= now_naive,
+        )
+        .order_by(Activity.start_time.asc())
+        .all()
+    )
+    planned, _ = reconcile_planned_workouts(planned, matching_activities, user, now=now_naive)
     return _apply_planned_fueling(recovery_result, user, planned)

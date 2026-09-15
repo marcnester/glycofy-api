@@ -137,3 +137,50 @@ def test_training_context_explains_standard_and_complete_modes():
         assert complete["recent_completed"] == 1
         assert complete["upcoming_planned"] == 1
     app.dependency_overrides.clear()
+
+
+def test_completed_strava_activity_is_removed_from_upcoming_and_context():
+    from datetime import UTC, datetime, timedelta
+
+    with _client() as client:
+        client.post("/auth/signup", json={"email": "reconcile@example.com", "password": "a-secure-password-123"})
+        started = datetime.now(UTC) - timedelta(hours=1)
+        day = started.date().isoformat()
+        created = client.post(
+            "/v1/training-events",
+            json={"workout_date": day, "sport": "Strength", "duration_min": 75, "intensity": "moderate"},
+        )
+        assert created.status_code == 201
+
+        override = app.dependency_overrides[get_db]
+        db_iterator = override()
+        db = next(db_iterator)
+        try:
+            from app.models import User
+
+            user = db.query(User).filter(User.email == "reconcile@example.com").one()
+            db.add(
+                Activity(
+                    user_id=user.id,
+                    provider="strava",
+                    source_provider="strava",
+                    source_id="completed-strength",
+                    start_time=started.replace(tzinfo=None),
+                    duration_s=89 * 60,
+                    kcal=628,
+                    sport="WeightTraining",
+                )
+            )
+            db.commit()
+        finally:
+            db_iterator.close()
+
+        listed = client.get(f"/v1/training-events?from={day}&to={day}")
+        assert listed.status_code == 200
+        assert listed.json()["items"] == []
+
+        context = client.get(f"/v1/training-events/context/{day}?days=1")
+        assert context.status_code == 200
+        assert context.json()["upcoming_planned"] == 0
+        assert context.json()["completed_plan_matches"] == 1
+    app.dependency_overrides.clear()
