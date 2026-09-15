@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
@@ -66,8 +66,20 @@ def verify_login_password(user: User | None, plain: str, db: Session) -> bool:
 # -----------------------------------------------------------------------------
 # JWT
 # -----------------------------------------------------------------------------
-def _create_access_token(sub: str, minutes: int = 60, token_version: int = 0) -> str:
-    return create_access_token(sub, expires_minutes=minutes, token_version=token_version)
+def _create_access_token(
+    sub: str,
+    minutes: int | None = None,
+    token_version: int = 0,
+    session_started_at: int | None = None,
+) -> str:
+    if minutes is None:
+        minutes = settings.SESSION_IDLE_TIMEOUT_MINUTES
+    return create_access_token(
+        sub,
+        expires_minutes=minutes,
+        token_version=token_version,
+        session_started_at=session_started_at,
+    )
 
 
 def _check_auth_limit(request: Request, action: str, identifier: str | None = None) -> None:
@@ -117,19 +129,47 @@ COOKIE_ACCESS = settings.SESSION_COOKIE_NAME
 LEGACY_COOKIES = ("glyco_auth", "id_token", "glyco_token")
 
 
-def _cookie_kwargs(*, http_only: bool):
+def _cookie_kwargs(*, http_only: bool, max_age_seconds: int | None = None):
     # Dev on 127.0.0.1 — secure=False + SameSite=Lax is fine.
     return dict(
         httponly=http_only,
         secure=settings.COOKIE_SECURE,
         samesite="lax",
         path="/",
-        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        max_age=(max_age_seconds if max_age_seconds is not None else settings.SESSION_IDLE_TIMEOUT_MINUTES * 60),
     )
 
 
 def _set_all_session_cookies(resp: JSONResponse, jwt_token: str) -> None:
     resp.set_cookie(COOKIE_ACCESS, jwt_token, **_cookie_kwargs(http_only=True))
+
+
+def refresh_session_cookie(request: Request, response: Response) -> None:
+    """Slide a valid browser session forward without exceeding its hard cap."""
+    if not getattr(request.state, "session_cookie_authenticated", False):
+        return
+    payload = getattr(request.state, "session_payload", None) or {}
+    now_ts = int(datetime.now(tz=UTC).timestamp())
+    absolute_exp = int(payload.get("session_exp") or 0)
+    # Tokens issued before rolling sessions shipped use their original iat as
+    # the beginning of the seven-day absolute window.
+    auth_time = int(payload.get("auth_time") or payload.get("iat") or now_ts)
+    if not absolute_exp:
+        absolute_exp = auth_time + settings.SESSION_ABSOLUTE_TIMEOUT_MINUTES * 60
+    remaining = absolute_exp - now_ts
+    if remaining <= 0:
+        return
+    max_age = min(settings.SESSION_IDLE_TIMEOUT_MINUTES * 60, remaining)
+    refreshed = _create_access_token(
+        str(payload["sub"]),
+        token_version=int(payload.get("ver", 0)),
+        session_started_at=auth_time,
+    )
+    response.set_cookie(
+        COOKIE_ACCESS,
+        refreshed,
+        **_cookie_kwargs(http_only=True, max_age_seconds=max_age),
+    )
 
 
 def _clear_all_session_cookies(resp: JSONResponse) -> None:
@@ -198,6 +238,7 @@ def logout(request: Request, db: Session = Depends(get_db), user: User = Depends
     db.add(user)
     db.commit()
     record_security_event(db, request, "session_logout", "success", user_id=user.id)
+    request.state.session_cookie_authenticated = False
     resp = JSONResponse({"ok": True})
     _clear_all_session_cookies(resp)
     return resp
@@ -221,9 +262,7 @@ def signup(request: Request, body: SignupRequest, background_tasks: BackgroundTa
     db.refresh(user)
     record_security_event(db, request, "account_signup", "success", user_id=user.id)
 
-    token = _create_access_token(
-        str(user.id), minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES, token_version=user.token_version
-    )
+    token = _create_access_token(str(user.id), token_version=user.token_version)
     verification_sent = _send_verification(user, db, background_tasks)
     payload = {"ok": True}
     if verification_sent:
@@ -252,9 +291,7 @@ def login(request: Request, body: LoginRequest, background_tasks: BackgroundTask
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
 
-    token = _create_access_token(
-        str(user.id), minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES, token_version=user.token_version
-    )
+    token = _create_access_token(str(user.id), token_version=user.token_version)
     resp = JSONResponse({"ok": True})
     _set_all_session_cookies(resp, token)
     record_security_event(db, request, "authentication_login", "success", user_id=user.id)

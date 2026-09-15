@@ -44,15 +44,26 @@ def _now_utc() -> datetime:
     return datetime.now(tz=UTC)
 
 
-def create_access_token(subject: str | int, expires_minutes: int | None = None, token_version: int = 0) -> str:
+def create_access_token(
+    subject: str | int,
+    expires_minutes: int | None = None,
+    token_version: int = 0,
+    session_started_at: int | None = None,
+) -> str:
     if expires_minutes is None:
         expires_minutes = int(getattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 60) or 60)
 
     now = _now_utc()
+    now_ts = int(now.timestamp())
+    auth_time = int(session_started_at if session_started_at is not None else now_ts)
+    absolute_exp = auth_time + int(settings.SESSION_ABSOLUTE_TIMEOUT_MINUTES) * 60
+    idle_exp = int((now + timedelta(minutes=expires_minutes)).timestamp())
     payload = {
         "sub": str(subject),
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=expires_minutes)).timestamp()),
+        "iat": now_ts,
+        "auth_time": auth_time,
+        "session_exp": absolute_exp,
+        "exp": min(idle_exp, absolute_exp),
         "iss": settings.JWT_ISS,
         "aud": settings.JWT_AUD,
         "ver": int(token_version),
@@ -161,5 +172,10 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     if int(payload.get("ver", -1)) != int(user.token_version or 0):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
+
+    # Middleware uses these only after the database and token-version checks
+    # above succeed. Bearer clients are intentionally never given cookies.
+    request.state.session_payload = payload
+    request.state.session_cookie_authenticated = request.cookies.get(settings.SESSION_COOKIE_NAME) == token
 
     return user

@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     # ─── Auth / JWT ───────────────────────────────────────────────────────────
     JWT_SECRET: str = "dev_fallback_secret_change_me"
     JWT_ALGORITHM: str = "HS256"
+    # Browser sessions slide forward after authenticated activity, but never
+    # beyond the absolute lifetime measured from the original sign-in.
+    SESSION_IDLE_TIMEOUT_MINUTES: int = 24 * 60
+    SESSION_ABSOLUTE_TIMEOUT_MINUTES: int = 7 * 24 * 60
+    # Retained for backwards compatibility with non-browser token callers.
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     JWT_ISS: str | None = "glyco.local"
     JWT_AUD: str | None = "glyco.web"
@@ -156,6 +161,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_unsafe_production_defaults(self):
+        if self.SESSION_IDLE_TIMEOUT_MINUTES < 1:
+            raise ValueError("SESSION_IDLE_TIMEOUT_MINUTES must be positive")
+        if self.SESSION_ABSOLUTE_TIMEOUT_MINUTES < self.SESSION_IDLE_TIMEOUT_MINUTES:
+            raise ValueError("SESSION_ABSOLUTE_TIMEOUT_MINUTES must be at least the idle timeout")
         if not self.is_production:
             # Avoid weak HMAC keys in zero-config local development without
             # exposing or rewriting the developer's .env value.

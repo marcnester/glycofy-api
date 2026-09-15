@@ -322,6 +322,7 @@ def delete_my_account(
     record_security_event(db, request, "account_deletion", "requested", severity="warning", user_id=user_id)
     db.delete(user)
     db.commit()
+    request.state.session_cookie_authenticated = False
     response = JSONResponse({"ok": True, "strava_revoked": provider_revoked})
     _clear_all_session_cookies(response)
     return response

@@ -240,6 +240,8 @@ async def security_controls(request: Request, call_next):
         logging.getLogger("glycofy.application").exception("unhandled_request_exception")
         request_id_context.reset(context_token)
         raise
+    if response.status_code < 400:
+        auth_router.refresh_session_cookie(request, response)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")

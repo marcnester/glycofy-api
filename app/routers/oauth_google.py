@@ -409,9 +409,7 @@ async def google_callback(
     record_security_event(db, request, "oauth_google_login", "success", user_id=user.id)
 
     # Mint JWT and set cookies
-    app_jwt = _create_access_token(
-        str(user.id), minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES, token_version=user.token_version
-    )
+    app_jwt = _create_access_token(str(user.id), token_version=user.token_version)
 
     # Safe redirect path
     dest = _safe_return_path(request.cookies.get(RETURN_COOKIE_NAME))

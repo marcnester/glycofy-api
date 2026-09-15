@@ -9,6 +9,7 @@ Glycofy handles health, dietary, allergy, and connected-account data. Security i
 - Set a random `JWT_SECRET` of at least 32 characters.
 - Generate a separate Fernet key for `OAUTH_TOKEN_ENCRYPTION_KEY`.
 - Set `COOKIE_SECURE=true`, an HTTPS `PUBLIC_BASE_URL`, and exact `ALLOWED_ORIGINS` and `ALLOWED_HOSTS` values.
+- Keep browser sessions on a bounded rolling lifetime. The defaults are a 24-hour idle timeout and a seven-day absolute sign-in limit; logout, password reset, and account deletion revoke sessions immediately.
 - Keep `ENABLE_DEV_ROUTES=false`.
 - Run `alembic upgrade head` before starting the new application version.
 - Encrypt legacy provider credentials with `python -m scripts.encrypt_oauth_tokens` after backing up the database.

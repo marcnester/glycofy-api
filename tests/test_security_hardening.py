@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -537,24 +538,80 @@ def test_logout_revokes_the_issued_session(client: TestClient):
     )
     assert signup.status_code == 200
     assert client.get("/users/me").status_code == 200
-    assert client.post("/auth/logout").status_code == 200
+    logout = client.post("/auth/logout")
+    assert logout.status_code == 200
+    assert "Max-Age=0" in logout.headers["set-cookie"]
+    assert "eyJ" not in logout.headers["set-cookie"]
     assert client.get("/users/me").status_code == 401
 
 
 def test_session_expiry_is_enforced_and_cookie_matches_config(client: TestClient, monkeypatch):
-    monkeypatch.setattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 7)
+    monkeypatch.setattr(settings, "SESSION_IDLE_TIMEOUT_MINUTES", 24 * 60)
+    monkeypatch.setattr(settings, "SESSION_ABSOLUTE_TIMEOUT_MINUTES", 7 * 24 * 60)
     response = client.post(
         "/auth/signup",
         json={"email": "expiry@example.com", "password": "a-secure-password-456"},
     )
     assert response.status_code == 200
-    assert "Max-Age=420" in response.headers["set-cookie"]
+    assert "Max-Age=86400" in response.headers["set-cookie"]
     payload = decode_jwt(client.cookies.get(settings.SESSION_COOKIE_NAME))
-    assert payload["exp"] - payload["iat"] == 420
+    assert payload["exp"] - payload["iat"] == 24 * 60 * 60
+    assert payload["session_exp"] - payload["auth_time"] == 7 * 24 * 60 * 60
 
     expired = create_access_token("1", expires_minutes=-1)
     with pytest.raises(HTTPException, match="Session expired"):
         decode_jwt(expired)
+
+
+def test_authenticated_activity_renews_idle_window_without_extending_absolute_limit(client: TestClient, monkeypatch):
+    from app import auth_utils
+
+    active_time = datetime.now(tz=UTC)
+    initial_time = active_time - timedelta(hours=12)
+    monkeypatch.setattr(auth_utils, "_now_utc", lambda: initial_time)
+    signup = client.post(
+        "/auth/signup",
+        json={"email": "rolling-session@example.com", "password": "a-secure-password-456"},
+    )
+    assert signup.status_code == 200
+    initial = decode_jwt(client.cookies.get(settings.SESSION_COOKIE_NAME))
+
+    monkeypatch.setattr(auth_utils, "_now_utc", lambda: active_time)
+    response = client.get("/users/me")
+    assert response.status_code == 200
+    assert "Max-Age=86400" in response.headers["set-cookie"]
+    refreshed = decode_jwt(client.cookies.get(settings.SESSION_COOKIE_NAME))
+    assert refreshed["exp"] == int((active_time + timedelta(hours=24)).timestamp())
+    assert refreshed["auth_time"] == initial["auth_time"]
+    assert refreshed["session_exp"] == initial["session_exp"]
+
+
+def test_session_expiration_is_capped_at_seven_days_from_sign_in():
+    now = datetime.now(tz=UTC)
+    started = int((now - timedelta(days=6, hours=23)).timestamp())
+    token = create_access_token("1", expires_minutes=24 * 60, session_started_at=started)
+    payload = decode_jwt(token)
+    assert payload["auth_time"] == started
+    assert payload["exp"] == payload["session_exp"]
+    assert 0 < payload["exp"] - int(now.timestamp()) <= 60 * 60
+
+    expired_start = int((now - timedelta(days=8)).timestamp())
+    expired = create_access_token("1", expires_minutes=24 * 60, session_started_at=expired_start)
+    with pytest.raises(HTTPException, match="Session expired"):
+        decode_jwt(expired)
+
+
+def test_bearer_authentication_does_not_create_a_browser_session(client: TestClient):
+    signup = client.post(
+        "/auth/signup",
+        json={"email": "bearer-session@example.com", "password": "a-secure-password-456"},
+    )
+    assert signup.status_code == 200
+    token = client.cookies.get(settings.SESSION_COOKIE_NAME)
+    client.cookies.clear()
+    response = client.get("/users/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert "set-cookie" not in response.headers
 
 
 def test_authentication_events_are_persisted_without_raw_email(client: TestClient):
