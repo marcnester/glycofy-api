@@ -613,6 +613,77 @@ def test_complete_day_rebalance_personalizes_verified_catalog_portions():
     assert all(item.meta["mode"] == "create" for item in recommendations)
 
 
+def test_complete_day_rebalance_adjusts_verified_meals_around_provisional_meal():
+    targets = [
+        llm_recommend.MealTarget(slot="breakfast", kcal=500, protein_g=20, carbs_g=70, fat_g=15),
+        llm_recommend.MealTarget(slot="lunch", kcal=1400, protein_g=80, carbs_g=150, fat_g=45),
+    ]
+    provisional = llm_recommend.SlotRecommendation(
+        slot="breakfast",
+        target=targets[0].model_dump(exclude={"slot"}),
+        ai_idea={
+            "title": "Provisional breakfast",
+            "ingredients": [{"name": "unresolved food", "amount_g": 100}],
+            "approx_macros": {"kcal": 500, "protein_g": 20, "carbs_g": 70, "fat_g": 15},
+        },
+        meta={"mode": "create"},
+    )
+    verified_ingredients = [
+        {
+            "name": "chicken breast",
+            "amount": 300,
+            "amount_g": 300,
+            "unit": "g",
+            "nutrition": {"kcal": 495, "protein_g": 93, "carbs_g": 0, "fat_g": 10.8},
+        },
+        {
+            "name": "cooked rice",
+            "amount": 500,
+            "amount_g": 500,
+            "unit": "g",
+            "nutrition": {"kcal": 650, "protein_g": 13.5, "carbs_g": 140, "fat_g": 1.5},
+        },
+        {
+            "name": "olive oil",
+            "amount": 30,
+            "amount_g": 30,
+            "unit": "g",
+            "nutrition": {"kcal": 265.2, "protein_g": 0, "carbs_g": 0, "fat_g": 30},
+        },
+    ]
+    verified = llm_recommend.SlotRecommendation(
+        slot="lunch",
+        target=targets[1].model_dump(exclude={"slot"}),
+        recipe=llm_recommend.RecipePick(
+            id=99,
+            title="Chicken and rice",
+            meal_type="lunch",
+            kcal=1410.2,
+            protein_g=106.5,
+            carbs_g=140,
+            fat_g=42.3,
+            ingredients=verified_ingredients,
+            instructions="Cook chicken thoroughly and serve with rice.",
+            prep_time_min=5,
+            cook_time_min=15,
+            total_time_min=20,
+        ),
+        meta={"mode": "pick", "protein_group": "poultry"},
+    )
+
+    original_protein = verified.recipe.protein_g
+    target_totals = llm_recommend._rebalance_complete_verified_day([provisional, verified], targets)
+
+    assert provisional.ai_idea["approx_macros"]["protein_g"] == 20
+    assert verified.recipe is None
+    assert verified.ai_idea is not None
+    assert verified.ai_idea["approx_macros"]["protein_g"] < original_protein
+    assert (
+        llm_recommend._day_target_misses([provisional, verified], target_totals, llm_recommend._DAY_RECOVERY_LIMITS)
+        == []
+    )
+
+
 def test_day_target_protein_tolerance_accepts_real_world_variability():
     target_totals = {"kcal": 2000, "protein_g": 100, "carbs_g": 250, "fat_g": 67}
 

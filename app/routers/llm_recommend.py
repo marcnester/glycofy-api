@@ -3391,6 +3391,7 @@ def _rebalance_complete_verified_day(
     internally consistent.
     """
     target_totals = {name: sum(_safe_float(getattr(target, name, 0.0)) for target in targets) for name in _MACROS}
+    fixed_totals = {name: 0.0 for name in _MACROS}
     sources: list[tuple[SlotRecommendation, dict[str, Any], list[dict[str, Any]], bool]] = []
     flattened: list[dict[str, Any]] = []
 
@@ -3413,21 +3414,31 @@ def _rebalance_complete_verified_day(
                 "carb_item": meta.get("carb_item") or "unknown",
             }
         else:
-            return target_totals
+            macros = _recommendation_macros(item)
+            for name in _MACROS:
+                fixed_totals[name] += macros[name]
+            continue
 
         ingredients = idea.get("ingredients")
         if not isinstance(ingredients, list) or ingredient_nutrition_totals({"ingredients": ingredients}) is None:
-            return target_totals
+            macros = _recommendation_macros(item)
+            for name in _MACROS:
+                fixed_totals[name] += macros[name]
+            continue
         copied = [dict(ingredient) for ingredient in ingredients if isinstance(ingredient, dict)]
         if len(copied) != len(ingredients):
-            return target_totals
+            macros = _recommendation_macros(item)
+            for name in _MACROS:
+                fixed_totals[name] += macros[name]
+            continue
         sources.append((item, idea, copied, is_catalog))
         flattened.extend(copied)
 
-    if not flattened or any(value <= 0 for value in target_totals.values()):
+    residual = {name: target_totals[name] - fixed_totals[name] for name in _MACROS}
+    if not flattened or any(value <= 0 for value in residual.values()):
         return target_totals
 
-    fitted = fit_portions_to_targets(flattened, target_totals)
+    fitted = fit_portions_to_targets(flattened, residual)
     cursor = 0
     for item, idea, original, is_catalog in sources:
         count = len(original)
