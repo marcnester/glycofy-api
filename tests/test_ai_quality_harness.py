@@ -210,6 +210,24 @@ def test_ready_to_eat_poultry_is_not_given_raw_meat_doneness_directions():
     assert "missing_doneness_cue" not in validate_meal(repaired).codes()
 
 
+def test_ready_to_eat_poultry_loses_contradictory_raw_footer():
+    candidate = meal(
+        title="Turkey Pasta",
+        ingredients=[
+            {"name": "turkey breast, cooked", "amount": 96, "amount_g": 96, "unit": "g"},
+            {"name": "whole-wheat pasta, cooked", "amount": 156, "amount_g": 156, "unit": "g"},
+        ],
+        instructions=[
+            "Warm the cooked turkey and pasta until steaming.",
+            "Cook until no longer pink and the internal temperature reaches 165°F.",
+        ],
+    )
+
+    repaired = ensure_safe_doneness_instruction(candidate)
+
+    assert repaired["instructions"] == ["Warm the cooked turkey and pasta until steaming."]
+
+
 def test_itemized_nutrition_is_required_and_must_equal_meal_totals():
     candidate = meal()
     assert "missing_ingredient_nutrition" in validate_meal(candidate, require_ingredient_nutrition=True).codes()
@@ -417,6 +435,25 @@ def test_overnight_or_long_chill_time_must_be_in_advertised_total():
 
     assert "inconsistent_wait_time" in validate_meal(overnight).codes()
     assert "inconsistent_wait_time" in validate_meal(chilled).codes()
+
+
+def test_soaking_step_requires_an_explicit_soak_duration():
+    candidate = meal(
+        title="Black Bean Bowl",
+        ingredients=[
+            {"name": "black beans, dry", "amount": 45, "amount_g": 45, "unit": "g"},
+            {"name": "brown rice, cooked", "amount": 150, "amount_g": 150, "unit": "g"},
+        ],
+        instructions=[
+            "Soak the black beans, drain, and simmer until tender for 25 minutes.",
+            "Serve with rice.",
+        ],
+        prep_time_min=10,
+        cook_time_min=25,
+        total_time_min=35,
+    )
+
+    assert "unspecified_soak_time" in validate_meal(candidate).codes()
 
 
 def test_total_time_includes_rest_after_cooking():

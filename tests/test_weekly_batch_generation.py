@@ -378,6 +378,85 @@ def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch)
     assert len(result["days"][0]["items"]) == 4
 
 
+def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    dates = ["2026-09-01", "2026-09-02"]
+    targets = {"kcal": 500.0, "protein_g": 40.0, "carbs_g": 50.0, "fat_g": 15.0}
+    repair_calls = []
+
+    def recommendation(slot, title):
+        return llm_recommend.SlotRecommendation(
+            slot=slot,
+            target=targets,
+            ai_idea={"title": title, "approx_macros": targets},
+            meta={"mode": "create", "batch": True},
+        )
+
+    monkeypatch.setattr(
+        llm_recommend,
+        "_parallel_week_recommendations",
+        lambda *_args, **_kwargs: (
+            {
+                date: {
+                    slot: recommendation(
+                        slot,
+                        "Repeated Oat Bowl" if slot == "breakfast" else f"{date} {slot.title()}",
+                    )
+                    for slot in llm_recommend.SLOTS
+                }
+                for date in dates
+            },
+            {"accepted": 8, "rejected": 0, "latency_ms": 100},
+        ),
+    )
+
+    def repair(_client, *, days, forbidden_titles=None, **_kwargs):
+        repair_calls.append({"days": days, "forbidden_titles": forbidden_titles})
+        return {dates[1]: {"breakfast": recommendation("breakfast", "Apple Egg Breakfast")}}, {
+            "rejected": 0,
+            "latency_ms": 25,
+        }
+
+    monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", repair)
+    monkeypatch.setattr(llm_recommend, "_get_openai_client", lambda: object())
+    monkeypatch.setattr(llm_recommend._RATE, "check_and_add", lambda *_args: None)
+    monkeypatch.setattr(llm_recommend, "_day_target_misses", lambda *_args: [])
+    monkeypatch.setattr(
+        llm_recommend,
+        "_persist_day_recommendations",
+        lambda **kwargs: {"date": kwargs["day_iso"], "skipped": False, "applied": len(kwargs["day_items"])},
+    )
+
+    with Session(engine) as db:
+        user = User(email="variety@example.com", password_hash="test")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        payload = llm_recommend.WeeklyRecommendRequest(
+            days=[
+                llm_recommend.WeeklyDayRequest(
+                    date=date,
+                    meals=[llm_recommend.MealTarget(slot=slot, **targets) for slot in llm_recommend.SLOTS],
+                )
+                for date in dates
+            ]
+        )
+        request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+
+        result = llm_recommend.recommend_weekly_apply(request, payload, db, user)
+
+    assert result["generation"]["duplicate_titles_removed"] == 1
+    assert "Repeated Oat Bowl" in repair_calls[0]["forbidden_titles"]
+    assert repair_calls[0]["forbidden_titles"].count("Repeated Oat Bowl") == 1
+    assert [
+        next(item for item in day["items"] if item["slot"] == "breakfast")["ai_idea"]["title"] for day in result["days"]
+    ] == [
+        "Repeated Oat Bowl",
+        "Apple Egg Breakfast",
+    ]
+
+
 def test_daily_recommend_uses_verified_catalog_after_ai_repair_fails(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)

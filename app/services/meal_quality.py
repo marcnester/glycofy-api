@@ -445,6 +445,17 @@ def ensure_safe_doneness_instruction(meal: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(instructions, list) or not cook or cook <= 0:
         return meal
 
+    # Models occasionally attach their generic raw-poultry footer to an
+    # explicitly cooked/ready-to-eat protein. Remove that contradictory step
+    # before deciding whether this recipe needs a deterministic safety cue.
+    if not _has_raw_animal_protein(meal):
+        instructions = [
+            step
+            for step in instructions
+            if not ("no longer pink" in _words(step) and "internal temperature" in _words(step))
+        ]
+        meal["instructions"] = instructions
+
     instruction_text = _words(" ".join(str(step) for step in instructions))
     if not _has_raw_animal_protein(meal) or any(marker in instruction_text for marker in DONENESS_MARKERS):
         return meal
@@ -683,6 +694,23 @@ def validate_meal(
         report.issues.append(
             QualityIssue("inconsistent_wait_time", "Advertised total time omits required resting or chilling time.")
         )
+
+    # A direction such as "soak, drain, and simmer 25 minutes" omits the
+    # hours-long preparation needed by dried beans. Require the soak itself to
+    # have a duration so it can be reconciled with the advertised total time.
+    raw_instruction_text = " ".join(str(step) for step in instructions or []).lower()
+    if _contains(instruction_words, "soak") and "overnight" not in instruction_words:
+        explicit_soak_duration = re.search(
+            r"\bsoak\b[^,.;]{0,50}?\b(?:for\s+)?\d+(?:\.\d+)?\s*(?:minutes?|mins?|hours?|hrs?)\b",
+            raw_instruction_text,
+        )
+        if not explicit_soak_duration:
+            report.issues.append(
+                QualityIssue(
+                    "unspecified_soak_time",
+                    "Soaking instructions must state their full duration in the advertised recipe time.",
+                )
+            )
 
     preparation_actions = ("boil", "cook", "simmer", "soak", "chill", "refrigerate", "overnight")
     instruction_steps = [_words(step) for step in instructions or []]

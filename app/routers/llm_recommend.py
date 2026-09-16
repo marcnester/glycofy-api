@@ -3944,6 +3944,7 @@ def _batch_week_recommendations(
     week_context: list[dict[str, Any]] | None = None,
     flexible_meal_count: bool = False,
     synchronous_lookup_limit: int | None = None,
+    forbidden_titles: list[str] | None = None,
 ) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
     """Generate the whole week in one model round-trip and discard unsafe cells."""
     if not client or not days or _circuit_open() or _BUDGET.spent_usd >= _daily_budget_usd():
@@ -3994,6 +3995,10 @@ def _batch_week_recommendations(
         "Keep the week practical to shop: intentionally reuse produce, grains, sauces, and seasonings across meals; "
         "avoid one-off ingredients; and target no more than about 40 unique non-pantry grocery products for the week. "
         "Create variety through preparation and seasoning rather than a completely different ingredient set every day. "
+        "Never use a title listed in forbidden_titles. If an ingredient is explicitly cooked, leftover, deli, canned, "
+        "or ready-to-eat, only warm or assemble it; never add a raw-meat direction such as 'no longer pink'. "
+        "For a recipe under 45 minutes, use canned or explicitly cooked legumes. Dry legumes need their full soaking "
+        "and cooking time stated and included in total_time_min. "
         "Keep responses concise, especially instructions and reasons, then emit only the requested structured data."
         " When variety_assignment is present, use that culinary direction to distinguish the day's meals while still "
         "respecting the athlete's diet, safety constraints, targets, and practical grocery reuse. Use week_context to "
@@ -4016,6 +4021,7 @@ def _batch_week_recommendations(
             for day in (week_context or days)
         ],
         "days": days,
+        "forbidden_titles": forbidden_titles or [],
     }
     started = time.perf_counter()
     try:
@@ -4062,7 +4068,7 @@ def _batch_week_recommendations(
     targets = {(day["date"], meal["slot"]): meal["target_macros"] for day in days for meal in day.get("meals", [])}
     valid_dates = {day["date"] for day in days}
     output: dict[str, dict[str, SlotRecommendation]] = {}
-    week_titles: set[str] = set()
+    week_titles: set[str] = {_meal_similarity_key(title) for title in (forbidden_titles or []) if title}
     rejected = 0
 
     # A full week can contain hundreds of ingredient rows. Resolve each unique
@@ -4425,6 +4431,26 @@ def recommend_weekly_apply(
         athlete_feedback=athlete_feedback,
     )
 
+    # Daily calls run concurrently for speed, so siblings cannot see one
+    # another's returned titles. Remove exact cross-day repeats here and let
+    # the existing compact repair pass replace only those cells.
+    kept_title_dates: dict[str, str] = {}
+    kept_titles: list[str] = []
+    duplicate_titles_removed = 0
+    for batch_day in batch_days:
+        slots = batch_items.get(batch_day["date"], {})
+        for slot, recommendation in list(slots.items()):
+            title = str((recommendation.ai_idea or {}).get("title") or "").strip()
+            title_key = _meal_similarity_key(title)
+            if title_key and title_key in kept_title_dates and kept_title_dates[title_key] != batch_day["date"]:
+                del slots[slot]
+                duplicate_titles_removed += 1
+                continue
+            if title_key:
+                kept_title_dates.setdefault(title_key, batch_day["date"])
+                kept_titles.append(title)
+    batch_meta["duplicate_titles_removed"] = duplicate_titles_removed
+
     # Repair only the rejected cells in one compact model call. USDA remains
     # authoritative and the same validation runs again; this is not a fallback
     # to guessed nutrition. Keeping the repair bounded avoids turning one bad
@@ -4454,6 +4480,7 @@ def recommend_weekly_apply(
             athlete_feedback=athlete_feedback,
             week_context=batch_days,
             flexible_meal_count=True,
+            forbidden_titles=kept_titles,
         )
         for repair_date, slots in repaired_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
