@@ -582,7 +582,7 @@ def test_weekly_apply_relaxes_only_variety_for_final_verified_catalog_recovery(m
 
     assert len(catalog_calls) == 2
     assert catalog_calls[1]["used_recipe_ids"] == set()
-    assert catalog_calls[1]["used_meal_keys"] == set()
+    assert catalog_calls[1]["used_meal_keys"] == {"verified"}
     recovered = next(item for item in result["days"][0]["items"] if item["slot"] == "breakfast")
     assert recovered["meta"]["batch_recovery"] == "verified_catalog_relaxed_variety"
 
@@ -690,6 +690,13 @@ def test_complete_day_rebalance_personalizes_verified_catalog_portions():
     assert all(item.ai_idea and item.ai_idea["total_time_min"] == 20 for item in recommendations)
     assert all(item.meta["personalized_catalog_portions"] is True for item in recommendations)
     assert all(item.meta["mode"] == "create" for item in recommendations)
+    assert all(
+        next(ingredient for ingredient in item.ai_idea["ingredients"] if ingredient["name"] == "chicken breast")[
+            "amount_g"
+        ]
+        >= 75
+        for item in recommendations
+    )
 
 
 def test_complete_day_rebalance_adjusts_verified_meals_around_provisional_meal():

@@ -3262,6 +3262,44 @@ def _day_macro_totals(day_items: list[SlotRecommendation]) -> dict[str, float]:
     return {name: round(value, 1) for name, value in totals.items()}
 
 
+def _ingredients_with_fit_minimums(
+    item: SlotRecommendation,
+    ingredients: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach optimizer-only floors for an ingredient's role in this meal."""
+    copied = [dict(ingredient) for ingredient in ingredients]
+    if _normalize_slot(item.slot) not in {"breakfast", "lunch", "dinner"}:
+        return copied
+
+    idea = item.ai_idea if isinstance(item.ai_idea, dict) else {}
+    meta = item.meta or {}
+    protein_item = str(idea.get("protein_item") or meta.get("protein_item") or "").strip().lower()
+    protein_group = str(idea.get("protein_group") or meta.get("protein_group") or "").strip().lower()
+    animal_groups = {
+        "fish": ("salmon", "cod", "tuna", "tilapia", "trout", "shrimp", "fish"),
+        "poultry": ("chicken", "turkey"),
+        "beef": ("beef", "steak"),
+        "pork": ("pork", "ham"),
+    }
+    if not protein_item and protein_group not in animal_groups:
+        return copied
+
+    for ingredient in copied:
+        name = str(ingredient.get("name") or "").strip().lower()
+        matches_item = bool(protein_item and protein_item in name)
+        matches_group = protein_group in animal_groups and any(
+            marker in name for marker in animal_groups[protein_group]
+        )
+        if matches_item or matches_group:
+            ingredient["_fit_minimum_g"] = 75.0
+            break
+    return copied
+
+
+def _strip_fit_minimums(ingredients: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{key: value for key, value in ingredient.items() if key != "_fit_minimum_g"} for ingredient in ingredients]
+
+
 def _rebalance_verified_day(
     day_items: list[SlotRecommendation],
     targets: list[MealTarget],
@@ -3287,7 +3325,7 @@ def _rebalance_verified_day(
             for name in _MACROS:
                 fixed_totals[name] += macros[name]
             continue
-        copied = [dict(ingredient) for ingredient in ingredients]
+        copied = _ingredients_with_fit_minimums(item, ingredients)
         adjustable.append((item, copied))
         flattened.extend(copied)
 
@@ -3295,7 +3333,7 @@ def _rebalance_verified_day(
     if not flattened or any(value <= 0 for value in residual.values()):
         return target_totals
 
-    fitted = fit_portions_to_targets(flattened, residual)
+    fitted = _strip_fit_minimums(fit_portions_to_targets(flattened, residual))
     cursor = 0
     for item, original in adjustable:
         count = len(original)
@@ -3360,7 +3398,10 @@ def _rebalance_complete_verified_day(
             for name in _MACROS:
                 fixed_totals[name] += macros[name]
             continue
-        copied = [dict(ingredient) for ingredient in ingredients if isinstance(ingredient, dict)]
+        copied = _ingredients_with_fit_minimums(
+            item,
+            [dict(ingredient) for ingredient in ingredients if isinstance(ingredient, dict)],
+        )
         if len(copied) != len(ingredients):
             macros = _recommendation_macros(item)
             for name in _MACROS:
@@ -3373,7 +3414,7 @@ def _rebalance_complete_verified_day(
     if not flattened or any(value <= 0 for value in residual.values()):
         return target_totals
 
-    fitted = fit_portions_to_targets(flattened, residual)
+    fitted = _strip_fit_minimums(fit_portions_to_targets(flattened, residual))
     cursor = 0
     for item, idea, original, is_catalog in sources:
         count = len(original)
@@ -4600,7 +4641,7 @@ def recommend_weekly_apply(
                         used_protein_items=[],
                         used_carb_items=[],
                         used_recipe_ids=set(),
-                        used_meal_keys=set(),
+                        used_meal_keys=used_meal_keys,
                         allow_new_recipe=False,
                         week_protein_counts={},
                         protein_cap_per_slot=10_000,

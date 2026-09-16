@@ -693,6 +693,15 @@ def fit_portions_to_targets(
             minimum_g = 9.0
         else:
             minimum_g = practical_minimum_grams(ingredient.get("name"), ingredient.get("usda_search_query"))
+        # Callers can raise (never lower) the generic food minimum when the
+        # ingredient has a stronger role in the assembled meal. For example,
+        # 50 g of poultry can be a reasonable snack component, but it is not a
+        # practical main protein for lunch or dinner. Keep this optimizer hint
+        # private so it never becomes recipe data shown to users.
+        try:
+            minimum_g = max(minimum_g, float(ingredient.get("_fit_minimum_g") or 0))
+        except (TypeError, ValueError):
+            pass
         upper_factors.append(upper)
         lower_factors.append(min(upper, max(0.05, minimum_g / max(base_weights[index], 0.1))))
     normalized = [[value / target[pos] for pos, value in enumerate(row)] for row in evidence]
@@ -729,7 +738,7 @@ def fit_portions_to_targets(
         }
         fitted.append(
             {
-                **ingredient,
+                **{key: value for key, value in ingredient.items() if key != "_fit_minimum_g"},
                 "amount": amount_g,
                 "amount_g": amount_g,
                 "unit": "g",
