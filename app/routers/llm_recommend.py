@@ -3275,22 +3275,26 @@ def _ingredients_with_fit_minimums(
     meta = item.meta or {}
     protein_item = str(idea.get("protein_item") or meta.get("protein_item") or "").strip().lower()
     protein_group = str(idea.get("protein_group") or meta.get("protein_group") or "").strip().lower()
+    source_title = str(idea.get("title") or getattr(item.recipe, "title", "") or "").strip().lower()
     animal_groups = {
         "fish": ("salmon", "cod", "tuna", "tilapia", "trout", "shrimp", "fish"),
         "poultry": ("chicken", "turkey"),
         "beef": ("beef", "steak"),
         "pork": ("pork", "ham"),
     }
-    if not protein_item and protein_group not in animal_groups:
-        return copied
-
     for ingredient in copied:
         name = str(ingredient.get("name") or "").strip().lower()
         matches_item = bool(protein_item and protein_item in name)
         matches_group = protein_group in animal_groups and any(
             marker in name for marker in animal_groups[protein_group]
         )
-        if matches_item or matches_group:
+        # Legacy catalog rows may not have protein metadata. If an animal food
+        # is named in both the recipe title and ingredient list, it is plainly
+        # the featured protein and must receive the same main-meal floor.
+        matches_title = any(
+            marker in name and marker in source_title for markers in animal_groups.values() for marker in markers
+        )
+        if matches_item or matches_group or matches_title:
             ingredient["_fit_minimum_g"] = 75.0
             break
     return copied

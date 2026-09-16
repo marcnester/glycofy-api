@@ -679,7 +679,9 @@ def test_complete_day_rebalance_personalizes_verified_catalog_portions():
                 cook_time_min=15,
                 total_time_min=20,
             ),
-            meta={"mode": "pick", "protein_group": "poultry"},
+            # Older catalog rows do not always carry protein role metadata;
+            # the title and measured ingredient still identify the main food.
+            meta={"mode": "pick"},
         )
 
     recommendations = [recommendation("breakfast", 1), recommendation("lunch", 2)]
