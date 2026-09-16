@@ -41,6 +41,7 @@ from app.services.meal_quality import (
     QUALITY_POLICY_VERSION,
     ensure_safe_doneness_instruction,
     ingredient_nutrition_totals,
+    text_violates_exclusions,
     validate_meal,
 )
 from app.services.training_nutrition import (
@@ -1030,87 +1031,8 @@ def _preference_exclusions(pref: UserPreference | None) -> list[str]:
     return list(dict.fromkeys(out))
 
 
-_DAIRY_MARKERS = {
-    "butter",
-    "buttermilk",
-    "casein",
-    "cheddar",
-    "cheese",
-    "cottage cheese",
-    "cream",
-    "creme fraiche",
-    "feta",
-    "ghee",
-    "kefir",
-    "mascarpone",
-    "mozzarella",
-    "parmesan",
-    "ricotta",
-    "whey",
-    "yogurt",
-    "yoghurt",
-}
-_PLANT_MILK_MARKERS = {
-    "almond milk",
-    "cashew milk",
-    "coconut milk",
-    "hemp milk",
-    "oat milk",
-    "plant milk",
-    "rice milk",
-    "soy milk",
-    "non-dairy milk",
-    "lactose-free milk",
-}
-_ALLERGEN_MARKERS = {
-    "egg": {"egg", "eggs", "mayonnaise", "meringue"},
-    "fish": {"fish", "salmon", "tuna", "cod", "tilapia", "trout", "anchovy", "sardine"},
-    "shellfish": {"shellfish", "shrimp", "prawn", "crab", "lobster", "crayfish"},
-    "tree_nuts": {
-        "tree nut",
-        "almond",
-        "cashew",
-        "walnut",
-        "pecan",
-        "pistachio",
-        "hazelnut",
-        "macadamia",
-        "brazil nut",
-    },
-    "peanut": {"peanut", "groundnut"},
-    "wheat": {"wheat", "flour", "bread", "pasta", "couscous", "seitan", "bulgur", "farro"},
-    "soy": {"soy", "soya", "tofu", "tempeh", "edamame", "miso"},
-    "sesame": {"sesame", "tahini"},
-}
-
-
 def _text_violates_exclusions(text: str, exclusions: list[str]) -> bool:
-    haystack = re.sub(r"\s+", " ", str(text or "").lower())
-    for exclusion in exclusions:
-        term = re.sub(r"\s+", " ", exclusion.strip().lower())
-        if not term:
-            continue
-        if "lactose" in term or term in {"dairy", "milk allergy", "dairy allergy"}:
-            if any(marker in haystack for marker in _DAIRY_MARKERS):
-                return True
-            if "milk" in haystack and not any(marker in haystack for marker in _PLANT_MILK_MARKERS):
-                return True
-            continue
-        canonical = term.replace(" ", "_")
-        if canonical == "milk":
-            if any(marker in haystack for marker in _DAIRY_MARKERS):
-                return True
-            if "milk" in haystack and not any(marker in haystack for marker in _PLANT_MILK_MARKERS):
-                return True
-            continue
-        markers = _ALLERGEN_MARKERS.get(canonical)
-        if markers and any(re.search(rf"\b{re.escape(marker)}s?\b", haystack) for marker in markers):
-            return True
-        # The textbox is ingredient-oriented, so literal matching remains the
-        # safest behavior for user-entered foods such as mushrooms or cilantro.
-        if term in haystack:
-            return True
-    return False
+    return bool(text_violates_exclusions(str(text or ""), exclusions))
 
 
 def _recipe_violates_exclusions(recipe: Recipe, exclusions: list[str]) -> bool:

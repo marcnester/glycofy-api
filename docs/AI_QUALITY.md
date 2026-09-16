@@ -30,4 +30,4 @@ Source: U.S. Department of Agriculture, Agricultural Research Service, FoodData 
 
 Every model result carries `prompt_version` and `quality_policy_version` metadata. These values are also retained with persisted plan meals, allowing evaluation results and production behavior to be compared across prompt changes.
 
-Automated regression profiles currently cover endurance omnivore, dairy-free HYROX, vegan strength, vegetarian/nut-free, and pescatarian/wheat-free athletes. Their assertions run in the standard test suite in `tests/test_ai_quality_harness.py`.
+Automated certification covers every supported diet crossed with every declared allergen, plus high-risk combined-allergen profiles. Both the Today and seven-day planning workflows run for every profile. The policy layer also tests every known allergen alias, training-driven macro behavior, recipe completeness, nutrition reconciliation, and recovery behavior. See `docs/MEAL_PLANNER_CERTIFICATION.md` for the gate and scope.

@@ -6,26 +6,135 @@ from dataclasses import dataclass, field
 from typing import Any
 
 PROMPT_VERSION = "meal-planner-2026-09-13-v11-beta-quality"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-14-v18-complete-day-portion-fit"
+QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-15-v19-diet-allergen-certification"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
-ANIMAL_MEAT = {"beef", "chicken", "cod", "fish", "lamb", "pork", "salmon", "shrimp", "steak", "turkey", "tuna"}
-ANIMAL_PRODUCTS = ANIMAL_MEAT | {"butter", "cheese", "egg", "eggs", "honey", "milk", "whey", "yogurt"}
-MEAT = ANIMAL_MEAT - {"cod", "fish", "salmon", "shrimp", "tuna"}
+SUPPORTED_DIETS = ("omnivore", "pescatarian", "vegetarian", "vegan")
+SUPPORTED_ALLERGENS = ("milk", "egg", "fish", "shellfish", "tree_nuts", "peanut", "wheat", "soy", "sesame")
+TERRESTRIAL_MEAT = {
+    "bacon",
+    "beef",
+    "bison",
+    "buffalo",
+    "chicken",
+    "duck",
+    "goat",
+    "ham",
+    "lamb",
+    "pork",
+    "prosciutto",
+    "rabbit",
+    "sausage",
+    "steak",
+    "turkey",
+    "veal",
+    "venison",
+}
+SEAFOOD = {
+    "anchovy",
+    "clam",
+    "cod",
+    "crab",
+    "crayfish",
+    "fish",
+    "lobster",
+    "mussel",
+    "oyster",
+    "prawn",
+    "salmon",
+    "sardine",
+    "scallop",
+    "shellfish",
+    "shrimp",
+    "tilapia",
+    "trout",
+    "tuna",
+}
+ANIMAL_MEAT = TERRESTRIAL_MEAT | SEAFOOD
+DAIRY_MARKERS = {
+    "butter",
+    "buttermilk",
+    "casein",
+    "cheddar",
+    "cheese",
+    "cream",
+    "creme fraiche",
+    "feta",
+    "ghee",
+    "kefir",
+    "mascarpone",
+    "milk",
+    "mozzarella",
+    "parmesan",
+    "ricotta",
+    "whey",
+    "yoghurt",
+    "yogurt",
+}
+ANIMAL_PRODUCTS = (
+    ANIMAL_MEAT
+    | DAIRY_MARKERS
+    | {
+        "egg",
+        "eggs",
+        "gelatin",
+        "honey",
+        "lard",
+        "mayonnaise",
+        "meringue",
+    }
+)
+MEAT = TERRESTRIAL_MEAT
 ALLERGEN_ALIASES = {
-    "milk": {"butter", "casein", "cheese", "cream", "feta", "ghee", "milk", "parmesan", "whey", "yogurt"},
-    "dairy": {"butter", "casein", "cheese", "cream", "feta", "ghee", "milk", "parmesan", "whey", "yogurt"},
-    "lactose_intolerant": {"butter", "cheese", "cream", "feta", "milk", "parmesan", "whey", "yogurt"},
-    "milk_allergy": {"butter", "casein", "cheese", "cream", "feta", "ghee", "milk", "parmesan", "whey", "yogurt"},
-    "dairy_allergy": {"butter", "casein", "cheese", "cream", "feta", "ghee", "milk", "parmesan", "whey", "yogurt"},
+    "milk": DAIRY_MARKERS,
+    "dairy": DAIRY_MARKERS,
+    "lactose_intolerant": DAIRY_MARKERS - {"casein"},
+    "milk_allergy": DAIRY_MARKERS,
+    "dairy_allergy": DAIRY_MARKERS,
     "egg": {"egg", "eggs", "mayonnaise", "meringue"},
-    "fish": {"anchovy", "cod", "fish", "salmon", "tilapia", "trout", "tuna"},
-    "shellfish": {"crab", "lobster", "prawn", "shrimp"},
-    "peanut": {"peanut", "peanuts"},
-    "tree_nuts": {"almond", "cashew", "hazelnut", "pecan", "pistachio", "walnut"},
-    "soy": {"edamame", "miso", "soy", "tempeh", "tofu"},
-    "sesame": {"sesame", "tahini"},
-    "wheat": {"bread", "couscous", "flour tortilla", "pasta", "seitan", "wheat"},
+    "fish": {"anchovy", "cod", "fish", "salmon", "sardine", "tilapia", "trout", "tuna"},
+    "shellfish": {"clam", "crab", "crayfish", "lobster", "mussel", "oyster", "prawn", "scallop", "shellfish", "shrimp"},
+    "peanut": {"groundnut", "peanut", "peanuts"},
+    "tree_nuts": {
+        "almond",
+        "brazil nut",
+        "cashew",
+        "hazelnut",
+        "macadamia",
+        "pecan",
+        "pistachio",
+        "tree nut",
+        "walnut",
+    },
+    "soy": {"edamame", "miso", "soy", "soya", "tempeh", "tofu"},
+    "sesame": {"sesame", "sesame seed", "tahini"},
+    "wheat": {"bread", "bulgur", "couscous", "farro", "flour", "pasta", "seitan", "wheat"},
+}
+PLANT_DAIRY_PHRASES = {
+    "almond milk",
+    "cashew milk",
+    "coconut cream",
+    "coconut milk",
+    "dairy free butter",
+    "dairy free cheese",
+    "dairy free milk",
+    "dairy free yogurt",
+    "hemp milk",
+    "non dairy milk",
+    "oat cream",
+    "oat milk",
+    "plant based butter",
+    "plant based cheese",
+    "plant based milk",
+    "plant based yogurt",
+    "plant milk",
+    "rice milk",
+    "soy cream",
+    "soy milk",
+    "vegan butter",
+    "vegan cheese",
+    "vegan mayonnaise",
+    "vegan yogurt",
 }
 RAW_PROTEIN_MARKERS = ANIMAL_MEAT | {"egg", "eggs"}
 READY_TO_EAT_PROTEIN_MARKERS = {
@@ -204,7 +313,20 @@ def _words(value: Any) -> str:
 
 
 def _contains(text: str, marker: str) -> bool:
-    return bool(re.search(rf"\b{re.escape(marker)}\b", text))
+    forms = {marker}
+    if marker.endswith("s") and len(marker) > 1:
+        forms.add(marker[:-1])
+    else:
+        forms.update({f"{marker}s", f"{marker}es"})
+    return any(bool(re.search(rf"\b{re.escape(form)}\b", text)) for form in forms)
+
+
+def _without_plant_dairy_phrases(text: str) -> str:
+    """Remove explicitly plant-based dairy alternatives before dairy checks."""
+    cleaned = text
+    for phrase in sorted(PLANT_DAIRY_PHRASES, key=len, reverse=True):
+        cleaned = re.sub(rf"\b{re.escape(phrase)}\b", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def recipe_text(meal: dict[str, Any]) -> str:
@@ -269,12 +391,22 @@ def ensure_safe_doneness_instruction(meal: dict[str, Any]) -> dict[str, Any]:
 
 
 def violates_exclusions(meal: dict[str, Any], exclusions: list[str]) -> list[str]:
-    text = ingredient_text(meal)
+    return text_violates_exclusions(ingredient_text(meal), exclusions)
+
+
+def text_violates_exclusions(text: str, exclusions: list[str]) -> list[str]:
+    """Return excluded foods found in normalized recipe or catalog text."""
+    normalized_text = _words(text)
     hits: list[str] = []
     for raw in exclusions:
         exclusion = _words(raw)
         aliases = ALLERGEN_ALIASES.get(exclusion.replace(" ", "_"), {exclusion})
-        if any(_contains(text, alias) for alias in aliases if alias):
+        searchable = (
+            _without_plant_dairy_phrases(normalized_text)
+            if exclusion.replace(" ", "_") in {"milk", "dairy", "lactose_intolerant", "milk_allergy", "dairy_allergy"}
+            else normalized_text
+        )
+        if any(_contains(searchable, alias) for alias in aliases if alias):
             hits.append(raw)
     return hits
 
@@ -289,7 +421,8 @@ def violates_diet(meal: dict[str, Any], diet: str | None) -> list[str]:
         prohibited = ANIMAL_MEAT
     elif normalized == "pescatarian":
         prohibited = MEAT
-    return sorted(marker for marker in prohibited if _contains(text, marker))
+    searchable = _without_plant_dairy_phrases(text) if normalized == "vegan" else text
+    return sorted(marker for marker in prohibited if _contains(searchable, marker))
 
 
 def validate_meal(
@@ -563,12 +696,28 @@ def validate_meal(
     return report
 
 
-EVALUATION_PROFILES = (
-    {"id": "endurance_omnivore", "diet": "omnivore", "exclusions": [], "training": "long endurance"},
-    {"id": "hyrox_dairy_free", "diet": "omnivore", "exclusions": ["milk"], "training": "HYROX intervals"},
-    {"id": "vegan_strength", "diet": "vegan", "exclusions": [], "training": "strength"},
-    {"id": "vegetarian_nut_free", "diet": "vegetarian", "exclusions": ["peanut", "tree_nuts"], "training": "tempo"},
-    {"id": "pescatarian_gluten_free", "diet": "pescatarian", "exclusions": ["wheat"], "training": "recovery"},
+EVALUATION_PROFILES = tuple(
+    {
+        "id": f"{diet}_{allergen}_free",
+        "diet": diet,
+        "exclusions": [allergen],
+        "training": "mixed athlete training",
+    }
+    for diet in SUPPORTED_DIETS
+    for allergen in SUPPORTED_ALLERGENS
+) + (
+    {
+        "id": "vegan_top_nine_free",
+        "diet": "vegan",
+        "exclusions": list(SUPPORTED_ALLERGENS),
+        "training": "strength and intervals",
+    },
+    {
+        "id": "pescatarian_dairy_egg_wheat_free",
+        "diet": "pescatarian",
+        "exclusions": ["milk", "egg", "wheat"],
+        "training": "long endurance",
+    },
 )
 
 

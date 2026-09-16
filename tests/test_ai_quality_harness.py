@@ -4,9 +4,12 @@ import pytest
 
 from app.routers import llm_recommend
 from app.services.meal_quality import (
+    ALLERGEN_ALIASES,
     EVALUATION_PROFILES,
     PROMPT_VERSION,
     QUALITY_POLICY_VERSION,
+    SUPPORTED_ALLERGENS,
+    SUPPORTED_DIETS,
     ensure_safe_doneness_instruction,
     evaluate_plan,
     ingredient_nutrition_totals,
@@ -30,6 +33,89 @@ def meal(**overrides):
     }
     value.update(overrides)
     return value
+
+
+def universally_safe_meal():
+    return meal(
+        title="Lentil Rice Bowl",
+        ingredients=[
+            {"name": "lentils", "amount": "1", "unit": "cup"},
+            {"name": "brown rice", "amount": "1", "unit": "cup"},
+            {"name": "broccoli", "amount": "1", "unit": "cup"},
+            {"name": "olive oil", "amount": "1", "unit": "tbsp"},
+        ],
+        instructions=["Cook the lentils and rice until tender.", "Add broccoli and olive oil, then serve."],
+        macros={"kcal": 600, "protein_g": 30, "carbs_g": 84, "fat_g": 16},
+    )
+
+
+@pytest.mark.parametrize("diet", SUPPORTED_DIETS)
+@pytest.mark.parametrize("allergen", SUPPORTED_ALLERGENS)
+def test_every_supported_diet_allergen_pair_accepts_a_safe_complete_meal(diet, allergen):
+    report = validate_meal(universally_safe_meal(), diet=diet, exclusions=[allergen])
+    assert report.safe, (diet, allergen, report.codes())
+
+
+@pytest.mark.parametrize(
+    ("allergen", "alias"),
+    [(allergen, alias) for allergen in SUPPORTED_ALLERGENS for alias in sorted(ALLERGEN_ALIASES[allergen])],
+)
+def test_every_known_alias_for_every_supported_allergen_is_rejected(allergen, alias):
+    candidate = meal(
+        title="Unsafe test meal",
+        ingredients=[
+            {"name": alias, "amount": "1", "unit": "serving"},
+            {"name": "rice", "amount": "1", "unit": "cup"},
+        ],
+    )
+    assert "excluded_ingredient" in validate_meal(candidate, exclusions=[allergen]).codes()
+
+
+@pytest.mark.parametrize(
+    "alternative",
+    ["oat milk", "rice milk", "coconut milk", "dairy-free yogurt", "vegan cheese"],
+)
+def test_explicit_plant_dairy_alternatives_are_not_false_positive_milk_hits(alternative):
+    candidate = meal(
+        ingredients=[
+            {"name": alternative, "amount": "1", "unit": "cup"},
+            {"name": "rice", "amount": "1", "unit": "cup"},
+        ]
+    )
+    assert "excluded_ingredient" not in validate_meal(candidate, exclusions=["milk"]).codes()
+    assert "diet_violation" not in validate_meal(candidate, diet="vegan").codes()
+
+
+@pytest.mark.parametrize(
+    ("diet", "ingredient"),
+    [
+        ("pescatarian", "duck breast"),
+        ("pescatarian", "venison steak"),
+        ("vegetarian", "sardines"),
+        ("vegetarian", "scallops"),
+        ("vegan", "ricotta"),
+        ("vegan", "gelatin"),
+        ("vegan", "mayonnaise"),
+    ],
+)
+def test_extended_diet_aliases_are_rejected(diet, ingredient):
+    candidate = meal(
+        ingredients=[
+            {"name": ingredient, "amount": "1", "unit": "serving"},
+            {"name": "rice", "amount": "1", "unit": "cup"},
+        ]
+    )
+    assert "diet_violation" in validate_meal(candidate, diet=diet).codes()
+
+
+def test_certification_profiles_cover_every_diet_allergen_pair_and_high_risk_combinations():
+    covered = {
+        (profile["diet"], profile["exclusions"][0])
+        for profile in EVALUATION_PROFILES
+        if len(profile["exclusions"]) == 1
+    }
+    assert covered == {(diet, allergen) for diet in SUPPORTED_DIETS for allergen in SUPPORTED_ALLERGENS}
+    assert any(len(profile["exclusions"]) == len(SUPPORTED_ALLERGENS) for profile in EVALUATION_PROFILES)
 
 
 @pytest.mark.parametrize(
@@ -343,7 +429,7 @@ def test_dry_oats_cannot_be_served_immediately_without_cooking_or_soaking():
 
 def test_complete_meal_passes_every_evaluation_profile_and_versions_are_reported():
     for profile in EVALUATION_PROFILES:
-        result = evaluate_plan([meal()], profile)
+        result = evaluate_plan([universally_safe_meal()], profile)
         assert result["pass_rate"] == 1.0
         assert result["prompt_version"] == PROMPT_VERSION
         assert result["quality_policy_version"] == QUALITY_POLICY_VERSION
