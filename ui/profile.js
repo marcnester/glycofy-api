@@ -53,6 +53,7 @@
     bindAccountControls();
     await renderUser();
     await loadPreferences();
+    await loadLearnedPreferences();
     await renderStravaStatus();
   })().catch((e) => {
     console.error(e);
@@ -426,6 +427,63 @@
       setPrefStatus(`Could not save · ${e.message || "Please try again"}`, "error");
     }
   }
+
+  function learnedPreferenceChip(label, value, tone = "positive") {
+    const chip = document.createElement("span");
+    chip.className = "radio-chip";
+    chip.textContent = `${label}: ${value}`;
+    if (tone === "negative") chip.style.borderColor = "rgba(244,169,163,.42)";
+    return chip;
+  }
+
+  async function loadLearnedPreferences() {
+    const empty = $("#learned_preferences_empty");
+    const content = $("#learned_preferences_content");
+    const summary = $("#learned_preferences_summary");
+    const groups = $("#learned_preferences_groups");
+    const reset = $("#reset_learned_preferences");
+    if (!empty || !content || !groups || !reset) return;
+    try {
+      const data = await fetchJSON("/v1/feedback/preferences");
+      const count = Number(data.preference_signal_count || 0) + Number(data.feedback_count || 0);
+      empty.hidden = count > 0;
+      content.hidden = count === 0;
+      reset.hidden = count === 0;
+      groups.innerHTML = "";
+      if (summary) summary.textContent = `${count} meal signal${count === 1 ? "" : "s"} shaping future plans`;
+      const sections = [
+        ["Favorite meal", data.favorite_meals, "positive"],
+        ["Preferred protein", data.favored_proteins, "positive"],
+        ["Preferred style", data.favored_meal_styles, "positive"],
+        ["Preferred ingredient", data.favored_ingredients, "positive"],
+        ["Avoid", data.avoid_repeating, "negative"],
+        ["Less often", data.avoided_ingredients, "negative"],
+      ];
+      sections.forEach(([label, values, tone]) => {
+        (Array.isArray(values) ? values.slice(0, 4) : []).forEach((value) => {
+          groups.appendChild(learnedPreferenceChip(label, value, tone));
+        });
+      });
+    } catch (error) {
+      console.warn("Could not load learned preferences", error);
+      empty.textContent = "Learned preferences are temporarily unavailable.";
+    }
+  }
+
+  $("#reset_learned_preferences")?.addEventListener("click", async () => {
+    if (!window.confirm("Reset meal learning? Your diet, allergies, and other safety exclusions will not change.")) return;
+    const button = $("#reset_learned_preferences");
+    button.disabled = true;
+    try {
+      await fetchJSON("/v1/feedback/preferences", { method: "DELETE" });
+      flash("Meal learning reset. Safety preferences were preserved.");
+      await loadLearnedPreferences();
+    } catch (error) {
+      flash(error.message || "Could not reset meal learning.", "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   // ---- Strava status + actions ----
   async function renderStravaStatus() {

@@ -299,6 +299,19 @@
     return { eaten: 'Ate it ✓', substituted: 'Substituted ✓', skipped: 'Skipped ✓' }[outcome] || 'Log meal';
   }
 
+  async function saveQuickPreference(meal, signal) {
+    if (!meal?.id) return;
+    const result = await fetchJSON(`/v1/feedback/meals/${meal.id}/preference`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ signal }),
+    });
+    meal.preference_signal = result.signal;
+    renderMeals(CURRENT_PLAN);
+    const labels = { love: 'Loved', repeat: 'Saved to make again', avoid: 'Got it — future plans will adapt' };
+    flash(labels[signal] || 'Preference saved');
+  }
+
   function setFeedbackField(id, value) {
     const el = $(id);
     if (el) el.value = value == null ? '' : String(value);
@@ -1133,6 +1146,7 @@
         const titleEl = card.querySelector('.meal-title, .meal__title, h3');
         const slotLabelEl = card.querySelector('.meal-slot-label');
         const feedbackBtn = card.querySelector('[data-action="feedback"]');
+        const preferenceButtons = card.querySelectorAll('[data-preference]');
 
         // slot label (e.g., Breakfast, Lunch)
         if (slotLabelEl) {
@@ -1158,6 +1172,11 @@
           feedbackBtn.classList.toggle('meal-log--saved', Boolean(base.feedback));
           feedbackBtn.setAttribute('aria-label', `${base.feedback ? 'Edit feedback for' : 'Log'} ${base.title || slot}`);
         }
+        preferenceButtons.forEach((button) => {
+          const selected = button.getAttribute('data-preference') === base.preference_signal;
+          button.disabled = !base.id;
+          button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        });
 
         // macros
         if (macrosEl) {
@@ -1620,7 +1639,7 @@
   if (mealsRoot) {
     mealsRoot.addEventListener('click', async (e) => {
       const target = e.target.closest(
-        '[data-ai-swap],[data-ai-why],[data-action="swap-ai"],[data-action="why"],[data-action="feedback"]'
+        '[data-ai-swap],[data-ai-why],[data-action="swap-ai"],[data-action="why"],[data-action="feedback"],[data-preference]'
       );
       if (!target) return;
 
@@ -1640,6 +1659,18 @@
 
       const slot = normalizeSlot(slotAttr);
       if (!slot) return;
+
+      if (target.hasAttribute('data-preference')) {
+        const meal = (CURRENT_PLAN?.meals || []).find((item) => normalizeSlot(item.meal_type) === slot);
+        try {
+          target.disabled = true;
+          await saveQuickPreference(meal, target.getAttribute('data-preference'));
+        } catch (error) {
+          target.disabled = false;
+          flash(String(error.message || 'Unable to save preference.'), 'error');
+        }
+        return;
+      }
 
       if (target.getAttribute('data-action') === 'feedback') {
         const meal = (CURRENT_PLAN?.meals || []).find((item) => normalizeSlot(item.meal_type) === slot);
@@ -1662,6 +1693,12 @@
         if (!meal) return;
 
         try {
+          // A swap is useful implicit feedback, but it must never block the swap itself.
+          fetchJSON(`/v1/feedback/meals/${meal.id}/preference`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ signal: 'swap' }),
+          }).catch((error) => console.warn('Could not record swap preference', error));
           if (CURRENT_PLAN?.locked) await lockToggleAPI(d, false);
           await ensurePlan(d);
           const rec = await llmRecommendOne(d, meal);

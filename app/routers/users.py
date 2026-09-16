@@ -18,6 +18,7 @@ from app.models import (
     GroceryApproval,
     GroceryPreference,
     MealFeedback,
+    MealPreferenceEvent,
     OAuthAccount,
     Plan,
     PlannedWorkout,
@@ -282,6 +283,10 @@ def export_my_data(user: User = Depends(get_current_user), db: Session = Depends
         ],
         "meal_feedback": [
             _public_columns(row) for row in db.query(MealFeedback).filter(MealFeedback.user_id == user.id).all()
+        ],
+        "meal_preference_events": [
+            _public_columns(row)
+            for row in db.query(MealPreferenceEvent).filter(MealPreferenceEvent.user_id == user.id).all()
         ],
         "beta_feedback": [
             _public_columns(row) for row in db.query(BetaFeedback).filter(BetaFeedback.user_id == user.id).all()

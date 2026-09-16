@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.auth_utils import get_current_user
 from app.db import get_db
-from app.models import MealFeedback, Plan, PlanMeal, User
-from app.services.meal_feedback import feedback_context
+from app.models import MealFeedback, MealPreferenceEvent, Plan, PlanMeal, User
+from app.services.meal_feedback import feedback_context, meal_preference_features
 
 router = APIRouter()
 
@@ -24,6 +24,10 @@ class MealFeedbackIn(BaseModel):
     digestion: Literal["comfortable", "minor_issue", "poor"] | None = None
     practicality: Literal["easy", "manageable", "difficult"] | None = None
     note: str | None = Field(default=None, max_length=500)
+
+
+class MealPreferenceIn(BaseModel):
+    signal: Literal["love", "repeat", "avoid", "swap"]
 
 
 def _owned_meal(db: Session, meal_id: int, user_id: int) -> tuple[PlanMeal, Plan]:
@@ -112,3 +116,54 @@ def delete_meal_feedback(
 @router.get("/insights")
 def get_feedback_insights(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return feedback_context(db, user.id)
+
+
+@router.put("/meals/{meal_id}/preference")
+def save_meal_preference(
+    meal_id: int,
+    payload: MealPreferenceIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    meal, plan = _owned_meal(db, meal_id, user.id)
+    source = "implicit" if payload.signal == "swap" else "explicit"
+    if source == "explicit":
+        db.query(MealPreferenceEvent).filter(
+            MealPreferenceEvent.user_id == user.id,
+            MealPreferenceEvent.plan_meal_id == meal.id,
+            MealPreferenceEvent.source == "explicit",
+        ).delete(synchronize_session=False)
+    elif (
+        db.query(MealPreferenceEvent)
+        .filter_by(user_id=user.id, plan_meal_id=meal.id, signal="swap", source="implicit")
+        .first()
+    ):
+        return {"meal_id": meal.id, "signal": "swap", "saved": True}
+
+    row = MealPreferenceEvent(
+        user_id=user.id,
+        plan_meal_id=meal.id,
+        plan_date=plan.date,
+        meal_type=meal.meal_type,
+        meal_title=(meal.title or meal.meal_type.title())[:160],
+        signal=payload.signal,
+        source=source,
+        features=meal_preference_features(meal),
+        created_at=datetime.utcnow(),
+    )
+    db.add(row)
+    db.commit()
+    return {"meal_id": meal.id, "signal": row.signal, "saved": True}
+
+
+@router.get("/preferences")
+def get_learned_preferences(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return feedback_context(db, user.id)
+
+
+@router.delete("/preferences", status_code=204)
+def reset_learned_preferences(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    db.query(MealPreferenceEvent).filter(MealPreferenceEvent.user_id == user.id).delete(synchronize_session=False)
+    db.query(MealFeedback).filter(MealFeedback.user_id == user.id).delete(synchronize_session=False)
+    db.commit()
+    return Response(status_code=204)

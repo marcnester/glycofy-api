@@ -254,6 +254,14 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
                     if getattr(m, "feedback", None)
                     else None
                 ),
+                "preference_signal": next(
+                    (
+                        event.signal
+                        for event in reversed(list(getattr(m, "preference_events", []) or []))
+                        if event.source == "explicit"
+                    ),
+                    None,
+                ),
                 "ingredients": [
                     {
                         "id": getattr(i, "id", None) if not isinstance(i, dict) else i.get("id"),

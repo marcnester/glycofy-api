@@ -334,6 +334,22 @@
       <div id="pref_status" class="muted save-hint" style="margin-top:6px">Auto-saves</div>
     </section>
 
+    <section class="card" style="margin-top:18px;padding:22px;" aria-labelledby="learned_preferences_title">
+      <div class="strava-panel">
+        <div class="strava-copy">
+          <h2 id="learned_preferences_title" class="section-title" style="margin:0">What Glycofy has learned</h2>
+          <span class="muted">Your meal reactions shape future recommendations while nutrition, allergies, and dietary rules stay protected.</span>
+        </div>
+        <button id="reset_learned_preferences" class="btn btn--pill" type="button" hidden>Reset learning</button>
+      </div>
+      <div id="learned_preferences_empty" class="muted" style="margin-top:14px">React to meals with Love it, Make again, or Not for me to personalize future plans.</div>
+      <div id="learned_preferences_content" style="margin-top:16px" hidden>
+        <div id="learned_preferences_summary" class="muted"></div>
+        <div id="learned_preferences_groups" class="radio-set" style="margin-top:12px" aria-live="polite"></div>
+        <p class="muted" style="margin:12px 0 0">Glycofy preserves variety and never treats a reaction as an allergy. Manage safety exclusions above.</p>
+      </div>
+    </section>
+
     <section class="card" style="margin-top:18px;padding:22px;">
       <h2 style="margin:0 0 8px">Account &amp; privacy</h2>
       <p class="muted" style="margin:0 0 16px">Control your sign-in and the data Glycofy stores for you.</p>
@@ -409,7 +425,7 @@
   </main>
 
   <script src="/ui/core.js?v=2025-11-04"></script>
-  <script src="/ui/profile.js?v=2026-09-08-snack-save"></script>
+  <script src="/ui/profile.js?v=2026-09-16-preference-learning"></script>
   <script src="/ui/beta.js?v=2026-09-06-tour" defer></script>
 </body>
 </html>

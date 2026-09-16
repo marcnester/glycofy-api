@@ -11,6 +11,7 @@ Tables:
 - plan_meals            (tags JSON, updated_at)
 - plan_items
 - meal_feedback
+- meal_preference_events
 - grocery_preferences
 - user_preferences
 - energy_targets
@@ -344,6 +345,13 @@ class PlanMeal(Base):
         uselist=False,
         foreign_keys="MealFeedback.plan_meal_id",
     )
+    preference_events: Mapped[list[MealPreferenceEvent]] = relationship(
+        "MealPreferenceEvent",
+        back_populates="meal",
+        passive_deletes=True,
+        order_by="MealPreferenceEvent.created_at",
+        foreign_keys="MealPreferenceEvent.plan_meal_id",
+    )
 
     def __repr__(self) -> str:
         return f"<PlanMeal id={self.id} plan_id={self.plan_id} title={self.title!r}>"
@@ -409,6 +417,35 @@ class MealFeedback(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
     meal: Mapped[PlanMeal | None] = relationship("PlanMeal", back_populates="feedback", foreign_keys=[plan_meal_id])
+
+
+class MealPreferenceEvent(Base):
+    """A private, structured preference signal used to personalize future plans."""
+
+    __tablename__ = "meal_preference_events"
+    __table_args__ = (
+        Index("ix_meal_preference_user_created", "user_id", "created_at"),
+        Index("ix_meal_preference_user_signal", "user_id", "signal"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    plan_meal_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("plan_meals.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    plan_date: Mapped[date] = mapped_column(Date, nullable=False)
+    meal_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    meal_title: Mapped[str] = mapped_column(String(160), nullable=False)
+    signal: Mapped[str] = mapped_column(String(24), nullable=False)
+    source: Mapped[str] = mapped_column(String(24), nullable=False, default="explicit")
+    features: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+    meal: Mapped[PlanMeal | None] = relationship(
+        "PlanMeal", back_populates="preference_events", foreign_keys=[plan_meal_id]
+    )
 
 
 class GroceryApproval(Base):

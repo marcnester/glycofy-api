@@ -237,6 +237,9 @@
       font-size:13px;
     }
     .meal-card-actions .meal-log--saved{border-color:rgba(80,200,138,.5);color:#9fe3c0;background:rgba(80,200,138,.08)}
+    .meal-preference-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.07)}
+    .meal-preference-actions .btn{height:30px;padding:0 10px;font-size:12px;color:#9fb0c9}
+    .meal-preference-actions .btn[aria-pressed="true"]{border-color:rgba(80,200,138,.55);background:rgba(80,200,138,.13);color:#baf2d3}
     [hidden]{display:none!important}
     .plan-empty-state{
       margin:22px 0 0;
@@ -465,6 +468,12 @@
             <p class="meal-empty">No meal planned yet.</p>
           </div>
 
+          <div class="meal-preference-actions" aria-label="Meal preferences">
+            <button class="btn btn--ghost" data-preference="love" type="button" aria-pressed="false">♡ Love it</button>
+            <button class="btn btn--ghost" data-preference="repeat" type="button" aria-pressed="false">↻ Make again</button>
+            <button class="btn btn--ghost" data-preference="avoid" type="button" aria-pressed="false">Not for me</button>
+          </div>
+
           <div class="meal-card-actions">
             <button class="btn btn--ghost" data-action="feedback" type="button">Log meal</button>
             <button class="btn btn--ghost" data-action="swap-ai" type="button">Swap (AI)</button>
@@ -484,6 +493,12 @@
 
           <div class="meal-body">
             <p class="meal-empty">No meal planned yet.</p>
+          </div>
+
+          <div class="meal-preference-actions" aria-label="Meal preferences">
+            <button class="btn btn--ghost" data-preference="love" type="button" aria-pressed="false">♡ Love it</button>
+            <button class="btn btn--ghost" data-preference="repeat" type="button" aria-pressed="false">↻ Make again</button>
+            <button class="btn btn--ghost" data-preference="avoid" type="button" aria-pressed="false">Not for me</button>
           </div>
 
           <div class="meal-card-actions">
@@ -507,6 +522,12 @@
             <p class="meal-empty">No meal planned yet.</p>
           </div>
 
+          <div class="meal-preference-actions" aria-label="Meal preferences">
+            <button class="btn btn--ghost" data-preference="love" type="button" aria-pressed="false">♡ Love it</button>
+            <button class="btn btn--ghost" data-preference="repeat" type="button" aria-pressed="false">↻ Make again</button>
+            <button class="btn btn--ghost" data-preference="avoid" type="button" aria-pressed="false">Not for me</button>
+          </div>
+
           <div class="meal-card-actions">
             <button class="btn btn--ghost" data-action="feedback" type="button">Log meal</button>
             <button class="btn btn--ghost" data-action="swap-ai" type="button">Swap (AI)</button>
@@ -526,6 +547,12 @@
 
           <div class="meal-body">
             <p class="meal-empty">No meal planned yet.</p>
+          </div>
+
+          <div class="meal-preference-actions" aria-label="Meal preferences">
+            <button class="btn btn--ghost" data-preference="love" type="button" aria-pressed="false">♡ Love it</button>
+            <button class="btn btn--ghost" data-preference="repeat" type="button" aria-pressed="false">↻ Make again</button>
+            <button class="btn btn--ghost" data-preference="avoid" type="button" aria-pressed="false">Not for me</button>
           </div>
 
           <div class="meal-card-actions">

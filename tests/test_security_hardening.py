@@ -377,7 +377,7 @@ def test_profile_uses_official_strava_connect_asset(client: TestClient):
 def test_account_deletion_dialog_supports_escape_key():
     page = Path("ui/profile.html").read_text(encoding="utf-8")
     script = Path("ui/profile.js").read_text(encoding="utf-8")
-    assert "profile.js?v=2026-09-08-snack-save" in page
+    assert "profile.js?v=2026-09-16-preference-learning" in page
     assert 'dialog?.addEventListener("cancel"' in script
     assert 'dialog?.addEventListener("keydown"' in script
     assert 'event.key === "Escape"' in script
@@ -415,6 +415,20 @@ def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     assert "Keep this page open while AI finishes." in script
     assert "You can safely leave this page; planning will continue." in script
     assert "Preparation details are missing from this older recommendation." in script
+
+
+def test_meal_preference_learning_controls_are_visible_and_reversible():
+    plan_page = Path("ui/plan.html").read_text(encoding="utf-8")
+    plan_script = Path("ui/plan.js").read_text(encoding="utf-8")
+    profile_page = Path("ui/profile.html").read_text(encoding="utf-8")
+    profile_script = Path("ui/profile.js").read_text(encoding="utf-8")
+    assert 'data-preference="love"' in plan_page
+    assert 'data-preference="repeat"' in plan_page
+    assert 'data-preference="avoid"' in plan_page
+    assert "signal: 'swap'" in plan_script
+    assert 'id="learned_preferences_title"' in profile_page
+    assert 'id="reset_learned_preferences"' in profile_page
+    assert 'fetchJSON("/v1/feedback/preferences", { method: "DELETE" })' in profile_script
 
 
 def test_unplanned_day_uses_a_focused_ai_empty_state():
