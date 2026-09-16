@@ -148,6 +148,30 @@ def test_catalog_recipe_requires_its_own_complete_safe_timing():
     assert _recipe_has_complete_cooking_guidance(recipe)
 
 
+def test_catalog_recipe_rejects_undersized_legacy_main_protein():
+    recipe = Recipe(
+        title="Herbed Salmon Couscous Supper",
+        meal_type="dinner",
+        kcal=650,
+        protein_g=35,
+        carbs_g=80,
+        fat_g=20,
+        ingredients=[
+            {"name": "salmon fillet", "amount": 64, "amount_g": 64, "unit": "g"},
+            {"name": "couscous cooked", "amount": 250, "amount_g": 250, "unit": "g"},
+        ],
+        instructions="Cook salmon to 145°F.\nServe with cooked couscous.",
+        prep_time_min=5,
+        cook_time_min=15,
+        total_time_min=20,
+    )
+
+    assert not _recipe_has_complete_cooking_guidance(recipe)
+    recipe.ingredients[0]["amount"] = 120
+    recipe.ingredients[0]["amount_g"] = 120
+    assert _recipe_has_complete_cooking_guidance(recipe)
+
+
 def test_empty_plan_estimate_uses_same_profile_training_target_as_ai(monkeypatch):
     class QueryStub:
         def filter(self, *_args):

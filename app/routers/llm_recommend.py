@@ -732,6 +732,9 @@ def _recipe_has_complete_cooking_guidance(recipe: Recipe) -> bool:
     ]
     candidate = {
         "title": getattr(recipe, "title", None),
+        "slot": getattr(recipe, "meal_type", None),
+        "protein_group": _guess_protein_group_for_recipe(recipe),
+        "protein_item": _guess_protein_item_for_recipe(recipe),
         "ingredients": getattr(recipe, "ingredients", None) or [],
         "instructions": instructions,
         "prep_time_min": getattr(recipe, "prep_time_min", None),
