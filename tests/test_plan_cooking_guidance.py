@@ -101,6 +101,30 @@ def test_catalog_recipe_replaces_stale_plan_timing():
     assert meal.meta == {"reason": "Fueling", "prep_time_min": 8, "cook_time_min": 15, "total_time_min": 23}
 
 
+def test_catalog_recipe_strips_raw_footer_from_precooked_poultry():
+    meal = PlanMeal(meal_type="dinner", items=[], meta={})
+    recipe = Recipe(
+        id=8,
+        title="Turkey pasta",
+        meal_type="dinner",
+        ingredients=[
+            {"name": "turkey breast, cooked", "amount": 96, "unit": "g"},
+            {"name": "whole-wheat pasta, cooked", "amount": 156, "unit": "g"},
+        ],
+        instructions=(
+            "Warm the cooked turkey and pasta until steaming.\n"
+            "Cook until no longer pink and the internal temperature reaches 165°F."
+        ),
+        prep_time_min=5,
+        cook_time_min=10,
+        total_time_min=15,
+    )
+
+    _apply_recipe_to_planmeal(meal, recipe)
+
+    assert meal.instructions == "Warm the cooked turkey and pasta until steaming."
+
+
 def test_catalog_recipe_requires_its_own_complete_safe_timing():
     recipe = Recipe(
         title="Chicken bowl",

@@ -592,14 +592,30 @@ def validate_meal(
 
         slot = _words(meal.get("slot"))
         protein_item = _words(meal.get("protein_item"))
-        if slot in {"breakfast", "lunch", "dinner"} and protein_item:
+        protein_group = _words(meal.get("protein_group"))
+        animal_groups = {
+            "fish": ("salmon", "cod", "tuna", "tilapia", "trout", "shrimp", "fish"),
+            "poultry": ("chicken", "turkey"),
+            "beef": ("beef", "steak"),
+            "pork": ("pork", "ham"),
+        }
+        if slot in {"breakfast", "lunch", "dinner"} and (protein_item or protein_group in animal_groups):
             for item in ingredients:
                 if not isinstance(item, dict):
                     continue
                 name = _words(item.get("name"))
                 amount = _number(item.get("amount_g", item.get("amount", item.get("qty"))))
                 unit = _words(item.get("unit"))
-                if protein_item in name and unit in {"g", "gram", "grams"} and amount is not None and amount < 75:
+                matches_item = bool(protein_item and _contains(name, protein_item))
+                matches_group = protein_group in animal_groups and any(
+                    _contains(name, marker) for marker in animal_groups[protein_group]
+                )
+                if (
+                    (matches_item or matches_group)
+                    and unit in {"g", "gram", "grams"}
+                    and amount is not None
+                    and amount < 75
+                ):
                     report.issues.append(
                         QualityIssue(
                             "impractical_primary_protein",

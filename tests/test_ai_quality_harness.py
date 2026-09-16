@@ -418,6 +418,21 @@ def test_token_dairy_and_vegetable_portions_are_rejected(name, amount):
     assert "impractical_serving" in validate_meal(candidate).codes()
 
 
+def test_generic_protein_item_still_enforces_main_animal_protein_floor():
+    candidate = meal(
+        title="Herbed Salmon Couscous",
+        slot="dinner",
+        protein_item="fish",
+        protein_group="fish",
+        ingredients=[
+            {"name": "salmon fillet", "amount": 64, "amount_g": 64, "unit": "g"},
+            {"name": "couscous", "amount": 120, "amount_g": 120, "unit": "g"},
+        ],
+    )
+
+    assert "impractical_primary_protein" in validate_meal(candidate).codes()
+
+
 def test_overnight_or_long_chill_time_must_be_in_advertised_total():
     overnight = meal(
         title="Overnight Oats",

@@ -3203,6 +3203,19 @@ def _apply_recipe_to_planmeal(pm: PlanMeal, rec: Recipe) -> None:
                 )
             )
 
+    # Catalog recipes and AI-created recipes share this path. Apply the same
+    # deterministic safety cleanup to both so an older verified catalog record
+    # cannot reintroduce a contradictory raw-meat footer.
+    instruction_steps = [line.strip() for line in str(pm.instructions or "").splitlines() if line.strip()]
+    sanitized = ensure_safe_doneness_instruction(
+        {
+            "ingredients": [{"name": item.name} for item in pm.items],
+            "instructions": instruction_steps,
+            "cook_time_min": timing.get("cook_time_min", 0),
+        }
+    )
+    pm.instructions = "\n".join(sanitized.get("instructions") or instruction_steps)
+
 
 def _apply_ai_idea_to_planmeal(pm: PlanMeal, ai: dict[str, Any], created_recipe: Recipe) -> None:
     # Apply via the created recipe, then copy the generated fields directly as
@@ -3733,7 +3746,7 @@ def recommend_recipes(
                     used_protein_items=[],
                     used_carb_items=[],
                     used_recipe_ids=set(),
-                    used_meal_keys=set(),
+                    used_meal_keys=used_meal_keys,
                     allow_new_recipe=False,
                     week_protein_counts={},
                     protein_cap_per_slot=10_000,

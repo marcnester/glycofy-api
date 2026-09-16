@@ -107,6 +107,17 @@ def test_meal_display_formats_pita_before_generic_bread():
     assert _practical_ingredient_amount(item) == "0.5 pita (31 g)"
 
 
+def test_meal_display_does_not_inherit_wrong_household_unit_from_usda_metadata():
+    item = PlanItem(
+        name="pumpkin seeds",
+        qty=5,
+        unit="g",
+        meta={"usda_search_query": "whole wheat pita bread"},
+    )
+
+    assert _practical_ingredient_amount(item) == "5 g"
+
+
 def test_meal_display_does_not_overstate_token_fruit_portion():
     item = PlanItem(name="banana", qty=7, unit="g")
 

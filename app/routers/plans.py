@@ -143,26 +143,30 @@ def _practical_ingredient_amount(item: Any) -> str | None:
 
     meta = (item.meta if not isinstance(item, dict) else item.get("meta")) or {}
     source = meta.get("nutrition_source") if isinstance(meta.get("nutrition_source"), dict) else {}
-    identity = " ".join(
+    # Household-unit labels must be inferred from the ingredient the user sees,
+    # not a possibly imperfect USDA match description. Keep the broader
+    # identity only for preparation-state decisions such as cooked vs. dry.
+    display_identity = str(item.name if not isinstance(item, dict) else item.get("name") or "").lower()
+    state_identity = " ".join(
         (
-            str(item.name if not isinstance(item, dict) else item.get("name") or ""),
+            display_identity,
             str(meta.get("usda_search_query") or ""),
             str(source.get("description") or ""),
         )
     ).lower()
     rounded_g = max(1, round(grams))
 
-    if "rice cake" in identity:
+    if "rice cake" in display_identity:
         count = max(1, round(grams / 9.0))
         return f"{count} rice cake{'s' if count != 1 else ''} ({rounded_g} g)"
-    if "pita" in identity:
+    if "pita" in display_identity:
         count = max(0.5, round((grams / 60.0) * 2) / 2)
         return f"{count:g} pita ({rounded_g} g)"
-    if any(token in identity for token in ("bread", "toast")):
+    if any(token in display_identity for token in ("bread", "toast")):
         slices = max(1, round(grams / 32.0))
         return f"{slices} slice{'s' if slices != 1 else ''} ({rounded_g} g)"
-    if any(token in identity for token in ("banana", "apple", "orange", "pear")):
-        fruit = next(token for token in ("banana", "apple", "orange", "pear") if token in identity)
+    if any(token in display_identity for token in ("banana", "apple", "orange", "pear")):
+        fruit = next(token for token in ("banana", "apple", "orange", "pear") if token in display_identity)
         per_item = {"banana": 118.0, "apple": 182.0, "orange": 140.0, "pear": 178.0}[fruit]
         if grams < per_item * 0.20:
             return f"a few {fruit} slices ({rounded_g} g)"
@@ -179,14 +183,14 @@ def _practical_ingredient_amount(item: Any) -> str | None:
         "oat": (80.0, 234.0),
     }
     for grain, (dry_per_cup, cooked_per_cup) in grain_weights.items():
-        if grain in identity:
-            cooked = "cooked" in identity or "prepared" in identity
+        if grain in display_identity:
+            cooked = "cooked" in state_identity or "prepared" in state_identity
             per_cup = cooked_per_cup if cooked else dry_per_cup
             cups = _quarter_cup_label(grams / per_cup)
             state = "cooked" if cooked else "dry"
             return f"{cups} cup{'s' if cups != '1' else ''} {state} ({rounded_g} g)"
 
-    if any(token in identity for token in ("olive oil", "avocado oil", "sesame oil", "canola oil")):
+    if any(token in display_identity for token in ("olive oil", "avocado oil", "sesame oil", "canola oil")):
         tablespoons = grams / 13.5
         if tablespoons < 0.75:
             return f"{max(1, round(tablespoons * 3))} tsp ({rounded_g} g)"
@@ -195,7 +199,7 @@ def _practical_ingredient_amount(item: Any) -> str | None:
             if tablespoons >= 4
             else f"{max(1, round(tablespoons * 2)) / 2:g} tbsp ({rounded_g} g)"
         )
-    if "egg" in identity:
+    if "egg" in display_identity:
         count = max(1, round(grams / 50.0))
         return f"{count} egg{'s' if count != 1 else ''} ({rounded_g} g)"
     return f"{rounded_g} g"
