@@ -15,6 +15,7 @@ import httpx
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
+from app.services.meal_quality import practical_minimum_grams
 
 logger = logging.getLogger(__name__)
 
@@ -688,25 +689,10 @@ def fit_portions_to_targets(
         else:
             cap_g = 450.0
         upper = max(0.05, min(3.0, cap_g / max(base_weights[index], 0.1)))
-        if any(token in identity for token in ("salt", "pepper", "spice", "cinnamon", "paprika", "cumin")):
-            minimum_g = 0.5
-        elif "rice cake" in identity:
+        if "rice cake" in identity:
             minimum_g = 9.0
-        elif any(token in identity for token in ("bread", "pita", "tortilla", "wrap")):
-            minimum_g = 25.0
-        elif "egg" in identity:
-            minimum_g = 50.0
-        elif "oat" in identity:
-            minimum_g = 15.0
-        elif any(token in identity for token in ("almond butter", "peanut butter")):
-            minimum_g = 8.0
-        elif any(
-            token in identity
-            for token in ("apple", "banana", "berries", "berry", "grape", "orange", "pear", "pineapple")
-        ):
-            minimum_g = 30.0
         else:
-            minimum_g = 5.0
+            minimum_g = practical_minimum_grams(ingredient.get("name"), ingredient.get("usda_search_query"))
         upper_factors.append(upper)
         lower_factors.append(min(upper, max(0.05, minimum_g / max(base_weights[index], 0.1))))
     normalized = [[value / target[pos] for pos, value in enumerate(row)] for row in evidence]

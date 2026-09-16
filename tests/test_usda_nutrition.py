@@ -364,6 +364,41 @@ def test_fit_portions_does_not_create_token_oat_or_nut_butter_servings():
     assert fitted[1]["amount_g"] >= 8
 
 
+def test_fit_portions_does_not_create_token_yogurt_or_vegetable_servings():
+    ingredients = [
+        {
+            "name": "low-fat Greek yogurt",
+            "amount": 180.0,
+            "unit": "g",
+            "amount_g": 180.0,
+            "nutrition": {"kcal": 132.0, "protein_g": 18.0, "carbs_g": 8.0, "fat_g": 3.0},
+        },
+        {
+            "name": "carrot",
+            "amount": 80.0,
+            "unit": "g",
+            "amount_g": 80.0,
+            "nutrition": {"kcal": 32.8, "protein_g": 0.7, "carbs_g": 7.7, "fat_g": 0.2},
+        },
+        {
+            "name": "cucumber",
+            "amount": 100.0,
+            "unit": "g",
+            "amount_g": 100.0,
+            "nutrition": {"kcal": 15.0, "protein_g": 0.7, "carbs_g": 3.6, "fat_g": 0.1},
+        },
+    ]
+
+    fitted = fit_portions_to_targets(
+        ingredients,
+        {"kcal": 120, "protein_g": 12, "carbs_g": 12, "fat_g": 3},
+    )
+
+    assert fitted[0]["amount_g"] >= 75
+    assert fitted[1]["amount_g"] >= 30
+    assert fitted[2]["amount_g"] >= 30
+
+
 def test_verify_ingredients_falls_back_to_concise_name():
     match = FDCMatch(
         fdc_id=171077,

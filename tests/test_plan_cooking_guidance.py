@@ -1,6 +1,11 @@
+from datetime import date
+from types import SimpleNamespace
+
 from app.models import PlanMeal, Recipe
+from app.routers import plans
 from app.routers.llm_recommend import _apply_recipe_to_planmeal, _recipe_has_complete_cooking_guidance
 from app.routers.plans import AIIdeaPayload, LLMNewRecipe, _apply_ai_idea_to_meal, _apply_recipe_to_meal
+from app.services.training_nutrition import MacroTargets
 
 
 def test_ai_cooking_steps_take_priority_over_description_and_persist_time():
@@ -117,3 +122,29 @@ def test_catalog_recipe_requires_its_own_complete_safe_timing():
     assert not _recipe_has_complete_cooking_guidance(recipe)
     recipe.total_time_min = 23
     assert _recipe_has_complete_cooking_guidance(recipe)
+
+
+def test_empty_plan_estimate_uses_same_profile_training_target_as_ai(monkeypatch):
+    class QueryStub:
+        def filter(self, *_args):
+            return self
+
+        def first(self):
+            return None
+
+    expected = MacroTargets(kcal=2587.0, protein_g=163.0, carbs_g=320.0, fat_g=73.0)
+    monkeypatch.setattr(
+        plans,
+        "calculate_training_nutrition",
+        lambda **_kwargs: SimpleNamespace(final=expected),
+    )
+    db = SimpleNamespace(query=lambda *_args: QueryStub())
+
+    seed = plans._seed_plan_heuristic(db, SimpleNamespace(id=1), date(2026, 10, 19))
+
+    assert seed["totals"] == {
+        "kcal": expected.kcal,
+        "protein_g": expected.protein_g,
+        "carbs_g": expected.carbs_g,
+        "fat_g": expected.fat_g,
+    }

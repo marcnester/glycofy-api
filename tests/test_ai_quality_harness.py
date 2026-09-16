@@ -381,6 +381,25 @@ def test_token_fruit_portions_are_rejected():
     assert "impractical_serving" in validate_meal(candidate).codes()
 
 
+@pytest.mark.parametrize(
+    ("name", "amount"),
+    [
+        ("low-fat Greek yogurt", 7),
+        ("carrot", 5),
+        ("cucumber", 8),
+    ],
+)
+def test_token_dairy_and_vegetable_portions_are_rejected(name, amount):
+    candidate = meal(
+        ingredients=[
+            {"name": name, "amount": amount, "amount_g": amount, "unit": "g"},
+            {"name": "rolled oats", "amount": 60, "amount_g": 60, "unit": "g"},
+        ]
+    )
+
+    assert "impractical_serving" in validate_meal(candidate).codes()
+
+
 def test_overnight_or_long_chill_time_must_be_in_advertised_total():
     overnight = meal(
         title="Overnight Oats",

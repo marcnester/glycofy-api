@@ -24,6 +24,7 @@ from app.db import get_db
 from app.models import GroceryApproval, GroceryPreference, Plan, PlanItem, PlanMeal, Recipe, User
 from app.routers.plan_models import EnergyTarget, UserPreference
 from app.services.instacart import InstacartError, create_products_link
+from app.services.training_nutrition import athlete_profile_baseline, calculate_training_nutrition
 
 router = APIRouter()
 
@@ -536,12 +537,24 @@ def _seed_plan_heuristic(db: Session, user: User, day: date_cls) -> dict[str, An
     target: EnergyTarget | None = (
         db.query(EnergyTarget).filter(EnergyTarget.user_id == user.id, EnergyTarget.date == day).first()
     )
-    kcal = float((target.target_kcal if target else None) or (target.tdee_kcal if target else None) or 2400.0)
-
-    # Macro split (high-protein bias for athletes)
-    p = max(100.0, round(kcal * 0.30 / 4))  # grams
-    c = round(kcal * 0.45 / 4)
-    f = round(kcal * 0.25 / 9)
+    if target and (target.target_kcal or target.tdee_kcal):
+        kcal = float(target.target_kcal or target.tdee_kcal)
+        # Legacy explicit energy targets do not include a complete macro
+        # prescription, so retain the historical athlete-oriented split.
+        p = max(100.0, round(kcal * 0.30 / 4))
+        c = round(kcal * 0.45 / 4)
+        f = round(kcal * 0.25 / 9)
+    else:
+        nutrition = calculate_training_nutrition(
+            db=db,
+            user=user,
+            plan_date=day,
+            baseline=athlete_profile_baseline(user, day),
+        )
+        kcal = nutrition.final.kcal
+        p = nutrition.final.protein_g
+        c = nutrition.final.carbs_g
+        f = nutrition.final.fat_g
 
     splits = {
         "breakfast": 0.25,

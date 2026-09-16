@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 PROMPT_VERSION = "meal-planner-2026-09-13-v11-beta-quality"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-15-v19-diet-allergen-certification"
+QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-16-v20-practical-portions"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 SUPPORTED_DIETS = ("omnivore", "pescatarian", "vegetarian", "vegan")
@@ -261,6 +261,81 @@ SMALL_AMOUNT_EXEMPTIONS = SEASONING_MARKERS | {
 }
 
 
+def practical_minimum_grams(name: Any, query: Any = None) -> float:
+    """Return a conservative minimum portion that remains useful to a cook."""
+    identity = _words(f"{name or ''} {query or ''}")
+    if any(_contains(identity, marker) for marker in SMALL_AMOUNT_EXEMPTIONS):
+        return 0.5
+    if any(_contains(identity, marker) for marker in ("olive oil", "sesame oil", "cooking oil")):
+        return 3.0
+    if any(_contains(identity, marker) for marker in ("almond butter", "peanut butter", "tahini")):
+        return 8.0
+    if any(_contains(identity, marker) for marker in ("nut", "seed")):
+        return 5.0
+    if any(_contains(identity, marker) for marker in ("greek yogurt", "yogurt", "cottage cheese", "ricotta", "skyr")):
+        return 75.0
+    if any(
+        _contains(identity, marker)
+        for marker in (
+            "chicken",
+            "turkey",
+            "beef",
+            "pork",
+            "lamb",
+            "salmon",
+            "cod",
+            "tuna",
+            "tilapia",
+            "trout",
+            "tofu",
+            "tempeh",
+        )
+    ):
+        return 50.0
+    if _contains(identity, "egg"):
+        return 50.0
+    if _contains(identity, "oat"):
+        return 15.0
+    if any(_contains(identity, marker) for marker in ("bread", "pita", "tortilla", "wrap")):
+        return 25.0
+    if any(
+        _contains(identity, marker)
+        for marker in (
+            "apple",
+            "banana",
+            "berries",
+            "berry",
+            "grape",
+            "orange",
+            "pear",
+            "pineapple",
+            "mango",
+            "peach",
+        )
+    ):
+        return 30.0
+    if any(
+        _contains(identity, marker)
+        for marker in (
+            "broccoli",
+            "carrot",
+            "cucumber",
+            "zucchini",
+            "bell pepper",
+            "bok choy",
+            "spinach",
+            "cauliflower",
+            "asparagus",
+            "green bean",
+            "tomato",
+        )
+    ):
+        return 30.0
+    if any(_contains(identity, marker) for marker in ("hummus", "lentil", "bean", "chickpea", "edamame")):
+        return 30.0
+    return 5.0
+
+
 @dataclass(frozen=True)
 class QualityIssue:
     code: str
@@ -494,17 +569,8 @@ def validate_meal(
             unit = _words(item.get("unit"))
             if amount is None or unit not in {"g", "gram", "grams"}:
                 continue
-            practical_minimum = 5
-            if any(
-                _contains(name, marker)
-                for marker in ("apple", "banana", "berries", "berry", "grape", "orange", "pear", "pineapple")
-            ):
-                practical_minimum = 30
-            elif _contains(name, "oat"):
-                practical_minimum = 15
-            elif any(_contains(name, marker) for marker in ("almond butter", "peanut butter")):
-                practical_minimum = 8
-            if amount < practical_minimum and not any(_contains(name, marker) for marker in SMALL_AMOUNT_EXEMPTIONS):
+            practical_minimum = practical_minimum_grams(name, item.get("usda_search_query"))
+            if amount < practical_minimum:
                 report.issues.append(
                     QualityIssue(
                         "impractical_serving",
