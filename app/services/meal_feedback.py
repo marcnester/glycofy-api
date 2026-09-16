@@ -111,10 +111,10 @@ def feedback_context(db: Session, user_id: int, limit: int = 60) -> dict[str, An
         weight = weights.get(event.signal, 0.0)
         title_scores[event.meal_title] += weight
         features = event.features if isinstance(event.features, dict) else {}
-        for key in feature_scores:
+        for key, scores in feature_scores.items():
             for value in features.get(key, []) or []:
                 if value:
-                    feature_scores[key][str(value)] += weight
+                    scores[str(value)] += weight
         if event.source == "explicit" and event.plan_meal_id is not None:
             explicit_by_meal[event.plan_meal_id] = event.signal
 
