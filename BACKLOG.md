@@ -12,18 +12,6 @@ Add an optional **Shop with Instacart** handoff to the consolidated Grocery List
 
 Phase 1 deliberately keeps checkout out of Glycofy. The in-app grocery list is the canonical source for a later commerce adapter.
 
-## After planning reliability: optional passkeys
+## Completed: optional passkeys and stateful sessions
 
-Add passkeys as a secure, low-friction sign-in option before expanding beyond the close-friends beta.
-
-- Keep Google sign-in and email/password available during adoption and recovery.
-- Let authenticated users create, name, review, and revoke multiple passkeys from Account & Privacy.
-- Add a prominent **Sign in with a passkey** option to the login experience.
-- Use a mature WebAuthn server library; do not implement credential verification cryptography directly.
-- Bind WebAuthn to the production `app.glycofy.ai` relying-party domain and validate origins explicitly.
-- Require recent authentication before adding or removing passkeys or performing sensitive account actions.
-- Preserve verified-email recovery so losing every passkey cannot permanently lock out an account.
-- Send security notifications whenever a passkey is added or removed.
-- Cover registration, authentication, duplicate registration, revocation, recovery, cross-device use, and failure states with automated tests.
-
-Passkeys remain optional and are not a blocker for the initial close-friends beta. Weekly and daily planning reliability remains the immediate product priority.
+Passkey registration, sign-in, naming, inventory, and revocation are implemented with exact production RP/origin validation, required user verification, single-use challenges, recent-authentication gates, and security notifications. Stateful session inventory and individual/all-other revocation are also complete. Passkeys remain optional during the close-friends beta; mandatory step-up authentication remains a public-launch security decision.

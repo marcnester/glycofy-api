@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import get_db
 from app.models import User
+from app.services.user_sessions import require_active_session
 
 # ---------------------------
 # Password utilities
@@ -49,6 +50,7 @@ def create_access_token(
     expires_minutes: int | None = None,
     token_version: int = 0,
     session_started_at: int | None = None,
+    session_id: str | None = None,
 ) -> str:
     if expires_minutes is None:
         expires_minutes = int(getattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 60) or 60)
@@ -68,6 +70,8 @@ def create_access_token(
         "aud": settings.JWT_AUD,
         "ver": int(token_version),
     }
+    if session_id:
+        payload["sid"] = session_id
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=ALG)
 
 
@@ -172,6 +176,12 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     if int(payload.get("ver", -1)) != int(user.token_version or 0):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
+    raw_session_id = payload.get("sid")
+    if raw_session_id:
+        session = require_active_session(db, str(raw_session_id), user.id)
+        request.state.user_session = session
+    elif settings.REQUIRE_STATEFUL_SESSIONS:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired. Please sign in again.")
 
     # Middleware uses these only after the database and token-version checks
     # above succeed. Bearer clients are intentionally never given cookies.

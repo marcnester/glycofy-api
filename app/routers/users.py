@@ -20,11 +20,13 @@ from app.models import (
     MealFeedback,
     MealPreferenceEvent,
     OAuthAccount,
+    PasskeyCredential,
     Plan,
     PlannedWorkout,
     ProductEvent,
     User,
     UserPreference,
+    UserSession,
     WeeklyPlanningJob,
 )
 from app.observability import record_security_event
@@ -260,6 +262,27 @@ def export_my_data(user: User = Depends(get_current_user), db: Session = Depends
                 "created_at": row.created_at,
             }
             for row in db.query(OAuthAccount).filter(OAuthAccount.user_id == user.id).all()
+        ],
+        "passkeys": [
+            {
+                "name": row.name,
+                "created_at": row.created_at,
+                "last_used_at": row.last_used_at,
+                "backed_up": row.backed_up,
+                "revoked_at": row.revoked_at,
+            }
+            for row in db.query(PasskeyCredential).filter(PasskeyCredential.user_id == user.id).all()
+        ],
+        "sessions": [
+            {
+                "auth_method": row.auth_method,
+                "device_label": row.device_label,
+                "created_at": row.created_at,
+                "last_seen_at": row.last_seen_at,
+                "expires_at": row.expires_at,
+                "revoked_at": row.revoked_at,
+            }
+            for row in db.query(UserSession).filter(UserSession.user_id == user.id).all()
         ],
         "activities": [_public_columns(row) for row in db.query(Activity).filter(Activity.user_id == user.id).all()],
         "planned_workouts": [

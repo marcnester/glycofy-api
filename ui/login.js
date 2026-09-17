@@ -132,6 +132,51 @@
     return data;
   }
 
+  function fromBase64url(value) {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
+    return Uint8Array.from(binary, char => char.charCodeAt(0));
+  }
+  function toBase64url(value) {
+    const bytes = new Uint8Array(value);
+    let binary = ""; bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function prepareRequestOptions(options) {
+    return {
+      ...options,
+      challenge: fromBase64url(options.challenge),
+      allowCredentials: (options.allowCredentials || []).map(item => ({...item, id: fromBase64url(item.id)})),
+    };
+  }
+  function serializeAssertion(credential) {
+    return {
+      id: credential.id,
+      rawId: toBase64url(credential.rawId),
+      type: credential.type,
+      authenticatorAttachment: credential.authenticatorAttachment,
+      response: {
+        authenticatorData: toBase64url(credential.response.authenticatorData),
+        clientDataJSON: toBase64url(credential.response.clientDataJSON),
+        signature: toBase64url(credential.response.signature),
+        userHandle: credential.response.userHandle ? toBase64url(credential.response.userHandle) : null,
+      },
+    };
+  }
+  async function signInWithPasskey() {
+    const optionsResponse = await fetch("/auth/passkeys/login/options", {method:"POST", credentials:"include", headers:{"X-Requested-With":"XMLHttpRequest"}});
+    const options = await optionsResponse.json();
+    if (!optionsResponse.ok) throw new Error(options.detail || "Could not start passkey sign-in.");
+    const credential = await navigator.credentials.get({publicKey: prepareRequestOptions(options.publicKey)});
+    if (!credential) throw new Error("Passkey sign-in was cancelled.");
+    const finish = await fetch("/auth/passkeys/login/complete", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json", "X-Requested-With":"XMLHttpRequest"},
+      body:JSON.stringify({challenge_id:options.challenge_id, credential:serializeAssertion(credential)}),
+    });
+    const result = await finish.json().catch(() => ({}));
+    if (!finish.ok) throw new Error(result.detail || "Passkey sign-in failed.");
+  }
+
   // --- Google login button ---
   async function wireGoogle() {
     const btn = $("googleBtn"); if (!btn) return;
@@ -166,6 +211,20 @@
     } catch {}
 
     await wireGoogle();
+
+    const passkeyBtn = $("passkeyBtn");
+    if (!window.PublicKeyCredential || !navigator.credentials) passkeyBtn.hidden = true;
+    passkeyBtn?.addEventListener("click", async () => {
+      passkeyBtn.disabled = true;
+      try {
+        await signInWithPasskey();
+        flash("Passkey verified. Redirecting…");
+        setTimeout(() => redirectToReturn("/ui/index.html"), 250);
+      } catch (error) {
+        if (error?.name !== "NotAllowedError") flash(error?.message || "Passkey sign-in failed.", "error");
+        passkeyBtn.disabled = false;
+      }
+    });
 
     setMode(["signup", "reset"].includes(requestedMode) ? requestedMode : "signin");
     if (params.get("account") === "deleted") {

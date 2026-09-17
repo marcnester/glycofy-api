@@ -22,6 +22,7 @@ from app.models import OAuthAccount, User
 from app.observability import record_security_event
 from app.rate_limit import AUTH_LIMITER, client_key
 from app.routers.auth import COOKIE_ACCESS, _cookie_kwargs, _create_access_token, hash_password
+from app.services.user_sessions import create_user_session
 
 router = APIRouter()
 
@@ -459,7 +460,8 @@ async def google_callback(
     record_security_event(db, request, "oauth_google_login", "success", user_id=user.id)
 
     # Mint JWT and set cookies
-    app_jwt = _create_access_token(str(user.id), token_version=user.token_version)
+    session_id = create_user_session(db, request, user, "google")
+    app_jwt = _create_access_token(str(user.id), token_version=user.token_version, session_id=session_id)
 
     # Safe redirect path
     dest = _safe_return_path(request.cookies.get(RETURN_COOKIE_NAME))

@@ -379,7 +379,7 @@ def test_profile_uses_official_strava_connect_asset(client: TestClient):
 def test_account_deletion_dialog_supports_escape_key():
     page = Path("ui/profile.html").read_text(encoding="utf-8")
     script = Path("ui/profile.js").read_text(encoding="utf-8")
-    assert "profile.js?v=2026-09-17-security-hardening" in page
+    assert "profile.js?v=2026-09-17-passkeys" in page
     assert 'dialog?.addEventListener("cancel"' in script
     assert 'dialog?.addEventListener("keydown"' in script
     assert 'event.key === "Escape"' in script
@@ -905,3 +905,22 @@ def test_activity_model_includes_created_at_column():
 def test_production_configuration_rejects_insecure_defaults():
     with pytest.raises(ValidationError, match="Unsafe production configuration"):
         Settings(_env_file=None, ENV="production")
+
+
+def test_operations_dashboard_escapes_all_untrusted_fields():
+    script = Path("ui/operations.js").read_text()
+
+    assert "function escapeHtml(value)" in script
+    for field in (
+        "item.category",
+        "item.page_path",
+        "item.message",
+        "item.browser",
+        "item.viewport",
+        "item.error_code",
+        "item.error_reference",
+        "item.event_type",
+        "item.outcome",
+        "item.request_id",
+    ):
+        assert f"escapeHtml({field}" in script

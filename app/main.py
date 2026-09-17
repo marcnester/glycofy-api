@@ -1,6 +1,7 @@
 # app/main.py
 from __future__ import annotations
 
+import hmac
 import logging
 import time
 from pathlib import Path
@@ -65,6 +66,7 @@ from app.routers import (
     oauth_strava as oauth_strava_router,
 )
 from app.routers import operations as operations_router
+from app.routers import passkeys as passkeys_router
 from app.routers import (
     plans as plans_router,
 )
@@ -77,6 +79,7 @@ from app.routers import (
 
 # --- DEV-only recipes import router (mounted below) ---
 from app.routers import recipes_admin as recipes_admin_router  # ← existing dev import
+from app.routers import sessions as sessions_router
 from app.routers import (
     summary as summary_router,
 )
@@ -223,6 +226,14 @@ async def security_controls(request: Request, call_next):
         except ValueError:
             return reject("Invalid Content-Length", 400, "invalid_content_length")
 
+    # Render calls health probes directly, outside Cloudflare. These endpoints
+    # expose only status/time and must remain reachable for zero-downtime
+    # deploys; every application and API route requires the edge assertion.
+    if settings.is_production and request.url.path not in {"/health", "/ready"}:
+        supplied_edge_secret = request.headers.get(settings.EDGE_ORIGIN_HEADER, "")
+        if not hmac.compare_digest(supplied_edge_secret, settings.EDGE_ORIGIN_SECRET or ""):
+            return reject("Origin access denied", 403, "origin_boundary_rejected")
+
     # Cookie-authenticated unsafe requests must be same-origin. Bearer-only API
     # clients normally omit Origin and are not vulnerable to browser CSRF.
     if request.method not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
@@ -281,6 +292,8 @@ async def security_controls(request: Request, call_next):
 # -----------------------------
 app.include_router(health_router.router, prefix="", tags=["health"])
 app.include_router(auth_router.router, prefix="/auth", tags=["auth"])
+app.include_router(sessions_router.router, prefix="/auth/sessions", tags=["sessions"])
+app.include_router(passkeys_router.router, prefix="/auth/passkeys", tags=["passkeys"])
 app.include_router(beta_router.router, prefix="/v1/beta", tags=["beta"])
 app.include_router(users_router.router, tags=["users"])
 app.include_router(activities_router.router, prefix="/activities", tags=["activities"])

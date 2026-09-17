@@ -37,8 +37,28 @@ services:
         value: "true"
       - key: TRUSTED_EDGE_PROVIDER
         value: cloudflare
+      - key: EDGE_ORIGIN_SECRET
+        sync: false
+      - key: EDGE_ORIGIN_HEADER
+        value: X-Glycofy-Edge-Auth
       - key: PASSWORD_BREACH_CHECK_ENABLED
         value: "true"
+      - key: REQUIRE_STATEFUL_SESSIONS
+        value: "true"
+      - key: MAX_CONCURRENT_SESSIONS
+        value: "5"
+      - key: SESSION_REAUTH_WINDOW_MINUTES
+        value: "5"
+      - key: SESSION_RECORD_RETENTION_DAYS
+        value: "30"
+      - key: WEBAUTHN_RP_ID
+        value: app.glycofy.ai
+      - key: WEBAUTHN_RP_NAME
+        value: Glycofy
+      - key: WEBAUTHN_EXPECTED_ORIGIN
+        value: https://app.glycofy.ai
+      - key: WEBAUTHN_CHALLENGE_RETENTION_HOURS
+        value: "24"
       - key: ENABLE_DEV_ROUTES
         value: "false"
       - key: JWT_ISS

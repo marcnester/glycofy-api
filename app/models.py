@@ -31,6 +31,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -119,6 +120,70 @@ class AccountActionToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class UserSession(Base):
+    """One revocable login session; the raw session identifier is never stored."""
+
+    __tablename__ = "user_sessions"
+    __table_args__ = (
+        UniqueConstraint("session_hash", name="ux_user_sessions_session_hash"),
+        Index("ix_user_sessions_user_active", "user_id", "revoked_at", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    session_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    auth_method: Mapped[str] = mapped_column(String(24), nullable=False)
+    device_label: Mapped[str] = mapped_column(String(160), nullable=False)
+    client_id_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PasskeyCredential(Base):
+    """WebAuthn public-key credential. Private key material remains on the authenticator."""
+
+    __tablename__ = "passkey_credentials"
+    __table_args__ = (UniqueConstraint("credential_id", name="ux_passkey_credentials_credential_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    credential_id: Mapped[str] = mapped_column(String(1024), nullable=False)
+    public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    sign_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    transports: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    device_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    backed_up: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False, default="Passkey")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class WebAuthnChallenge(Base):
+    """Single-use, short-lived challenge for a registration or authentication ceremony."""
+
+    __tablename__ = "webauthn_challenges"
+    __table_args__ = (
+        UniqueConstraint("challenge_hash", name="ux_webauthn_challenges_challenge_hash"),
+        Index("ix_webauthn_challenges_expiry", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    challenge_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    challenge: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    purpose: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 # -------------------------

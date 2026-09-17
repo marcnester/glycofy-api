@@ -7,6 +7,7 @@ __pycache__/
 *.sqlite3
 *.bak-*
 *.csv
+!docs/OWASP_ASVS_5_L1_L2_MATRIX_2026-09-17.csv
 
 # Virtual environments
 .venv/

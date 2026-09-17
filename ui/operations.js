@@ -1,5 +1,15 @@
 const number = new Intl.NumberFormat();
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, character => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "'": "&#39;",
+    '"': "&quot;",
+  }[character]));
+}
+
 async function loadOperations() {
   const state = document.getElementById("state");
   const hours = document.getElementById("window").value;
@@ -45,8 +55,8 @@ async function loadBeta() {
     document.getElementById("plansCompleted").textContent = number.format(summary.events.weekly_plan_completed || 0);
     document.getElementById("groceryApprovals").textContent = number.format(summary.events.grocery_approved || 0);
     document.getElementById("newFeedback").textContent = number.format(summary.feedback.new);
-    document.getElementById("feedbackQueue").innerHTML = rows(feedback, item => `<strong>${item.category}</strong> · ${item.page_path}<br>${item.message.replace(/[<>&]/g, character => ({"<":"&lt;", ">":"&gt;", "&":"&amp;"}[character]))}<br><small>${item.browser} · ${item.viewport} · ${item.request_id || "no request ID"}</small>`, "No feedback yet.");
-    document.getElementById("failedJobs").innerHTML = rows(jobs, item => `<strong>${item.error_code || "Unknown failure"}</strong><br><small>Reference ${item.error_reference || "unavailable"} · attempt ${item.attempt_count}</small>`, "No failed jobs.");
+    document.getElementById("feedbackQueue").innerHTML = rows(feedback, item => `<strong>${escapeHtml(item.category)}</strong> · ${escapeHtml(item.page_path)}<br>${escapeHtml(item.message)}<br><small>${escapeHtml(item.browser)} · ${escapeHtml(item.viewport)} · ${escapeHtml(item.request_id || "no request ID")}</small>`, "No feedback yet.");
+    document.getElementById("failedJobs").innerHTML = rows(jobs, item => `<strong>${escapeHtml(item.error_code || "Unknown failure")}</strong><br><small>Reference ${escapeHtml(item.error_reference || "unavailable")} · attempt ${escapeHtml(item.attempt_count)}</small>`, "No failed jobs.");
   } catch (_) { /* AI operations remain useful if beta metrics are unavailable */ }
 }
 
@@ -60,7 +70,7 @@ async function loadSecurity() {
     document.getElementById("securityAlerts").textContent = number.format(summary.by_severity.alert || 0);
     document.getElementById("recentAlerts").innerHTML = rows(
       summary.recent_alerts,
-      item => `<strong>${item.event_type}</strong> · ${item.outcome}<br><small>${new Date(item.occurred_at).toLocaleString()} · Request ${item.request_id || "unavailable"}</small>`,
+      item => `<strong>${escapeHtml(item.event_type)}</strong> · ${escapeHtml(item.outcome)}<br><small>${escapeHtml(new Date(item.occurred_at).toLocaleString())} · Request ${escapeHtml(item.request_id || "unavailable")}</small>`,
       "No security alerts in this window."
     );
   } catch (_) { /* Other operations data remains available during partial failure. */ }

@@ -388,6 +388,24 @@
           <span id="change_password_status" class="muted" role="status"></span>
         </div>
       </form>
+      <div class="strava-panel" style="margin-top:12px;align-items:flex-start">
+        <div class="strava-copy" style="min-width:0;flex:1">
+          <strong>Passkeys</strong>
+          <span class="muted">Sign in securely with Face ID, Touch ID, or your device PIN. Glycofy never receives your biometric data.</span>
+          <div id="passkey_list" style="margin-top:10px;display:grid;gap:8px"></div>
+          <span id="passkey_status" class="muted" role="status"></span>
+        </div>
+        <button id="add_passkey" class="btn btn--pill" type="button">Add passkey</button>
+      </div>
+      <div class="strava-panel" style="margin-top:12px;align-items:flex-start">
+        <div class="strava-copy" style="min-width:0;flex:1">
+          <strong>Signed-in devices</strong>
+          <span class="muted">Review where your account is signed in and remove devices you do not recognize.</span>
+          <div id="session_list" style="margin-top:10px;display:grid;gap:8px"></div>
+          <span id="session_status" class="muted" role="status"></span>
+        </div>
+        <button id="terminate_other_sessions" class="btn btn--pill" type="button">Sign out other devices</button>
+      </div>
       <div class="strava-panel" style="margin-top:12px">
         <div class="strava-copy">
           <strong>Download your data</strong>
@@ -453,7 +471,7 @@
   </main>
 
   <script src="/ui/core.js?v=2025-11-04"></script>
-  <script src="/ui/profile.js?v=2026-09-17-security-hardening"></script>
+  <script src="/ui/profile.js?v=2026-09-17-passkeys"></script>
   <script src="/ui/beta.js?v=2026-09-06-tour" defer></script>
 </body>
 </html>

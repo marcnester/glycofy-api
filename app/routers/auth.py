@@ -18,6 +18,7 @@ from app.observability import record_security_event
 from app.password_security import PasswordPolicyError, PasswordScreenUnavailable, validate_new_password
 from app.rate_limit import AUTH_LIMITER, account_key, client_key
 from app.services.account_email import account_email_configured, build_account_email_html, send_account_email
+from app.services.user_sessions import create_user_session, revoke_all_sessions, revoke_session
 
 # -----------------------------------------------------------------------------
 # Password hashing
@@ -72,6 +73,7 @@ def _create_access_token(
     minutes: int | None = None,
     token_version: int = 0,
     session_started_at: int | None = None,
+    session_id: str | None = None,
 ) -> str:
     if minutes is None:
         minutes = settings.SESSION_IDLE_TIMEOUT_MINUTES
@@ -80,6 +82,7 @@ def _create_access_token(
         expires_minutes=minutes,
         token_version=token_version,
         session_started_at=session_started_at,
+        session_id=session_id,
     )
 
 
@@ -172,6 +175,7 @@ def refresh_session_cookie(request: Request, response: Response) -> None:
         str(payload["sub"]),
         token_version=int(payload.get("ver", 0)),
         session_started_at=auth_time,
+        session_id=payload.get("sid"),
     )
     response.set_cookie(
         COOKIE_ACCESS,
@@ -257,9 +261,9 @@ def _send_verification(user: User, db: Session, background_tasks: BackgroundTask
 # -----------------------------------------------------------------------------
 @router.post("/logout")
 def logout(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    user.token_version = int(user.token_version or 0) + 1
-    db.add(user)
-    db.commit()
+    raw_session_id = str((getattr(request.state, "session_payload", None) or {}).get("sid") or "")
+    if raw_session_id:
+        revoke_session(db, raw_session_id, user.id)
     record_security_event(db, request, "session_logout", "success", user_id=user.id)
     request.state.session_cookie_authenticated = False
     resp = JSONResponse({"ok": True})
@@ -288,7 +292,8 @@ def signup(request: Request, body: SignupRequest, background_tasks: BackgroundTa
     db.refresh(user)
     record_security_event(db, request, "account_signup", "success", user_id=user.id)
 
-    token = _create_access_token(str(user.id), token_version=user.token_version)
+    session_id = create_user_session(db, request, user, "password")
+    token = _create_access_token(str(user.id), token_version=user.token_version, session_id=session_id)
     verification_sent = _send_verification(user, db, background_tasks)
     payload = {"ok": True}
     if verification_sent:
@@ -317,7 +322,8 @@ def login(request: Request, body: LoginRequest, background_tasks: BackgroundTask
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials")
 
-    token = _create_access_token(str(user.id), token_version=user.token_version)
+    session_id = create_user_session(db, request, user, "password")
+    token = _create_access_token(str(user.id), token_version=user.token_version, session_id=session_id)
     resp = JSONResponse({"ok": True})
     _set_all_session_cookies(resp, token)
     record_security_event(db, request, "authentication_login", "success", user_id=user.id)
@@ -379,6 +385,7 @@ def reset_password(request: Request, body: PasswordResetRequest, db: Session = D
     user.token_version = int(user.token_version or 0) + 1
     row.used_at = now
     db.commit()
+    revoke_all_sessions(db, user.id)
     record_security_event(db, request, "password_reset", "success", user_id=user.id)
     return {"ok": True}
 
@@ -403,6 +410,7 @@ def change_password(
     user.token_version = int(user.token_version or 0) + 1
     db.add(user)
     db.commit()
+    revoke_all_sessions(db, user.id)
     record_security_event(db, request, "password_change", "success", user_id=user.id)
     request.state.session_cookie_authenticated = False
     response = JSONResponse({"ok": True, "reauthentication_required": True})

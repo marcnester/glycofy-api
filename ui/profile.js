@@ -51,6 +51,7 @@
     bindNameEditing();
     bindAthleteSetup();
     bindAccountControls();
+    bindSecurityControls();
     await renderUser();
     await loadPreferences();
     await loadLearnedPreferences();
@@ -164,6 +165,113 @@
         confirm.disabled = false; confirm.textContent = "Delete permanently";
       }
     });
+  }
+
+  function fromBase64url(value) {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
+    return Uint8Array.from(binary, char => char.charCodeAt(0));
+  }
+  function toBase64url(value) {
+    const bytes = new Uint8Array(value);
+    let binary = ""; bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function prepareCreationOptions(options) {
+    return {
+      ...options,
+      challenge: fromBase64url(options.challenge),
+      user: {...options.user, id: fromBase64url(options.user.id)},
+      excludeCredentials: (options.excludeCredentials || []).map(item => ({...item, id: fromBase64url(item.id)})),
+    };
+  }
+  function serializeAttestation(credential) {
+    return {
+      id: credential.id,
+      rawId: toBase64url(credential.rawId),
+      type: credential.type,
+      authenticatorAttachment: credential.authenticatorAttachment,
+      response: {
+        attestationObject: toBase64url(credential.response.attestationObject),
+        clientDataJSON: toBase64url(credential.response.clientDataJSON),
+        transports: credential.response.getTransports ? credential.response.getTransports() : [],
+      },
+    };
+  }
+
+  function securityRow(primary, secondary, actionLabel, onAction) {
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid rgba(255,255,255,.08)";
+    const copy = document.createElement("div");
+    const title = document.createElement("div"); title.textContent = primary;
+    const detail = document.createElement("small"); detail.className = "muted"; detail.textContent = secondary;
+    copy.append(title, detail); row.append(copy);
+    if (actionLabel) {
+      const button = document.createElement("button");
+      button.type = "button"; button.className = "btn btn--pill"; button.textContent = actionLabel;
+      button.addEventListener("click", onAction); row.append(button);
+    }
+    return row;
+  }
+
+  async function loadPasskeys() {
+    const target = $("#passkey_list"); if (!target) return;
+    const data = await fetchJSON("/auth/passkeys"); target.replaceChildren();
+    if (!data.passkeys.length) target.append(securityRow("No passkeys yet", "Add one for phishing-resistant sign-in."));
+    data.passkeys.forEach(item => target.append(securityRow(
+      item.name,
+      `Added ${new Date(item.created_at).toLocaleDateString()}${item.last_used_at ? ` · Last used ${new Date(item.last_used_at).toLocaleString()}` : ""}`,
+      "Remove",
+      async () => {
+        try { await fetchJSON(`/auth/passkeys/${item.id}`, {method:"DELETE", headers:{"X-Requested-With":"XMLHttpRequest"}}); await loadPasskeys(); flash("Passkey removed."); }
+        catch (error) { $("#passkey_status").textContent = error.message; }
+      }
+    )));
+  }
+
+  async function loadSessions() {
+    const target = $("#session_list"); if (!target) return;
+    const data = await fetchJSON("/auth/sessions"); target.replaceChildren();
+    data.sessions.forEach(item => target.append(securityRow(
+      `${item.device}${item.current ? " · This device" : ""}`,
+      `${item.auth_method} sign-in · Active ${new Date(item.last_seen_at).toLocaleString()}`,
+      item.current ? null : "Sign out",
+      async () => {
+        try { await fetchJSON(`/auth/sessions/${item.id}`, {method:"DELETE", headers:{"X-Requested-With":"XMLHttpRequest"}}); await loadSessions(); flash("Device signed out."); }
+        catch (error) { $("#session_status").textContent = error.message; }
+      }
+    )));
+  }
+
+  function bindSecurityControls() {
+    const add = $("#add_passkey");
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+      if (add) { add.disabled = true; add.title = "Passkeys are not supported by this browser."; }
+    }
+    add?.addEventListener("click", async () => {
+      add.disabled = true; const status = $("#passkey_status"); status.textContent = "Waiting for your device…";
+      try {
+        const options = await fetchJSON("/auth/passkeys/register/options", {method:"POST", headers:{"X-Requested-With":"XMLHttpRequest"}});
+        const credential = await navigator.credentials.create({publicKey:prepareCreationOptions(options.publicKey)});
+        if (!credential) throw new Error("Passkey setup was cancelled.");
+        const suggestedName = /iPhone|iPad/i.test(navigator.userAgent) ? "Apple device" : "My device";
+        await fetchJSON("/auth/passkeys/register/complete", {
+          method:"POST", headers:{"Content-Type":"application/json", "X-Requested-With":"XMLHttpRequest"},
+          body:JSON.stringify({challenge_id:options.challenge_id, credential:serializeAttestation(credential), name:suggestedName}),
+        });
+        status.textContent = "Passkey added."; await loadPasskeys();
+      } catch (error) {
+        if (error?.name !== "NotAllowedError") status.textContent = error.message || "Could not add passkey.";
+      } finally { add.disabled = false; }
+    });
+    $("#terminate_other_sessions")?.addEventListener("click", async event => {
+      event.currentTarget.disabled = true;
+      try { const result = await fetchJSON("/auth/sessions/terminate-others", {method:"POST", headers:{"X-Requested-With":"XMLHttpRequest"}}); $("#session_status").textContent = `${result.terminated} other device${result.terminated === 1 ? "" : "s"} signed out.`; await loadSessions(); }
+      catch (error) { $("#session_status").textContent = error.message; }
+      finally { event.currentTarget.disabled = false; }
+    });
+    loadPasskeys().catch(error => { $("#passkey_status").textContent = error.message; });
+    loadSessions().catch(error => { $("#session_status").textContent = error.message; });
   }
 
   // ---- athlete setup ----

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -19,15 +19,22 @@ from app.models import (
     ProductEvent,
     SecurityAuditEvent,
     User,
+    UserSession,
     WeeklyPlanningJob,
 )
+from app.observability import record_security_event
 from app.services.usda_nutrition import USDANutritionError, lookup_food
+from app.services.user_sessions import require_recent_reauthentication
 
 router = APIRouter()
 
 
 class FeedbackStatusIn(BaseModel):
     status: str
+
+
+class SessionTerminationIn(BaseModel):
+    email: str
 
 
 def _require_admin(user: User = Depends(get_current_user)) -> User:
@@ -270,3 +277,34 @@ def failed_jobs(
         }
         for row in rows
     ]
+
+
+@router.post("/sessions/terminate", tags=["operations"])
+def administratively_terminate_sessions(
+    request: Request,
+    payload: SessionTerminationIn,
+    db: Session = Depends(get_db),
+    admin: User = Depends(_require_admin),
+):
+    """Emergency account containment without exposing session or profile contents."""
+    require_recent_reauthentication(request)
+    target = db.query(User).filter(func.lower(User.email) == payload.email.strip().casefold()).first()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    count = (
+        db.query(UserSession)
+        .filter(UserSession.user_id == target.id, UserSession.revoked_at.is_(None))
+        .update({"revoked_at": datetime.utcnow()}, synchronize_session=False)
+    )
+    target.token_version = int(target.token_version or 0) + 1
+    db.commit()
+    record_security_event(
+        db,
+        request,
+        "admin_sessions_terminated",
+        "success",
+        severity="warning",
+        user_id=admin.id,
+        details={"target_user_id": target.id, "count": count},
+    )
+    return {"ok": True, "terminated": count}

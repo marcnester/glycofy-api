@@ -6,7 +6,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from app.config import settings
@@ -23,6 +23,16 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):  # type: ignore[no-
     cursor.close()
 
 
+def _database_url_with_required_tls(database_url: str, *, production: bool) -> str:
+    """Prevent plaintext PostgreSQL fallback in production."""
+    if not production or not database_url.startswith("postgresql+"):
+        return database_url
+    parsed_url = make_url(database_url)
+    if "sslmode" in parsed_url.query:
+        return database_url
+    return parsed_url.update_query_dict({"sslmode": "require"}).render_as_string(hide_password=False)
+
+
 DATABASE_URL = settings.DATABASE_URL
 
 # Render supplies a standard ``postgresql://`` URL. SQLAlchemy otherwise
@@ -33,6 +43,11 @@ if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 elif DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+
+# Render's private PostgreSQL network supports TLS with a self-signed
+# certificate. ``sslmode=require`` prevents plaintext fallback; certificate
+# hostname verification is not available for Render's internal endpoint.
+DATABASE_URL = _database_url_with_required_tls(DATABASE_URL, production=settings.is_production)
 
 # For SQLite, disable same-thread check for FastAPI dev server convenience
 engine = create_engine(

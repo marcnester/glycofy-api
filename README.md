@@ -40,7 +40,7 @@ Athlete profile + training context
 - **Meal control** — individual AI swaps, full-day planning, explanations, locking, and grocery exports.
 - **Adaptive meal feedback** — athletes can record meal completion, substitutions, portions, ratings, hunger, energy, digestion, and preparation practicality; bounded preference signals improve future AI plans.
 - **Package-aware grocery preparation** — ingredients are consolidated across the week, compatible measurements are converted, household servings can be scaled, likely package counts and leftovers are shown, brand/package/pantry preferences persist, and reviewed lists can be approved as stable shopping snapshots.
-- **Secure authentication** — email/password and Google account creation, server-side HTTP-only sessions, OAuth state validation, encrypted provider credentials, rate limiting, and security audit events.
+- **Secure authentication** — email/password, Google OIDC, and WebAuthn passkeys; revocable stateful HTTP-only sessions; OAuth state/nonce validation; encrypted provider credentials; layered rate limiting; and security audit events.
 
 ## Product direction
 
@@ -88,7 +88,7 @@ alembic upgrade head
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8090
 ```
 
-Open [http://127.0.0.1:8090](http://127.0.0.1:8090).
+Open [http://localhost:8090](http://localhost:8090). Using `localhost` keeps local WebAuthn/passkey origin validation aligned with `.env.example`.
 
 The default development configuration uses SQLite. Configure `DATABASE_URL` with a PostgreSQL connection string when testing production behavior.
 
@@ -101,6 +101,8 @@ Configuration is read from environment variables or a local `.env` file. Start w
 | `DATABASE_URL` | SQLAlchemy database connection string |
 | `JWT_SECRET` | Session-signing secret; use at least 32 random characters |
 | `OAUTH_TOKEN_ENCRYPTION_KEY` | Fernet key used to encrypt retained provider credentials |
+| `EDGE_ORIGIN_SECRET` | Shared secret injected by Cloudflare and validated by the Render origin |
+| `WEBAUTHN_RP_ID` / `WEBAUTHN_EXPECTED_ORIGIN` | Exact passkey relying-party domain and HTTPS origin |
 | `OPENAI_API_KEY` | Enables AI meal recommendations |
 | `USDA_FDC_API_KEY` | Verifies generated ingredient nutrition against FoodData Central |
 | `USDA_FDC_WEEKLY_SYNC_LOOKUPS` | Caps live USDA lookups during a weekly request; remaining foods reconcile in the background |
@@ -136,7 +138,7 @@ GitHub Actions repeats the test, dependency, static-analysis, and full-history G
 
 ## Security and privacy
 
-Glycofy handles health-adjacent, dietary, allergy, and connected-account information. The application therefore uses a fail-closed production configuration, HTTP-only secure cookies, CSRF/origin controls, bounded request bodies, authentication and OAuth rate limits, encrypted OAuth tokens, redacted structured logging, and privacy-safe audit events.
+Glycofy handles health-adjacent, dietary, allergy, and connected-account information. The application therefore uses a fail-closed production configuration, HTTP-only secure cookies, revocable stateful sessions, optional phishing-resistant passkeys, CSRF/origin controls, an authenticated Cloudflare-to-origin boundary, bounded request bodies, authentication and OAuth rate limits, encrypted OAuth tokens, redacted structured logging, and privacy-safe audit events. The evidence-backed OWASP ASVS 5.0 L1/L2 review and its explicit exceptions are published under [`docs/`](docs/OWASP_ASVS_L2_GAP_ASSESSMENT_2026-09-16.md).
 
 Athletes can verify their email, recover a password with expiring single-use links, export their account data, disconnect Strava, and permanently delete their account from Profile. Transactional account email requires the SMTP settings documented in [`.env.example`](.env.example).
 

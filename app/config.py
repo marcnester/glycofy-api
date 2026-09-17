@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     AUTH_RATE_LIMIT_PER_15_MINUTES: int = 20
     OAUTH_RATE_LIMIT_PER_15_MINUTES: int = 30
     TRUSTED_EDGE_PROVIDER: str = ""
+    EDGE_ORIGIN_SECRET: str | None = None
+    EDGE_ORIGIN_HEADER: str = "X-Glycofy-Edge-Auth"
     SECURITY_AUDIT_RETENTION_DAYS: int = 365
     WEEKLY_JOB_RETENTION_DAYS: int = 30
     AI_METRIC_RETENTION_DAYS: int = 90
@@ -80,6 +82,10 @@ class Settings(BaseSettings):
     # beyond the absolute lifetime measured from the original sign-in.
     SESSION_IDLE_TIMEOUT_MINUTES: int = 24 * 60
     SESSION_ABSOLUTE_TIMEOUT_MINUTES: int = 7 * 24 * 60
+    MAX_CONCURRENT_SESSIONS: int = 5
+    SESSION_REAUTH_WINDOW_MINUTES: int = 5
+    SESSION_RECORD_RETENTION_DAYS: int = 30
+    REQUIRE_STATEFUL_SESSIONS: bool = False
     # Retained for backwards compatibility with non-browser token callers.
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     JWT_ISS: str | None = "glyco.local"
@@ -91,6 +97,11 @@ class Settings(BaseSettings):
     PASSWORD_BREACH_CHECK_TIMEOUT_SECONDS: float = 3.0
     OAUTH_STATE_TTL_SECONDS: int = 600
     OAUTH_TOKEN_ENCRYPTION_KEY: str | None = None
+    WEBAUTHN_RP_ID: str = "localhost"
+    WEBAUTHN_RP_NAME: str = "Glycofy"
+    WEBAUTHN_EXPECTED_ORIGIN: str = "http://localhost:8090"
+    WEBAUTHN_CHALLENGE_TTL_SECONDS: int = 300
+    WEBAUTHN_CHALLENGE_RETENTION_HOURS: int = 24
 
     # ─── Units & Defaults ─────────────────────────────────────────────────────
     DEFAULT_UNITS: str = "us"
@@ -175,6 +186,14 @@ class Settings(BaseSettings):
             raise ValueError("SESSION_IDLE_TIMEOUT_MINUTES must be positive")
         if self.SESSION_ABSOLUTE_TIMEOUT_MINUTES < self.SESSION_IDLE_TIMEOUT_MINUTES:
             raise ValueError("SESSION_ABSOLUTE_TIMEOUT_MINUTES must be at least the idle timeout")
+        if self.MAX_CONCURRENT_SESSIONS < 1:
+            raise ValueError("MAX_CONCURRENT_SESSIONS must be positive")
+        if self.SESSION_REAUTH_WINDOW_MINUTES < 1:
+            raise ValueError("SESSION_REAUTH_WINDOW_MINUTES must be positive")
+        if self.SESSION_RECORD_RETENTION_DAYS < 1:
+            raise ValueError("SESSION_RECORD_RETENTION_DAYS must be positive")
+        if self.WEBAUTHN_CHALLENGE_RETENTION_HOURS < 1:
+            raise ValueError("WEBAUTHN_CHALLENGE_RETENTION_HOURS must be positive")
         if not self.is_production:
             # Avoid weak HMAC keys in zero-config local development without
             # exposing or rewriting the developer's .env value.
@@ -202,8 +221,16 @@ class Settings(BaseSettings):
             errors.append("OAUTH_RATE_LIMIT_PER_15_MINUTES must be positive")
         if self.TRUSTED_EDGE_PROVIDER.strip().lower() != "cloudflare":
             errors.append("TRUSTED_EDGE_PROVIDER must be cloudflare")
+        if len(self.EDGE_ORIGIN_SECRET or "") < 32:
+            errors.append("EDGE_ORIGIN_SECRET must contain at least 32 characters")
         if not self.PASSWORD_BREACH_CHECK_ENABLED:
             errors.append("PASSWORD_BREACH_CHECK_ENABLED must be true")
+        if not self.REQUIRE_STATEFUL_SESSIONS:
+            errors.append("REQUIRE_STATEFUL_SESSIONS must be true")
+        if self.WEBAUTHN_RP_ID != "app.glycofy.ai":
+            errors.append("WEBAUTHN_RP_ID must be app.glycofy.ai")
+        if self.WEBAUTHN_EXPECTED_ORIGIN != "https://app.glycofy.ai":
+            errors.append("WEBAUTHN_EXPECTED_ORIGIN must be https://app.glycofy.ai")
         if self.WEB_PROCESS_COUNT > 1 and not (self.SHARED_JOB_QUEUE_URL and self.SHARED_RATE_LIMIT_URL):
             errors.append("multiple web processes require shared job queue and rate-limit backends")
         if not self.OAUTH_TOKEN_ENCRYPTION_KEY:
