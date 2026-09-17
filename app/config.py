@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     MAX_REQUEST_BODY_BYTES: int = 1_048_576
     AUTH_RATE_LIMIT_PER_15_MINUTES: int = 20
     OAUTH_RATE_LIMIT_PER_15_MINUTES: int = 30
+    TRUSTED_EDGE_PROVIDER: str = ""
     SECURITY_AUDIT_RETENTION_DAYS: int = 365
     WEEKLY_JOB_RETENTION_DAYS: int = 30
     AI_METRIC_RETENTION_DAYS: int = 90
@@ -86,6 +87,8 @@ class Settings(BaseSettings):
     ID_COOKIE_NAME: str = "id_token"
     SESSION_COOKIE_NAME: str = "access_token"
     COOKIE_SECURE: bool = False
+    PASSWORD_BREACH_CHECK_ENABLED: bool = False
+    PASSWORD_BREACH_CHECK_TIMEOUT_SECONDS: float = 3.0
     OAUTH_STATE_TTL_SECONDS: int = 600
     OAUTH_TOKEN_ENCRYPTION_KEY: str | None = None
 
@@ -156,6 +159,13 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.ENV.strip().lower() == "production"
 
+    @property
+    def session_cookie_name(self) -> str:
+        """Use a host-bound cookie name in production without breaking HTTP development."""
+        if self.is_production:
+            return f"__Host-{self.SESSION_COOKIE_NAME.removeprefix('__Host-').removeprefix('__Secure-')}"
+        return self.SESSION_COOKIE_NAME
+
     def csv_values(self, value: str) -> list[str]:
         return [item.strip() for item in value.split(",") if item.strip()]
 
@@ -190,6 +200,10 @@ class Settings(BaseSettings):
             errors.append("AUTH_RATE_LIMIT_PER_15_MINUTES must be positive")
         if self.OAUTH_RATE_LIMIT_PER_15_MINUTES < 1:
             errors.append("OAUTH_RATE_LIMIT_PER_15_MINUTES must be positive")
+        if self.TRUSTED_EDGE_PROVIDER.strip().lower() != "cloudflare":
+            errors.append("TRUSTED_EDGE_PROVIDER must be cloudflare")
+        if not self.PASSWORD_BREACH_CHECK_ENABLED:
+            errors.append("PASSWORD_BREACH_CHECK_ENABLED must be true")
         if self.WEB_PROCESS_COUNT > 1 and not (self.SHARED_JOB_QUEUE_URL and self.SHARED_RATE_LIMIT_URL):
             errors.append("multiple web processes require shared job queue and rate-limit backends")
         if not self.OAUTH_TOKEN_ENCRYPTION_KEY:

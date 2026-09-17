@@ -11,6 +11,7 @@ from datetime import datetime
 from urllib.parse import urlencode
 
 import httpx
+import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -30,13 +31,13 @@ GOOGLE_CLIENT_SECRET = (settings.GOOGLE_CLIENT_SECRET or "").strip()
 GOOGLE_REDIRECT_URL = (settings.GOOGLE_REDIRECT_URI or settings.GOOGLE_REDIRECT_URL or "").strip()
 
 # Temp cookies for OAuth round-trip
-STATE_COOKIE_NAME = "oauth_state"
-RETURN_COOKIE_NAME = "oauth_return"
+STATE_COOKIE_NAME = "__Host-glycofy-oauth-state" if settings.is_production else "oauth_state"
+RETURN_COOKIE_NAME = "__Host-glycofy-oauth-return" if settings.is_production else "oauth_return"
 
 # Google endpoints
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
+GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 
 SCOPES = ["openid", "email", "profile"]
 
@@ -52,7 +53,7 @@ def _oauth_cookie_kwargs() -> dict:
         "httponly": True,
         "secure": settings.COOKIE_SECURE,
         "samesite": "lax",
-        "path": "/oauth/google/callback",
+        "path": "/",
         "max_age": settings.OAUTH_STATE_TTL_SECONDS,
     }
 
@@ -72,7 +73,7 @@ def _encode_state() -> str:
     return f"{body}.{sig}"
 
 
-def _decode_state(state: str) -> None:
+def _decode_state(state: str) -> str:
     try:
         body, supplied_sig = state.split(".", 1)
     except ValueError as exc:
@@ -92,16 +93,45 @@ def _decode_state(state: str) -> None:
         raise ValueError("bad_state")
     if expires <= _now_ts():
         raise ValueError("expired_state")
+    return nonce
 
 
-def verify_state(request: Request, state_from_query: str) -> None:
+def verify_state(request: Request, state_from_query: str) -> str:
     state_cookie = request.cookies.get(STATE_COOKIE_NAME, "")
     if not state_cookie or not state_from_query or not hmac.compare_digest(state_cookie, state_from_query):
         raise HTTPException(status_code=400, detail="Invalid OAuth state")
     try:
-        _decode_state(state_from_query)
+        return _decode_state(state_from_query)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid OAuth state") from exc
+
+
+async def _validate_google_id_token(id_token: str, expected_nonce: str, client: httpx.AsyncClient) -> dict:
+    """Validate Google's signed OIDC assertion and bind it to this login attempt."""
+    try:
+        header = jwt.get_unverified_header(id_token)
+        if header.get("alg") != "RS256" or not header.get("kid"):
+            raise ValueError("unsupported_header")
+        jwks_response = await client.get(GOOGLE_JWKS_URL)
+        if jwks_response.status_code != 200:
+            raise ValueError("jwks_unavailable")
+        key_set = jwt.PyJWKSet.from_dict(jwks_response.json())
+        signing_key = next((item.key for item in key_set.keys if item.key_id == header["kid"]), None)
+        if signing_key is None:
+            raise ValueError("unknown_key")
+        claims = jwt.decode(
+            id_token,
+            signing_key,
+            algorithms=["RS256"],
+            audience=GOOGLE_CLIENT_ID,
+            issuer=["https://accounts.google.com", "accounts.google.com"],
+            options={"require": ["aud", "exp", "iat", "iss", "sub", "email", "email_verified", "nonce"]},
+        )
+        if not hmac.compare_digest(str(claims.get("nonce", "")), expected_nonce):
+            raise ValueError("nonce_mismatch")
+        return claims
+    except (jwt.PyJWTError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Google identity validation failed") from exc
 
 
 def _units_from_locale(locale: str | None) -> str | None:
@@ -181,19 +211,21 @@ async def google_start(
         window_seconds=900,
     )
 
-    # Signed, expiring state for CSRF protection.
-    nonce = _encode_state()
+    # Signed, expiring state for CSRF protection. Its nonce also binds the
+    # signed Google identity assertion to this exact browser login attempt.
+    state_value = _encode_state()
+    oidc_nonce = _decode_state(state_value)
 
     # Store state + return in cookies
     resp = RedirectResponse(url="/")  # will be replaced
     resp.set_cookie(
         STATE_COOKIE_NAME,
-        nonce,
+        state_value,
         max_age=settings.OAUTH_STATE_TTL_SECONDS,
         httponly=True,
         secure=settings.COOKIE_SECURE,
         samesite="lax",
-        path="/oauth/google/callback",
+        path="/",
     )
     safe_return = _safe_return_path(return_ or DEFAULT_RETURN_PATH)
     resp.set_cookie(
@@ -212,7 +244,8 @@ async def google_start(
         "redirect_uri": GOOGLE_REDIRECT_URL,
         "response_type": "code",
         "scope": " ".join(SCOPES),
-        "state": nonce,
+        "state": state_value,
+        "nonce": oidc_nonce,
         "prompt": "select_account",
     }
     url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
@@ -233,7 +266,7 @@ async def google_callback(
     Complete OAuth:
       - verify state
       - exchange code for tokens
-      - fetch userinfo
+      - validate Google's signed identity token
       - find-or-create/enrich local user
       - mint JWT and set cookies
       - redirect to original return or /ui/index.html
@@ -254,7 +287,7 @@ async def google_callback(
         raise
 
     try:
-        verify_state(request, state)
+        expected_nonce = verify_state(request, state)
     except HTTPException:
         record_security_event(db, request, "oauth_google_callback", "invalid_state", severity="alert")
         raise
@@ -288,24 +321,22 @@ async def google_callback(
             )
 
         token = token_res.json()
-        access_token = token.get("access_token")
+        id_token = token.get("id_token")
         scope = token.get("scope")
 
-        if not access_token:
-            raise HTTPException(status_code=400, detail="No access_token in token response")
-
-        # Fetch user info
-        ures = await client.get(
-            GOOGLE_USERINFO_URL,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        if ures.status_code != 200:
-            raise HTTPException(
-                status_code=400,
-                detail="Google user profile request failed",
+        if not id_token:
+            raise HTTPException(status_code=400, detail="Google identity token missing")
+        try:
+            profile = await _validate_google_id_token(id_token, expected_nonce, client)
+        except HTTPException:
+            record_security_event(
+                db,
+                request,
+                "oauth_google_callback",
+                "invalid_identity_token",
+                severity="alert",
             )
-
-        profile = ures.json()
+            raise
         email = (profile.get("email") or "").lower()
         sub = profile.get("sub")
         locale = (profile.get("locale") or "").strip()
@@ -324,8 +355,27 @@ async def google_callback(
         if not sub:
             raise HTTPException(status_code=400, detail="Google profile missing subject")
 
-    # Find or create user
-    user = db.query(User).filter(User.email == email).first()
+    # Prefer the provider's immutable subject. Verified email may link an
+    # existing local account only when it has no conflicting Google identity.
+    existing_identity = (
+        db.query(OAuthAccount)
+        .filter(OAuthAccount.provider == "google", OAuthAccount.external_athlete_id == sub)
+        .first()
+    )
+    user = db.query(User).filter(User.id == existing_identity.user_id).first() if existing_identity else None
+    if user and user.email.casefold() != email.casefold():
+        record_security_event(db, request, "oauth_google_callback", "identity_email_mismatch", severity="alert")
+        raise HTTPException(status_code=400, detail="Google identity does not match this account")
+    if not user:
+        user = db.query(User).filter(User.email == email).first()
+        conflicting_identity = (
+            db.query(OAuthAccount).filter(OAuthAccount.user_id == user.id, OAuthAccount.provider == "google").first()
+            if user
+            else None
+        )
+        if conflicting_identity and conflicting_identity.external_athlete_id != sub:
+            record_security_event(db, request, "oauth_google_callback", "identity_conflict", severity="alert")
+            raise HTTPException(status_code=400, detail="Google identity does not match this account")
     if not user:
         # OAuth-only users still satisfy the legacy non-null password column,
         # but the generated value is unknown and cannot be used to log in.
@@ -418,11 +468,11 @@ async def google_callback(
     # Set cookies
     resp.set_cookie(COOKIE_ACCESS, app_jwt, **_cookie_kwargs(http_only=True))
     for legacy_name in ("glyco_auth", "id_token", "glyco_token"):
-        resp.delete_cookie(legacy_name, path="/", samesite="lax")
+        resp.delete_cookie(legacy_name, path="/", secure=settings.COOKIE_SECURE, httponly=True, samesite="lax")
 
     # Clean up
-    resp.delete_cookie(STATE_COOKIE_NAME, path="/oauth/google/callback")
-    resp.delete_cookie(RETURN_COOKIE_NAME, path="/")
+    resp.delete_cookie(STATE_COOKIE_NAME, path="/", secure=settings.COOKIE_SECURE, httponly=True, samesite="lax")
+    resp.delete_cookie(RETURN_COOKIE_NAME, path="/", secure=settings.COOKIE_SECURE, httponly=True, samesite="lax")
     from app.routers.oauth_strava import schedule_strava_sync_on_login
 
     schedule_strava_sync_on_login(background_tasks=background_tasks, db=db, user_id=user.id)

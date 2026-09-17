@@ -119,7 +119,7 @@
     if (!res.ok) {
       const data = await res.json().catch(() => null);
       if (data?.detail === "email_in_use") throw new Error("An account already exists for this email. Sign in instead.");
-      if (res.status === 422) throw new Error("Enter a valid email and a password of at least 12 characters.");
+      if (res.status === 422) throw new Error(data?.detail || "Enter a valid email and a password of at least 12 characters.");
       throw new Error(data?.detail || "We could not create your account. Please try again.");
     }
     return true;
@@ -171,6 +171,7 @@
     if (params.get("account") === "deleted") {
       flash("Your account and Glycofy data have been permanently deleted.");
     }
+    if (params.get("password") === "changed") flash("Password updated. Sign in again on this device.");
     if (params.get("verification") === "success") flash("Email verified. You can sign in now.");
     if (params.get("verification") === "invalid") flash("That verification link is invalid or expired. Sign in to request another.", "error");
     $("mode-switch")?.addEventListener("click", () => setMode(authMode === "signup" ? "signin" : "signup"));

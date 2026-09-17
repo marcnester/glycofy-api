@@ -330,4 +330,5 @@ def delete_my_account(
     request.state.session_cookie_authenticated = False
     response = JSONResponse({"ok": True, "strava_revoked": provider_revoked})
     _clear_all_session_cookies(response)
+    response.headers["Clear-Site-Data"] = '"cache", "storage"'
     return response

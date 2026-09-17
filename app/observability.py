@@ -14,6 +14,7 @@ from fastapi import Request
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.rate_limit import client_address
 
 request_id_context: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="")
 security_logger = logging.getLogger("glycofy.security")
@@ -90,7 +91,7 @@ def request_id() -> str:
 
 
 def privacy_safe_client_id(request: Request) -> str:
-    address = request.client.host if request.client else "unknown"
+    address = client_address(request)
     digest = hmac.new(settings.JWT_SECRET.encode(), address.encode(), hashlib.sha256).hexdigest()
     return digest[:20]
 

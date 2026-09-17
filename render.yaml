@@ -35,6 +35,10 @@ services:
         value: app.glycofy.ai
       - key: COOKIE_SECURE
         value: "true"
+      - key: TRUSTED_EDGE_PROVIDER
+        value: cloudflare
+      - key: PASSWORD_BREACH_CHECK_ENABLED
+        value: "true"
       - key: ENABLE_DEV_ROUTES
         value: "false"
       - key: JWT_ISS

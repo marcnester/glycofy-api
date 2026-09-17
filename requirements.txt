@@ -18,3 +18,4 @@ SQLAlchemy==2.0.44
 starlette==1.3.1
 urllib3==2.7.0
 uvicorn[standard]==0.37.0
+zxcvbn==4.5.0

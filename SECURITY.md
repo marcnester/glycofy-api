@@ -9,6 +9,9 @@ Glycofy handles health, dietary, allergy, and connected-account data. Security i
 - Set a random `JWT_SECRET` of at least 32 characters.
 - Generate a separate Fernet key for `OAUTH_TOKEN_ENCRYPTION_KEY`.
 - Set `COOKIE_SECURE=true`, an HTTPS `PUBLIC_BASE_URL`, and exact `ALLOWED_ORIGINS` and `ALLOWED_HOSTS` values.
+- Set `TRUSTED_EDGE_PROVIDER=cloudflare`, keep the default Render hostname blocked, and run Uvicorn with proxy-header processing disabled. Rate limits and audit hashes use only a valid Cloudflare `CF-Connecting-IP` assertion in production and ignore `X-Forwarded-For`.
+- Set `PASSWORD_BREACH_CHECK_ENABLED=true`. New and changed passwords are screened locally for strength and context, then checked against Have I Been Pwned with a five-character k-anonymous SHA-1 prefix. A screening outage fails password creation or change closed without affecting existing sign-in.
+- Production authentication cookies use the `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Lax`, path `/`, and no `Domain` attribute. Deploying this cookie-name change requires existing users to sign in once again.
 - Keep browser sessions on a bounded rolling lifetime. The defaults are a 24-hour idle timeout and a seven-day absolute sign-in limit; logout, password reset, and account deletion revoke sessions immediately.
 - Keep `ENABLE_DEV_ROUTES=false`.
 - Run `alembic upgrade head` before starting the new application version.
@@ -31,6 +34,15 @@ The control baseline is OWASP ASVS 5.0 plus OWASP API Security Top 10 2023 and O
 The current Level 2 review and prioritized open controls are documented in
 [`docs/OWASP_ASVS_L2_GAP_ASSESSMENT_2026-09-16.md`](docs/OWASP_ASVS_L2_GAP_ASSESSMENT_2026-09-16.md).
 This assessment is not a certification or a claim of full ASVS conformance.
+
+## Authentication pathways
+
+- Email/password accounts use adaptive password hashing, generic login failures, IP and account rate limits, verified-email reset links, and authenticated current-password changes. Password reset and password change increment the user's token version and revoke every existing Glycofy session.
+- Google sign-in uses the authorization-code OpenID Connect flow. A signed, expiring state value protects the callback, its nonce is bound to the Google ID token, and the application validates the token's RS256 signature, key ID, issuer, audience, expiry, issued-at time, subject, verified email, and nonce before linking an account.
+- Glycofy sessions have a 24-hour idle and seven-day absolute lifetime by default. Google sign-out and Glycofy sign-out are separate: signing out of Glycofy revokes Glycofy sessions but does not sign the user out of Google.
+- Logout and account deletion remove session cookies, revoke server-side token versions, prevent caching of authenticated responses, and ask the browser to clear this origin's cache and storage.
+
+Glycofy does not currently require or independently verify MFA for every user and does not yet provide per-device session inventory or selective revocation. Those remain required before claiming complete ASVS Level 2 conformance.
 
 ## Operational work required before launch
 

@@ -362,6 +362,34 @@
       </div>
       <div class="strava-panel" style="margin-top:12px">
         <div class="strava-copy">
+          <strong>Change password</strong>
+          <span class="muted">Confirm your current password, then choose a strong password you have not used elsewhere.</span>
+        </div>
+        <button id="change_password" class="btn btn--pill" type="button">Change password</button>
+      </div>
+      <form id="change_password_form" style="margin-top:14px;display:grid;gap:12px" hidden>
+        <div class="athlete-grid">
+          <div class="field">
+            <label for="current_password">Current password</label>
+            <input id="current_password" class="input" type="password" autocomplete="current-password" minlength="1" maxlength="128" required />
+          </div>
+          <div class="field">
+            <label for="new_password">New password</label>
+            <input id="new_password" class="input" type="password" autocomplete="new-password" minlength="12" maxlength="128" required />
+          </div>
+          <div class="field">
+            <label for="confirm_new_password">Confirm new password</label>
+            <input id="confirm_new_password" class="input" type="password" autocomplete="new-password" minlength="12" maxlength="128" required />
+          </div>
+        </div>
+        <div class="strava-actions">
+          <button id="change_password_cancel" class="btn btn--pill" type="button">Cancel</button>
+          <button id="change_password_submit" class="btn btn--pill btn--primary" type="submit">Update password</button>
+          <span id="change_password_status" class="muted" role="status"></span>
+        </div>
+      </form>
+      <div class="strava-panel" style="margin-top:12px">
+        <div class="strava-copy">
           <strong>Download your data</strong>
           <span class="muted">Export your profile, training, meal plans, feedback, and preferences as JSON.</span>
         </div>
@@ -425,7 +453,7 @@
   </main>
 
   <script src="/ui/core.js?v=2025-11-04"></script>
-  <script src="/ui/profile.js?v=2026-09-16-preference-learning"></script>
+  <script src="/ui/profile.js?v=2026-09-17-security-hardening"></script>
   <script src="/ui/beta.js?v=2026-09-06-tour" defer></script>
 </body>
 </html>

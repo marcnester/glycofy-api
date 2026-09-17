@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import threading
 import time
 from collections import defaultdict, deque
@@ -42,9 +43,21 @@ class FixedWindowLimiter:
 AUTH_LIMITER = FixedWindowLimiter()
 
 
-def client_key(request: Request) -> str:
-    # Do not trust X-Forwarded-For unless a known reverse proxy normalizes it.
+def client_address(request: Request) -> str:
+    """Return only an address asserted by the configured edge boundary."""
+    if settings.is_production and settings.TRUSTED_EDGE_PROVIDER.strip().lower() == "cloudflare":
+        candidate = (request.headers.get("cf-connecting-ip") or "").strip()
+        try:
+            return ipaddress.ip_address(candidate).compressed
+        except ValueError:
+            # Never fall through to X-Forwarded-For in production. Uvicorn is
+            # configured not to rewrite request.client from public headers.
+            return "unverified-edge"
     return request.client.host if request.client else "unknown"
+
+
+def client_key(request: Request) -> str:
+    return client_address(request)
 
 
 def account_key(identifier: str) -> str:

@@ -15,6 +15,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import AccountActionToken, User
 from app.observability import record_security_event
+from app.password_security import PasswordPolicyError, PasswordScreenUnavailable, validate_new_password
 from app.rate_limit import AUTH_LIMITER, account_key, client_key
 from app.services.account_email import account_email_configured, build_account_email_html, send_account_email
 
@@ -120,13 +121,20 @@ class PasswordResetRequest(BaseModel):
     password: str = Field(min_length=12, max_length=128)
 
 
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=12, max_length=128)
+
+
 # -----------------------------------------------------------------------------
 # Router / dependencies
 # -----------------------------------------------------------------------------
 router = APIRouter()
 
-COOKIE_ACCESS = settings.SESSION_COOKIE_NAME
-LEGACY_COOKIES = ("glyco_auth", "id_token", "glyco_token")
+COOKIE_ACCESS = settings.session_cookie_name
+LEGACY_COOKIES = tuple(
+    name for name in (settings.SESSION_COOKIE_NAME, "glyco_auth", "id_token", "glyco_token") if name != COOKIE_ACCESS
+)
 
 
 def _cookie_kwargs(*, http_only: bool, max_age_seconds: int | None = None):
@@ -174,7 +182,22 @@ def refresh_session_cookie(request: Request, response: Response) -> None:
 
 def _clear_all_session_cookies(resp: JSONResponse) -> None:
     for name in (COOKIE_ACCESS, *LEGACY_COOKIES):
-        resp.delete_cookie(name, path="/", samesite="lax")
+        resp.delete_cookie(
+            name,
+            path="/",
+            secure=settings.COOKIE_SECURE,
+            httponly=True,
+            samesite="lax",
+        )
+
+
+def _enforce_new_password(password: str, *, email: str | None = None) -> None:
+    try:
+        validate_new_password(password, email=email)
+    except PasswordPolicyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PasswordScreenUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _token_hash(token: str) -> str:
@@ -241,6 +264,7 @@ def logout(request: Request, db: Session = Depends(get_db), user: User = Depends
     request.state.session_cookie_authenticated = False
     resp = JSONResponse({"ok": True})
     _clear_all_session_cookies(resp)
+    resp.headers["Clear-Site-Data"] = '"cache", "storage"'
     return resp
 
 
@@ -255,6 +279,8 @@ def signup(request: Request, body: SignupRequest, background_tasks: BackgroundTa
     if existing:
         record_security_event(db, request, "account_signup", "denied", severity="warning")
         raise HTTPException(status_code=400, detail="email_in_use")
+
+    _enforce_new_password(body.password, email=body.email)
 
     user = User(email=body.email.lower(), password_hash=hash_password(body.password))
     db.add(user)
@@ -348,12 +374,41 @@ def reset_password(request: Request, body: PasswordResetRequest, db: Session = D
     user = db.query(User).filter(User.id == row.user_id).first()
     if not user:
         raise HTTPException(status_code=400, detail="This reset link is invalid or has expired")
+    _enforce_new_password(body.password, email=user.email)
     user.password_hash = hash_password(body.password)
     user.token_version = int(user.token_version or 0) + 1
     row.used_at = now
     db.commit()
     record_security_event(db, request, "password_reset", "success", user_id=user.id)
     return {"ok": True}
+
+
+@router.post("/change-password")
+def change_password(
+    request: Request,
+    body: PasswordChangeRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _check_auth_limit(request, "change_password", user.email)
+    if not verify_and_maybe_upgrade(user, body.current_password, db):
+        record_security_event(db, request, "password_change", "failure", severity="warning", user_id=user.id)
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+    if body.current_password == body.new_password:
+        raise HTTPException(
+            status_code=422, detail="Choose a new password that is different from your current password."
+        )
+    _enforce_new_password(body.new_password, email=user.email)
+    user.password_hash = hash_password(body.new_password)
+    user.token_version = int(user.token_version or 0) + 1
+    db.add(user)
+    db.commit()
+    record_security_event(db, request, "password_change", "success", user_id=user.id)
+    request.state.session_cookie_authenticated = False
+    response = JSONResponse({"ok": True, "reauthentication_required": True})
+    _clear_all_session_cookies(response)
+    response.headers["Clear-Site-Data"] = '"cache", "storage"'
+    return response
 
 
 @router.get("/verify-email")

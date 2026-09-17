@@ -124,7 +124,7 @@ def _pick_app_token(request: Request) -> str | None:
     cookies = request.cookies or {}
 
     # Browser session cookie.
-    t = (cookies.get(settings.SESSION_COOKIE_NAME) or "").strip()
+    t = (cookies.get(settings.session_cookie_name) or "").strip()
     if _looks_like_jwt(t) and _header_alg(t) in ALLOWED_ALGS:
         return t
 
@@ -176,6 +176,6 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     # Middleware uses these only after the database and token-version checks
     # above succeed. Bearer clients are intentionally never given cookies.
     request.state.session_payload = payload
-    request.state.session_cookie_authenticated = request.cookies.get(settings.SESSION_COOKIE_NAME) == token
+    request.state.session_cookie_authenticated = request.cookies.get(settings.session_cookie_name) == token
 
     return user

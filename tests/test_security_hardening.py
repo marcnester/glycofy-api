@@ -112,6 +112,8 @@ def test_public_legal_pages_cover_beta_health_and_ai_data_practices(client: Test
         "Cloudflare",
         "Google",
         "Strava",
+        "Have I Been Pwned",
+        "first five characters",
     ):
         assert disclosure in privacy.text
 
@@ -377,7 +379,7 @@ def test_profile_uses_official_strava_connect_asset(client: TestClient):
 def test_account_deletion_dialog_supports_escape_key():
     page = Path("ui/profile.html").read_text(encoding="utf-8")
     script = Path("ui/profile.js").read_text(encoding="utf-8")
-    assert "profile.js?v=2026-09-16-preference-learning" in page
+    assert "profile.js?v=2026-09-17-security-hardening" in page
     assert 'dialog?.addEventListener("cancel"' in script
     assert 'dialog?.addEventListener("keydown"' in script
     assert 'event.key === "Escape"' in script
@@ -794,6 +796,7 @@ def test_google_start_uses_login_scopes_without_offline_access(client: TestClien
     assert response.status_code == 302
     query = parse_qs(urlparse(response.headers["location"]).query)
     assert query["scope"] == ["openid email profile"]
+    assert query["nonce"] == [oauth_google._decode_state(query["state"][0])]
     assert "access_type" not in query
     assert "include_granted_scopes" not in query
     assert client.cookies.get(oauth_google.RETURN_COOKIE_NAME).strip('"') == "/ui/profile.html"
@@ -846,12 +849,14 @@ def test_google_callback_rejects_unverified_email(client: TestClient, monkeypatc
             return None
 
         async def post(self, *args, **kwargs):
-            return FakeResponse({"access_token": "temporary-token", "scope": "openid email profile"})
-
-        async def get(self, *args, **kwargs):
-            return FakeResponse(google_profile)
+            return FakeResponse({"id_token": "signed-google-token", "scope": "openid email profile"})
 
     monkeypatch.setattr(oauth_google.httpx, "AsyncClient", FakeAsyncClient)
+
+    async def fake_validate(*args, **kwargs):
+        return google_profile
+
+    monkeypatch.setattr(oauth_google, "_validate_google_id_token", fake_validate)
     start = client.get("/oauth/google/start", follow_redirects=False)
     state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
 

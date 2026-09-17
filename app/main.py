@@ -250,14 +250,15 @@ async def security_controls(request: Request, call_next):
     response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
+        "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "
         "form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
         "script-src 'self'; connect-src 'self'",
     )
     is_ui_document = request.url.path.startswith("/ui/") and (
         request.url.path.endswith(".html") or request.url.path.endswith("/")
     )
-    if request.url.path.startswith(("/auth", "/oauth")) or is_ui_document:
+    is_authenticated_response = bool(getattr(request.state, "session_payload", None))
+    if request.url.path.startswith(("/auth", "/oauth")) or is_ui_document or is_authenticated_response:
         response.headers.setdefault("Cache-Control", "no-store")
     if settings.is_production:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")

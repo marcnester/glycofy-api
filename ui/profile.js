@@ -102,6 +102,42 @@
       finally { resend.disabled = false; }
     });
 
+    const passwordForm = $("#change_password_form");
+    const passwordStatus = $("#change_password_status");
+    $("#change_password")?.addEventListener("click", () => {
+      passwordForm.hidden = false;
+      $("#current_password")?.focus();
+    });
+    $("#change_password_cancel")?.addEventListener("click", () => {
+      passwordForm.reset();
+      passwordForm.hidden = true;
+      if (passwordStatus) passwordStatus.textContent = "";
+    });
+    passwordForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const currentPassword = $("#current_password")?.value || "";
+      const newPassword = $("#new_password")?.value || "";
+      const confirmation = $("#confirm_new_password")?.value || "";
+      if (newPassword !== confirmation) {
+        if (passwordStatus) passwordStatus.textContent = "New passwords do not match.";
+        return;
+      }
+      const submit = $("#change_password_submit");
+      submit.disabled = true;
+      if (passwordStatus) passwordStatus.textContent = "Updating…";
+      try {
+        await fetchJSON("/auth/change-password", {
+          method: "POST",
+          headers: {"Content-Type":"application/json", "X-Requested-With":"XMLHttpRequest"},
+          body: JSON.stringify({current_password: currentPassword, new_password: newPassword}),
+        });
+        window.location.replace("/ui/login.html?password=changed");
+      } catch (error) {
+        if (passwordStatus) passwordStatus.textContent = error.message || "Could not change password.";
+        submit.disabled = false;
+      }
+    });
+
     const dialog = $("#delete_account_dialog");
     const input = $("#delete_confirmation");
     const confirm = $("#delete_account_confirm");
