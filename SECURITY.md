@@ -28,6 +28,10 @@ Pull requests run unit/security regression tests, Ruff, Bandit, pip-audit, npm a
 
 The control baseline is OWASP ASVS 5.0 plus OWASP API Security Top 10 2023 and OWASP AISVS 1.0. The Top 10 lists are awareness documents, not a substitute for testable ASVS requirements.
 
+The current Level 2 review and prioritized open controls are documented in
+[`docs/OWASP_ASVS_L2_GAP_ASSESSMENT_2026-09-16.md`](docs/OWASP_ASVS_L2_GAP_ASSESSMENT_2026-09-16.md).
+This assessment is not a certification or a claim of full ASVS conformance.
+
 ## Operational work required before launch
 
 - Centralized redacted logs, immutable audit events, metrics, tracing, alerting, and uptime checks
