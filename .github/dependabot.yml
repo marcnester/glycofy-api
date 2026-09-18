@@ -9,6 +9,11 @@ updates:
       timezone: America/Los_Angeles
     open-pull-requests-limit: 5
     labels: [dependencies, security]
+    ignore:
+      # Passlib 1.7.4 depends on bcrypt's pre-4.1 backend behavior.
+      # Remove this guard when password hashing is migrated off Passlib.
+      - dependency-name: bcrypt
+        versions: [">=4.1.0"]
     groups:
       python-dependencies:
         patterns: ["*"]
