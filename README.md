@@ -146,4 +146,4 @@ Please do not open public issues containing vulnerabilities, credentials, person
 
 ## Repository status and license
 
-This repository is publicly visible to document Glycofy’s development and architecture. No open-source license is currently granted. Unless a license is added later, all rights are reserved and public visibility does not imply permission to copy, modify, or redistribute the code.
+This repository is publicly visible to document Glycofy’s development and architecture. It is proprietary and is not open-source software. Public visibility does not imply permission to use, copy, modify, deploy, or redistribute the code. See [LICENSE](LICENSE) for the complete terms and [CONTRIBUTING.md](CONTRIBUTING.md) before submitting an issue or pull request.
