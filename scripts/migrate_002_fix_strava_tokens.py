@@ -38,8 +38,7 @@ def main():
         if not table_exists(cur, "strava_tokens"):
             print("[migrate] strava_tokens not found; creating fresh table")
             cur.execute("BEGIN")
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE TABLE strava_tokens (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_sub TEXT NOT NULL,
@@ -50,8 +49,7 @@ def main():
                     scope TEXT,
                     updated_at TEXT
                 );
-            """
-            )
+            """)
             cur.execute("CREATE INDEX idx_strava_tokens_user_sub ON strava_tokens (user_sub);")
             cur.execute("COMMIT")
             print("[migrate] done (created)")
@@ -66,8 +64,7 @@ def main():
         cur.execute("BEGIN")
 
         # Create the new table with the correct schema.
-        cur.execute(
-            """
+        cur.execute("""
             CREATE TABLE strava_tokens_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_sub TEXT NOT NULL,
@@ -78,8 +75,7 @@ def main():
                 scope TEXT,
                 updated_at TEXT
             );
-        """
-        )
+        """)
 
         # Derive the list of available columns in the old table (except id which doesn’t exist).
         # We copy what exists; missing columns will get NULL/defaults.
@@ -103,12 +99,10 @@ def main():
             copy_cols_sql = ""
         else:
             copy_cols_sql = ", ".join(copy_cols)
-            cur.execute(
-                f"""
+            cur.execute(f"""
                 INSERT INTO strava_tokens_new ({copy_cols_sql})
                 SELECT {copy_cols_sql} FROM strava_tokens;
-            """
-            )
+            """)
 
         # Swap tables
         cur.execute("DROP TABLE strava_tokens;")

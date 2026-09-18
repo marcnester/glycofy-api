@@ -35,14 +35,12 @@ def _fabricate_meals_from_recipes(db: Session) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for mt in ("breakfast", "lunch", "dinner", "snack"):
         r = db.execute(
-            text(
-                """
+            text("""
                 SELECT title, meal_type, kcal, protein_g, carbs_g, fat_g, ingredients, instructions
                 FROM recipes
                 WHERE LOWER(meal_type) = :mt
                 LIMIT 1
-            """
-            ),
+            """),
             {"mt": mt},
         ).first()
         if r:
@@ -97,13 +95,11 @@ def today_summary(
 
     # --------- Targets from daily_nutrition (optional) ---------
     dn = db.execute(
-        text(
-            """
+        text("""
             SELECT training_kcal, tdee_kcal, protein_g, carbs_g, fat_g
             FROM daily_nutrition
             WHERE user_id = :uid AND date = :d
-        """
-        ),
+        """),
         {"uid": user.id, "d": today},
     ).first()
 
@@ -122,15 +118,13 @@ def today_summary(
     since = datetime.utcnow() - timedelta(days=7)
 
     latest_rows = db.execute(
-        text(
-            """
+        text("""
             SELECT start_time, sport, kcal, distance_m, duration_s, provider
             FROM activities
             WHERE user_id = :uid AND start_time >= :since
             ORDER BY start_time DESC
             LIMIT 5
-        """
-        ),
+        """),
         {"uid": user.id, "since": since},
     ).fetchall()
 
@@ -154,8 +148,7 @@ def today_summary(
         )
 
     roll_row = db.execute(
-        text(
-            """
+        text("""
             SELECT
                 COUNT(1) AS cnt,
                 COALESCE(SUM(kcal), 0) AS sum_kcal,
@@ -163,8 +156,7 @@ def today_summary(
                 COALESCE(SUM(duration_s), 0) AS sum_dur
             FROM activities
             WHERE user_id = :uid AND start_time >= :since
-        """
-        ),
+        """),
         {"uid": user.id, "since": since},
     ).first()
 

@@ -7,11 +7,10 @@ import argparse
 import os
 import sys
 
-from sqlalchemy import create_engine, inspect, text
-
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from sqlalchemy import create_engine, inspect, text
 
 REQUIRED_TABLES = {
     "ai_operation_metrics",

@@ -53,8 +53,7 @@ try:
 
     if not table_exists("activities"):
         print("[migrate] activities does not exist — creating fresh table")
-        cur.execute(
-            """
+        cur.execute("""
             CREATE TABLE activities (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               user_sub TEXT NOT NULL,
@@ -66,16 +65,14 @@ try:
               distance_m INTEGER NOT NULL,
               kcal INTEGER NOT NULL DEFAULT 0
             );
-        """
-        )
+        """)
     elif not current_shape_ok():
         print("[migrate] rebuilding activities table to new schema")
         # Detect if old table has strava_id
         old_cols = get_columns("activities")
         has_strava_id = "strava_id" in old_cols
         # Build a new table
-        cur.execute(
-            """
+        cur.execute("""
             CREATE TABLE activities_new (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               user_sub TEXT NOT NULL,
@@ -87,8 +84,7 @@ try:
               distance_m INTEGER NOT NULL,
               kcal INTEGER NOT NULL DEFAULT 0
             );
-        """
-        )
+        """)
         # Compose copy statement
         # Map strava_id: prefer old.strava_id; else old.id
         # Map kcal: prefer old.kcal; else 0
