@@ -29,7 +29,6 @@ ignore = [
   "SIM108",   # if/else -> ternary
   "SIM110",   # for->any()
   "UP031",    # % formatting
-  "UP038",    # isinstance(X, (A, B)) -> A|B
   "B008",     # FastAPI: Depends/Body called in defaults (allowed for now)
   "B904",     # raise from inside except (allowed for now)
 ]

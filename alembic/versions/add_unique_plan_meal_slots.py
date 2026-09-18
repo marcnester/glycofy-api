@@ -22,9 +22,7 @@ def upgrade() -> None:
     # Prefer the row containing an actual generated meal, then the newest row.
     # This repairs historical blank snack_2 placeholders before uniqueness is
     # enforced. The window-function form works in PostgreSQL and SQLite.
-    op.execute(
-        sa.text(
-            """
+    op.execute(sa.text("""
             DELETE FROM plan_meals
             WHERE id IN (
                 SELECT id FROM (
@@ -45,9 +43,7 @@ def upgrade() -> None:
                 ) ranked
                 WHERE duplicate_rank > 1
             )
-            """
-        )
-    )
+            """))
     if "ux_plan_meal_slot" not in _indexes():
         op.create_index("ux_plan_meal_slot", "plan_meals", ["plan_id", "meal_type"], unique=True)
 
