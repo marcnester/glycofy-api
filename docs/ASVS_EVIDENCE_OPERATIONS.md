@@ -31,3 +31,16 @@ Quarterly, confirm:
 4. Cloudflare DNS records remain proxied and the origin-authentication transform is active.
 5. Database external access remains empty or narrowly allowlisted and backups/restores remain tested.
 6. Security alerts arrive in the independent security mailbox and include a usable request ID.
+
+## Production verification — September 17, 2026
+
+- Deployed commit: `987a300` (`Complete ASVS L2 hardening review`).
+- Render pre-deploy migration and application deployment completed successfully.
+- Cloudflare `app.glycofy.ai` CNAME is proxied and the origin-authentication request-header transform is active.
+- `GET /health` and `GET /ready` return `200` through Cloudflare.
+- `GET /ui/login.html` returns `200` and exposes password, Google, passkey, account-creation, terms, and privacy paths.
+- Unauthenticated `GET /users/me` returns `401`.
+- `TRACE /health` returns `405`.
+- The disabled `glycofy-api.onrender.com` hostname returns `404`, including for application UI paths.
+- Production responses include HSTS, CSP, frame denial, MIME-sniffing protection, referrer policy, permissions policy, COOP, CORP, and request IDs.
+- GitHub `Security and tests` and `CodeQL` workflows passed for the deployed commit. The workflow includes the full test suite, PostgreSQL migration-chain test, Ruff, mypy, Bandit, pip-audit, npm audit, Gitleaks, SBOM generation, and a container scan that fails on fixable high or critical vulnerabilities.
