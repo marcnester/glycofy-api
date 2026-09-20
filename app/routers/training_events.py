@@ -406,12 +406,10 @@ async def import_trainingpeaks_csv(
     return {**result, "imported": imported, "updated": updated, "unchanged": unchanged}
 
 
-def _owned_editable_event(db: Session, user_id: int, event_id: int) -> PlannedWorkout:
+def _owned_event(db: Session, user_id: int, event_id: int) -> PlannedWorkout:
     event = db.query(PlannedWorkout).filter(PlannedWorkout.id == event_id, PlannedWorkout.user_id == user_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Training event not found")
-    if event.source not in {"manual", "trainingpeaks_csv"}:
-        raise HTTPException(status_code=409, detail="Imported training events must be changed at their source")
     return event
 
 
@@ -422,7 +420,9 @@ def update_training_event(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    event = _owned_editable_event(db, user.id, event_id)
+    event = _owned_event(db, user.id, event_id)
+    if event.source != "manual":
+        raise HTTPException(status_code=409, detail="Only manually entered workouts can be edited")
     for field, value in _normalized_fields(payload).items():
         setattr(event, field, value)
     db.commit()
@@ -436,7 +436,9 @@ def delete_training_event(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    event = _owned_editable_event(db, user.id, event_id)
+    event = _owned_event(db, user.id, event_id)
+    if event.source not in {"manual", "trainingpeaks_csv"}:
+        raise HTTPException(status_code=409, detail="Imported training events must be changed at their source")
     db.delete(event)
     db.commit()
     return Response(status_code=204)
