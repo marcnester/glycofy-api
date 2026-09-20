@@ -487,6 +487,8 @@ def test_manual_training_can_be_edited_from_prefilled_form():
     assert "editManualTraining(trainingEventsById.get" in script
     assert "trainingSubmit.textContent=item?'Save changes':'Add workout'" in script
     assert "method:updating?'PATCH':'POST'" in script
+    assert ".training-form__actions .btn{height:40px;min-width:132px" in page
+    assert "white-space:nowrap" in page
     assert script.count("function showAddTraining(mode)") == 1
     assert script.index("function showAddTraining(mode)") < script.index("function editManualTraining(item)")
 
