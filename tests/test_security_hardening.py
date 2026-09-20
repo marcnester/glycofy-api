@@ -470,7 +470,7 @@ def test_manual_training_defaults_after_latest_plan_and_clears_start_time():
     page = Path("ui/activities.html").read_text(encoding="utf-8")
     script = Path("ui/activities.js").read_text(encoding="utf-8")
 
-    assert "activities.js?v=2026-09-19-training-edit" in page
+    assert "activities.js?v=2026-09-19-training-edit-form" in page
     assert "latestPlannedDate?nextDayISO(latestPlannedDate)" in script
     assert "latestPlannedDate=(items||[]).map(item=>item.workout_date)" in script
     assert "if(trainingTime) trainingTime.value=''" in script
@@ -487,6 +487,8 @@ def test_manual_training_can_be_edited_from_prefilled_form():
     assert "editManualTraining(trainingEventsById.get" in script
     assert "trainingSubmit.textContent=item?'Save changes':'Add workout'" in script
     assert "method:updating?'PATCH':'POST'" in script
+    assert script.count("function showAddTraining(mode)") == 1
+    assert script.index("function showAddTraining(mode)") < script.index("function editManualTraining(item)")
 
 
 def test_athlete_setup_round_trips_through_user_profile(client: TestClient):
