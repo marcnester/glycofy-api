@@ -81,6 +81,18 @@
     date.setDate(date.getDate()+1);
     return todayISO(date);
   }
+  function showAddTraining(mode){
+    if(!addTrainingPanel) return;
+    addTrainingPanel.hidden=false; addTrainingToggle?.setAttribute('aria-expanded','true');
+    if(addTrainingChoices) addTrainingChoices.hidden=!!mode;
+    if(manualTrainingPanel) manualTrainingPanel.hidden=mode!=='manual';
+    if(importTrainingPanel) importTrainingPanel.hidden=mode!=='import';
+    addTrainingPanel.scrollIntoView?.({behavior:'smooth',block:'nearest'});
+  }
+  function closeAddTraining(){
+    if(addTrainingPanel) addTrainingPanel.hidden=true;
+    addTrainingToggle?.setAttribute('aria-expanded','false');
+  }
   function setTrainingEditMode(item=null){
     editingTrainingId=item?.id??null;
     if(trainingSubmit) trainingSubmit.textContent=item?'Save changes':'Add workout';
@@ -254,18 +266,6 @@
         const active=tab.dataset.trainingTab===name; tab.setAttribute('aria-selected',String(active));
       });
       document.querySelectorAll('.training-panel').forEach(panel=>{ panel.hidden=panel.id!==`panel-${name}`; });
-    }
-    function showAddTraining(mode){
-      if(!addTrainingPanel) return;
-      addTrainingPanel.hidden=false; addTrainingToggle?.setAttribute('aria-expanded','true');
-      if(addTrainingChoices) addTrainingChoices.hidden=!!mode;
-      if(manualTrainingPanel) manualTrainingPanel.hidden=mode!=='manual';
-      if(importTrainingPanel) importTrainingPanel.hidden=mode!=='import';
-      addTrainingPanel.scrollIntoView?.({behavior:'smooth',block:'nearest'});
-    }
-    function closeAddTraining(){
-      if(addTrainingPanel) addTrainingPanel.hidden=true;
-      addTrainingToggle?.setAttribute('aria-expanded','false');
     }
     document.querySelectorAll('[data-training-tab]').forEach(tab=>tab.addEventListener('click',()=>selectTrainingTab(tab.dataset.trainingTab)));
     addTrainingToggle?.addEventListener('click',()=>addTrainingPanel?.hidden?showAddTraining():closeAddTraining());
