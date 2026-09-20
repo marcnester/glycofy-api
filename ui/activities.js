@@ -55,6 +55,7 @@
   const trainingDatePicker = $('training_date_picker');
   const trainingDuration = $('training_duration'), trainingIntensity = $('training_intensity');
   const trainingPriority = $('training_priority'), trainingDistance = $('training_distance'), trainingNotes = $('training_notes');
+  const trainingSubmit = $('training_add'), trainingCancelEdit = $('training_cancel_edit');
   const trainingCsvFile = $('training_csv_file'), trainingCsvPreview = $('training_csv_preview');
   const trainingCsvImport = $('training_csv_import'), trainingCsvStatus = $('training_csv_status');
   const trainingCsvResults = $('training_csv_results');
@@ -68,6 +69,8 @@
   let page = 1, pageSize = 10, total = 0;
   let sumPage = 1, sumPageSize = 10, lastSummaryDays = [];
   let latestPlannedDate = null;
+  let editingTrainingId = null;
+  const trainingEventsById = new Map();
   const API_MAX = 500;
 
   // utils
@@ -78,10 +81,39 @@
     date.setDate(date.getDate()+1);
     return todayISO(date);
   }
+  function setTrainingEditMode(item=null){
+    editingTrainingId=item?.id??null;
+    if(trainingSubmit) trainingSubmit.textContent=item?'Save changes':'Add workout';
+    if(trainingCancelEdit) trainingCancelEdit.hidden=!item;
+  }
   function prepareManualTrainingForm(){
+    setTrainingEditMode();
     const tomorrow=new Date(); tomorrow.setDate(tomorrow.getDate()+1);
     if(trainingDate) trainingDate.value=latestPlannedDate?nextDayISO(latestPlannedDate):todayISO(tomorrow);
     if(trainingTime) trainingTime.value='';
+    if(trainingSport) trainingSport.value='Run';
+    if(trainingDuration) trainingDuration.value='60';
+    if(trainingIntensity) trainingIntensity.value='moderate';
+    if(trainingPriority) trainingPriority.value='normal';
+    if(trainingDistance) trainingDistance.value='';
+    if(trainingNotes) trainingNotes.value='';
+  }
+  function editManualTraining(item){
+    if(!item||item.source!=='manual') return;
+    setTrainingEditMode(item);
+    trainingDate.value=item.workout_date||'';
+    if(item.start_time){
+      const start=new Date(item.start_time);
+      trainingTime.value=`${String(start.getHours()).padStart(2,'0')}:${String(start.getMinutes()).padStart(2,'0')}`;
+    }else trainingTime.value='';
+    trainingSport.value=item.sport||'Other';
+    trainingDuration.value=String(item.duration_min||60);
+    trainingIntensity.value=item.intensity||'moderate';
+    trainingPriority.value=item.priority||'normal';
+    trainingDistance.value=item.distance_km==null?'':String(item.distance_km);
+    trainingNotes.value=item.notes||'';
+    if(trainingNotice) trainingNotice.textContent='Editing manual workout';
+    showAddTraining('manual');
   }
   function daysAgoISO(n){ const d=new Date(); d.setDate(d.getDate()-n); return todayISO(d); }
   function readDateISO(el, fb){ const raw=(el&&el.value)?String(el.value).trim():''; if(!raw) return fb; if(/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw; const t=Date.parse(raw); return isNaN(t)?fb:todayISO(new Date(t)); }
@@ -239,6 +271,7 @@
     addTrainingToggle?.addEventListener('click',()=>addTrainingPanel?.hidden?showAddTraining():closeAddTraining());
     $('add_training_close')?.addEventListener('click',closeAddTraining);
     $('choose_manual')?.addEventListener('click',()=>{prepareManualTrainingForm();showAddTraining('manual');});
+    trainingCancelEdit?.addEventListener('click',()=>{prepareManualTrainingForm();closeAddTraining();if(trainingNotice) trainingNotice.textContent='';});
     $('choose_import')?.addEventListener('click',()=>showAddTraining('import'));
     document.querySelectorAll('.add-choice-back').forEach(button=>button.addEventListener('click',()=>showAddTraining()));
     $('open_import_from_connections')?.addEventListener('click',()=>{selectTrainingTab('upcoming');showAddTraining('import');});
@@ -270,8 +303,10 @@
       if(trainingCsvStatus) trainingCsvStatus.textContent='';
     });
     trainingList?.addEventListener('click', (e)=>{
-      const button=e.target.closest('[data-delete-training]');
-      if(button) void deleteTrainingEvent(button.dataset.deleteTraining);
+      const editButton=e.target.closest('[data-edit-training]');
+      if(editButton){ editManualTraining(trainingEventsById.get(String(editButton.dataset.editTraining))); return; }
+      const deleteButton=e.target.closest('[data-delete-training]');
+      if(deleteButton) void deleteTrainingEvent(deleteButton.dataset.deleteTraining);
     });
     (elLogout || document.querySelector('[data-nav="logout"]'))?.addEventListener('click', ()=>{
       try{ core.setToken?.(null); document.cookie='glyco_auth=; Max-Age=0; path=/; SameSite=Lax;'; }catch{} window.location.href='/ui/login.html';
@@ -318,6 +353,8 @@
     function renderTrainingEvents(items){
       if(!trainingList) return;
       trainingList.replaceChildren();
+      trainingEventsById.clear();
+      (items||[]).forEach(item=>trainingEventsById.set(String(item.id),item));
       latestPlannedDate=(items||[]).map(item=>item.workout_date).filter(Boolean).sort().at(-1)||null;
       const count=$('planned_count'); if(count) count.textContent=`${items.length} planned`;
       if(!items.length){
@@ -340,8 +377,14 @@
         source.textContent=item.source==='trainingpeaks_csv'?'TrainingPeaks CSV':item.source;
         main.append(when,details,source); row.appendChild(main);
         if(item.source==='manual'||item.source==='trainingpeaks_csv'){
+          const actions=document.createElement('div'); actions.className='training-row__actions';
+          if(item.source==='manual'){
+            const edit=document.createElement('button'); edit.type='button'; edit.className='training-edit';
+            edit.dataset.editTraining=String(item.id); edit.textContent='Edit'; edit.setAttribute('aria-label',`Edit ${item.sport} workout on ${friendly}`);
+            actions.appendChild(edit);
+          }
           const remove=document.createElement('button'); remove.type='button'; remove.className='training-delete';
-          remove.dataset.deleteTraining=String(item.id); remove.textContent='Remove'; row.appendChild(remove);
+          remove.dataset.deleteTraining=String(item.id); remove.textContent='Remove'; actions.appendChild(remove); row.appendChild(actions);
         }
         trainingList.appendChild(row);
       });
@@ -354,12 +397,15 @@
         duration_min:Number(trainingDuration.value),intensity:trainingIntensity.value,priority:trainingPriority.value,
         distance_km:trainingDistance.value?Number(trainingDistance.value):null,notes:trainingNotes.value.trim()||null};
       try{
-        if(trainingNotice) trainingNotice.textContent='Adding workout…';
-        await fetchJSON('/v1/training-events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-        trainingNotes.value=''; trainingDistance.value=''; trainingTime.value='';
+        const updating=editingTrainingId!=null;
+        if(trainingNotice) trainingNotice.textContent=updating?'Saving changes…':'Adding workout…';
+        const endpoint=updating?`/v1/training-events/${encodeURIComponent(editingTrainingId)}`:'/v1/training-events';
+        await fetchJSON(endpoint,{method:updating?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        prepareManualTrainingForm();
         closeAddTraining();
         await Promise.all([loadTrainingEvents(),loadCoverage()]);
-      }catch(e){ if(trainingNotice) trainingNotice.textContent=e?.message||'Could not add workout.'; }
+        if(trainingNotice) trainingNotice.textContent=updating?'Workout updated.':'Workout added.';
+      }catch(e){ if(trainingNotice) trainingNotice.textContent=e?.message||(editingTrainingId!=null?'Could not update workout.':'Could not add workout.'); }
     }
 
     async function submitTrainingCsv(confirm){

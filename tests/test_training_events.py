@@ -44,9 +44,31 @@ def test_manual_training_event_crud_is_owner_scoped():
         assert listed.status_code == 200
         assert [item["id"] for item in listed.json()["items"]] == [event_id]
 
-        changed = client.patch(f"/v1/training-events/{event_id}", json={"duration_min": 150})
+        changed = client.patch(
+            f"/v1/training-events/{event_id}",
+            json={
+                "workout_date": "2026-09-06",
+                "start_time": None,
+                "sport": "Rowing",
+                "duration_min": 45,
+                "intensity": "moderate",
+                "distance_km": 10,
+                "priority": "normal",
+                "notes": "Technique session",
+            },
+        )
         assert changed.status_code == 200
-        assert changed.json()["duration_min"] == 150
+        assert changed.json() == {
+            **created.json(),
+            "workout_date": "2026-09-06",
+            "start_time": None,
+            "sport": "Rowing",
+            "duration_min": 45,
+            "intensity": "moderate",
+            "distance_km": 10.0,
+            "priority": "normal",
+            "notes": "Technique session",
+        }
 
         client.post("/auth/logout")
         client.post("/auth/signup", json={"email": "two@example.com", "password": "a-secure-password-123"})
@@ -100,6 +122,7 @@ def test_trainingpeaks_csv_preview_and_idempotent_import():
 
         listed = client.get("/v1/training-events?from=2099-09-10&to=2099-09-11").json()["items"]
         assert {item["source"] for item in listed} == {"trainingpeaks_csv"}
+        assert client.patch(f'/v1/training-events/{listed[0]["id"]}', json={"duration_min": 30}).status_code == 409
         assert client.delete(f'/v1/training-events/{listed[0]["id"]}').status_code == 204
     app.dependency_overrides.clear()
 

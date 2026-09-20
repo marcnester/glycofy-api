@@ -57,7 +57,11 @@
     .training-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 16px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:linear-gradient(90deg,rgba(80,200,138,.045),rgba(255,255,255,.015))}
     .training-row__main{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
     .training-source{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#9fb0c9}
-    .training-delete{border:0;background:transparent;color:#ff9b96;cursor:pointer;font-weight:700}
+    .training-row__actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+    .training-edit,.training-delete{border:0;background:transparent;cursor:pointer;font-weight:750;padding:8px;border-radius:9px}
+    .training-edit{color:#8be2b4}.training-edit:hover,.training-edit:focus-visible{background:rgba(80,200,138,.11);outline:none}
+    .training-delete{color:#ff9b96}.training-delete:hover,.training-delete:focus-visible{background:rgba(255,155,150,.1);outline:none}
+    .training-form__actions{display:flex;align-items:center;gap:8px;height:40px}
     .training-import{margin-top:18px}
     .training-import__controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
     .training-import input[type=file]{max-width:100%;color:#c5d4e8}
@@ -69,7 +73,7 @@
     .connection-card{display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center;padding:18px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.02)}.connection-icon{display:grid;place-items:center;width:44px;height:44px;border-radius:12px;background:rgba(80,200,138,.1);font-size:20px}.connection-actions{display:flex;gap:8px;flex-wrap:wrap}
     .advanced-tools{margin-top:14px}.advanced-tools summary{cursor:pointer;color:#9fb0c9;font-weight:700;padding:10px 0}.empty-training{padding:32px 18px;text-align:center;border:1px dashed rgba(255,255,255,.1);border-radius:14px;color:#9fb0c9}
     @media(max-width:900px){.training-form{grid-template-columns:repeat(2,minmax(0,1fr))}.history-layout{grid-template-columns:1fr}.coverage{grid-template-columns:1fr}.coverage__metrics{justify-content:flex-start}.connection-card{grid-template-columns:auto 1fr}.connection-actions{grid-column:1/-1}.training-hero__top{display:block}}
-    @media(max-width:560px){.page{padding-top:22px}.training-hero,.panel-card{padding:19px}.training-form,.add-choice{grid-template-columns:1fr}.training-form label{grid-column:auto!important}.training-row{align-items:flex-start}.coverage__metrics{width:100%;justify-content:space-around}.training-tabs{overflow:auto}.training-tab{min-width:105px}}
+    @media(max-width:560px){.page{padding-top:22px}.training-hero,.panel-card{padding:19px}.training-form,.add-choice{grid-template-columns:1fr}.training-form label{grid-column:auto!important}.training-row{align-items:flex-start}.training-row__actions{flex-direction:column;align-items:flex-end}.coverage__metrics{width:100%;justify-content:space-around}.training-tabs{overflow:auto}.training-tab{min-width:105px}}
   </style>
   <link rel="stylesheet" href="/ui/theme.css?v=2026-09-03-unified" />
 </head>
@@ -132,7 +136,10 @@
             <label>Importance<select id="training_priority"><option value="normal">Normal</option><option value="key">Key session</option></select></label>
             <label>Distance (km)<input id="training_distance" type="number" min="0" max="1000" step="0.1" placeholder="Optional"></label>
             <label style="grid-column:span 3">Notes<input id="training_notes" maxlength="500" placeholder="Optional, e.g. intervals or long aerobic ride"></label>
-            <button id="training_add" class="btn btn--primary" type="submit" style="height:40px">Add workout</button>
+            <div class="training-form__actions">
+              <button id="training_add" class="btn btn--primary" type="submit" style="height:40px">Add workout</button>
+              <button id="training_cancel_edit" class="btn" type="button" hidden>Cancel</button>
+            </div>
           </form>
         </div>
         <div id="import_training_panel" hidden>
@@ -235,7 +242,7 @@
   </main>
 
   <script src="/ui/core.js?v=2025-11-04"></script>
-  <script src="/ui/activities.js?v=2026-09-08-next-workout-defaults"></script>
+  <script src="/ui/activities.js?v=2026-09-19-training-edit"></script>
   <script src="/ui/beta.js?v=2026-09-06-tour" defer></script>
 </body>
 </html>
