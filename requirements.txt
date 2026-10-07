@@ -16,7 +16,7 @@ redis==8.1.0
 requests==2.34.2
 SQLAlchemy==2.0.53
 starlette==1.6.0
-urllib3==2.7.0
+urllib3==2.8.0
 uvicorn[standard]==0.53.0
 webauthn==3.0.0
 zxcvbn==4.5.0
