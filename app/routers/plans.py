@@ -205,7 +205,21 @@ def _practical_ingredient_amount(item: Any) -> str | None:
     return f"{rounded_g} g"
 
 
-def _plan_to_dict(plan: Plan) -> dict[str, Any]:
+def _plan_predates_preferences(plan: Plan, preference: UserPreference | None) -> bool:
+    plan_updated_at = getattr(plan, "updated_at", None)
+    preference_updated_at = getattr(preference, "updated_at", None) if preference else None
+    if not plan_updated_at or not preference_updated_at:
+        return False
+    # These columns are currently stored as naive UTC datetimes. Normalizing
+    # tzinfo also keeps this comparison safe if one side becomes aware later.
+    if plan_updated_at.tzinfo is not None:
+        plan_updated_at = plan_updated_at.replace(tzinfo=None)
+    if preference_updated_at.tzinfo is not None:
+        preference_updated_at = preference_updated_at.replace(tzinfo=None)
+    return bool(plan_updated_at < preference_updated_at)
+
+
+def _plan_to_dict(plan: Plan, preference: UserPreference | None = None) -> dict[str, Any]:
     meals = sorted(
         list(getattr(plan, "meals", []) or []),
         key=lambda m: ((getattr(m, "order_index", None) or 99), (getattr(m, "id", None) or 0)),
@@ -220,6 +234,7 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
         # of the current meal sum.
         "totals": _aggregate_totals(meals),
         "nutrition_verified": _plan_nutrition_verified(meals),
+        "preferences_stale": _plan_predates_preferences(plan, preference),
         "source": getattr(plan, "source", None),
         "meals": [
             {
@@ -764,7 +779,8 @@ async def get_plan(
     day = _parse_iso_date(date)
     plan = db.query(Plan).filter(Plan.user_id == user.id, Plan.date == day).first()
     if plan:
-        return _plan_to_dict(plan)
+        preference = db.query(UserPreference).filter(UserPreference.user_id == user.id).first()
+        return _plan_to_dict(plan, preference)
 
     if not create_if_missing:
         raise HTTPException(status_code=404, detail="Plan not found")

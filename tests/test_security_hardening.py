@@ -197,6 +197,49 @@ def test_snack_schedule_preferences_save_and_reload(client: TestClient):
     assert client.get("/v1/preferences").json()["snack_times"] == ["15:00", "22:30"]
 
 
+def test_plan_warns_when_it_predates_latest_meal_preferences(client: TestClient):
+    assert (
+        client.post(
+            "/auth/signup",
+            json={"email": "stale-plan@example.com", "password": "a-secure-password-123"},
+        ).status_code
+        == 200
+    )
+    day = "2026-10-19"
+    meal = {
+        "meal_type": "lunch",
+        "title": "Chicken rice bowl",
+        "kcal": 700,
+        "protein_g": 45,
+        "carbs_g": 80,
+        "fat_g": 20,
+        "ingredients": [{"name": "chicken breast", "qty": 150, "unit": "g"}],
+    }
+    assert client.post(f"/v1/plan/{day}", json={"meals": [meal], "source": "llm"}).status_code == 200
+
+    saved = client.put(
+        "/v1/preferences",
+        json={"diet": "pescatarian", "ingredient_exclusions": "", "allergens": []},
+    )
+    assert saved.status_code == 200
+    assert client.get(f"/v1/plan/{day}").json()["preferences_stale"] is True
+
+    # A successful replacement made after the preference update clears the
+    # warning; a failed atomic weekly replan leaves it in place.
+    replacement = {**meal, "title": "Salmon rice bowl", "ingredients": [{"name": "salmon", "qty": 150, "unit": "g"}]}
+    assert client.post(f"/v1/plan/{day}", json={"meals": [replacement], "source": "llm"}).status_code == 200
+    assert client.get(f"/v1/plan/{day}").json()["preferences_stale"] is False
+
+
+def test_plan_page_warns_when_saved_plan_predates_preferences(client: TestClient):
+    page = client.get("/ui/plan.html")
+    script = client.get("/ui/plan.js")
+
+    assert 'id="preference-stale"' in page.text
+    assert "plan.preferences_stale !== true" in script.text
+    assert "created before your latest meal preferences" in script.text
+
+
 def test_new_preference_row_has_required_timestamps(client: TestClient):
     assert (
         client.post(
