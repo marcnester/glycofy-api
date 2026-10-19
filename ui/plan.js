@@ -63,6 +63,7 @@
   const fuelingContextTitle = $('fueling-context-title');
   const fuelingContextDetails = $('fueling-context-details');
   const nutritionConfidence = $('nutrition-confidence');
+  const preferenceStale = $('preference-stale');
 
   const totalsEl =
     $('totals') || $('plan-totals') || document.getElementById('totals');
@@ -1115,6 +1116,7 @@
     if (emptyTargetCarbs) emptyTargetCarbs.textContent = totals.carbs_g ? `${fmt(totals.carbs_g)} g` : '—';
     if (emptyTargetFat) emptyTargetFat.textContent = totals.fat_g ? `${fmt(totals.fat_g)} g` : '—';
     if (nutritionConfidence) nutritionConfidence.hidden = true;
+    if (preferenceStale) preferenceStale.hidden = true;
     return true;
   }
 
@@ -1387,6 +1389,12 @@
       nutritionConfidence.hidden = plan.nutrition_verified !== false;
       nutritionConfidence.textContent = plan.nutrition_verified === false
         ? 'This older plan contains nutrition estimates that were not checked ingredient by ingredient. Use Plan Today or Plan My Week to replace it with a nutrition-checked plan.'
+        : '';
+    }
+    if (preferenceStale) {
+      preferenceStale.hidden = plan.preferences_stale !== true;
+      preferenceStale.innerHTML = plan.preferences_stale === true
+        ? '<strong>This plan was created before your latest meal preferences.</strong> Plan Today or Plan My Week again before relying on it. Your previous plan remains visible until a new plan finishes successfully.'
         : '';
     }
     renderMeals(plan);

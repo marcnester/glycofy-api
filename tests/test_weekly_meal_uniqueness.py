@@ -11,6 +11,71 @@ from app.models import Plan, PlanItem, PlanMeal, Recipe, User
 from app.routers import llm_recommend, plans
 
 
+@pytest.mark.parametrize(
+    ("primary_diet", "expected_titles"),
+    [
+        ("pescatarian", {"Fish", "Vegetarian", "Vegan"}),
+        ("vegetarian", {"Vegetarian", "Vegan"}),
+        ("vegan", {"Vegan"}),
+    ],
+)
+def test_restrictive_diets_accept_only_compatible_recipe_hierarchy(primary_diet, expected_titles):
+    recipes = [
+        Recipe(title="Omnivore", diet_tags=["omnivore"]),
+        Recipe(title="Fish", diet_tags=["pescatarian"]),
+        Recipe(title="Vegetarian", diet_tags=["vegetarian"]),
+        Recipe(title="Vegan", diet_tags=["vegan"]),
+        Recipe(title="Untagged", diet_tags=[]),
+    ]
+
+    filtered = llm_recommend._filter_by_diet_tags(recipes, [primary_diet], primary_diet)
+
+    assert {recipe.title for recipe in filtered} == expected_titles
+
+
+def test_diet_hierarchy_preserves_secondary_recipe_requirements():
+    recipes = [
+        Recipe(title="Vegetarian", diet_tags=["vegetarian"]),
+        Recipe(title="Gluten-free vegetarian", diet_tags=["vegetarian", "gluten_free"]),
+        Recipe(title="Gluten-free vegan", diet_tags=["vegan", "gluten_free"]),
+    ]
+
+    filtered = llm_recommend._filter_by_diet_tags(
+        recipes,
+        ["pescatarian", "gluten_free"],
+        "pescatarian",
+    )
+
+    assert {recipe.title for recipe in filtered} == {"Gluten-free vegetarian", "Gluten-free vegan"}
+
+
+def test_catalog_only_recovery_returns_immediately_when_no_safe_candidate(monkeypatch):
+    monkeypatch.setattr(llm_recommend, "_top_k_candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        llm_recommend,
+        "_llm_pick_or_create",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("catalog recovery must not call the model")),
+    )
+
+    recommendation = llm_recommend._recommend_for_single_meal(
+        client=None,
+        db=MagicMock(),
+        date="2026-10-19",
+        tgt=llm_recommend.MealTarget(slot="lunch", kcal=700, protein_g=45, carbs_g=80, fat_g=20),
+        diet_tags=["pescatarian"],
+        primary_diet="pescatarian",
+        pref=None,
+        provider="catalog",
+        used_protein_items=[],
+        used_carb_items=[],
+        prefer_fast_catalog=True,
+    )
+
+    assert recommendation.recipe is None
+    assert recommendation.ai_idea is None
+    assert recommendation.reason == "No eligible catalog candidates."
+
+
 def test_ai_created_meal_retries_duplicate_weekly_title(monkeypatch):
     responses = iter(
         [

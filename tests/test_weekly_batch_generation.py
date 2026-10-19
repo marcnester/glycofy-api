@@ -582,7 +582,7 @@ def test_weekly_apply_relaxes_only_variety_for_final_verified_catalog_recovery(m
 
     assert len(catalog_calls) == 2
     assert catalog_calls[1]["used_recipe_ids"] == set()
-    assert catalog_calls[1]["used_meal_keys"] == {"verified"}
+    assert catalog_calls[1]["used_meal_keys"] == set()
     recovered = next(item for item in result["days"][0]["items"] if item["slot"] == "breakfast")
     assert recovered["meta"]["batch_recovery"] == "verified_catalog_relaxed_variety"
 

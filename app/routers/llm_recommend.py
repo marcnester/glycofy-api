@@ -678,11 +678,30 @@ def _filter_by_diet_tags(
         )
         return items
 
+    primary = str(primary_diet or "").strip().lower()
+    primary_tags = {"omnivore", "pescatarian", "vegetarian", "vegan"}
+    compatible_primary_tags = {
+        "pescatarian": {"pescatarian", "vegetarian", "vegan"},
+        "vegetarian": {"vegetarian", "vegan"},
+        "vegan": {"vegan"},
+    }
+    required_secondary_tags = need - primary_tags
+
     out: list[Recipe] = []
     for r in items:
         raw_tags = getattr(r, "diet_tags", None)
         have = set(_coerce_tag_list(raw_tags))
-        if need.issubset(have):
+        primary_compatible = True
+        if primary in compatible_primary_tags:
+            # Diets form a safety hierarchy: vegan meals are also suitable
+            # for vegetarian and pescatarian athletes, and vegetarian meals
+            # are suitable for pescatarians. Untagged/omnivore recipes remain
+            # ineligible for every restrictive diet.
+            primary_compatible = bool(have & compatible_primary_tags[primary])
+        elif primary not in ("", "omnivore"):
+            primary_compatible = primary in have
+
+        if primary_compatible and required_secondary_tags.issubset(have):
             out.append(r)
 
     logger.info(
@@ -693,7 +712,7 @@ def _filter_by_diet_tags(
         len(items),
     )
 
-    if not out and primary_diet in ("", "omnivore"):
+    if not out and primary in ("", "omnivore"):
         logger.warning(
             "LLM diet filter: primary_diet=%r requested_tags=%s eliminated all %d candidates; "
             "falling back to unfiltered list",
@@ -703,7 +722,7 @@ def _filter_by_diet_tags(
         )
         return items
 
-    if not out and primary_diet in ("pescatarian", "vegetarian", "vegan"):
+    if not out and primary in ("pescatarian", "vegetarian", "vegan"):
         logger.warning(
             "LLM diet filter: STRICT primary_diet=%r requested_tags=%s removed all %d candidates; "
             "NOT falling back to omnivore",
@@ -2808,6 +2827,12 @@ def _recommend_for_single_meal(
             None,
         )
 
+    if result is None and client is None and not candidates:
+        # Catalog-only recovery has no model to ask and no safe recipe to
+        # choose. Return immediately instead of repeating identical empty
+        # attempts and obscuring the useful fallback diagnostics.
+        result = ("empty", None, None, "No eligible catalog candidates.", {"provider": provider}, None)
+
     if result is None:
         for attempt in range(1, _SLOT_RECOMMENDATION_ATTEMPTS + 1):
             result = _llm_pick_or_create(
@@ -4652,7 +4677,7 @@ def recommend_weekly_apply(
                         used_protein_items=[],
                         used_carb_items=[],
                         used_recipe_ids=set(),
-                        used_meal_keys=used_meal_keys,
+                        used_meal_keys=set(),
                         allow_new_recipe=False,
                         week_protein_counts={},
                         protein_cap_per_slot=10_000,
