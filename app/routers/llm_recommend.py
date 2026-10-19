@@ -2989,6 +2989,85 @@ def _missing_recommendation_slots(items: list[SlotRecommendation]) -> list[str]:
     return [_normalize_slot(item.slot) for item in items if item.recipe is None and not item.ai_idea]
 
 
+def _reuse_verified_week_meal(
+    batch_items: dict[str, dict[str, SlotRecommendation]],
+    *,
+    target_date: str,
+    target: MealTarget,
+    primary_diet: str,
+    exclusions: list[str],
+) -> SlotRecommendation | None:
+    """Recover one missing cell from another already-verified meal in the week.
+
+    Weekly generation validates every accepted cell independently. If the model,
+    repair request, and catalog all miss one slot, reusing an accepted cell is
+    safer than either trusting the rejected meal or aborting six otherwise-valid
+    days. Prefer the same slot, then another main-meal/snack peer, and refit its
+    USDA-backed portions to this slot's targets before accepting it.
+    """
+    target_slot = _normalize_slot(target.slot)
+    if target_slot in _DAY_UNIQUE_SLOTS:
+        main_slots = ("breakfast", "lunch", "dinner")
+        compatible_slots = [target_slot, *[slot for slot in main_slots if slot != target_slot]]
+    else:
+        snack_slots = [slot for slot in ALL_SLOTS if slot.startswith("snack")]
+        compatible_slots = [target_slot, *[slot for slot in snack_slots if slot != target_slot]]
+
+    target_macros = {name: _safe_float(getattr(target, name, 0.0)) for name in _MACROS}
+    for source_slot in compatible_slots:
+        for source_date, source_slots in batch_items.items():
+            if source_date == target_date:
+                continue
+            source = source_slots.get(source_slot)
+            if source is None or not isinstance(source.ai_idea, dict):
+                continue
+            idea = source.model_copy(deep=True).ai_idea or {}
+            raw_ingredients = idea.get("ingredients")
+            if (
+                not isinstance(raw_ingredients, list)
+                or ingredient_nutrition_totals({"ingredients": raw_ingredients}) is None
+            ):
+                continue
+            ingredients = fit_portions_to_targets(
+                [dict(ingredient) for ingredient in raw_ingredients if isinstance(ingredient, dict)],
+                target_macros,
+            )
+            if len(ingredients) != len(raw_ingredients):
+                continue
+            macros = ingredient_nutrition_totals({"ingredients": ingredients})
+            if macros is None:
+                continue
+            recovered_idea = {**idea, "ingredients": ingredients, "approx_macros": macros}
+            quality_report = validate_meal(
+                {**recovered_idea, "slot": target_slot, "macros": macros},
+                target=target_macros,
+                exclusions=exclusions,
+                diet=primary_diet,
+                require_ingredient_nutrition=True,
+                target_miss_severity="warning",
+            )
+            if not quality_report.safe:
+                continue
+            recovered = source.model_copy(deep=True)
+            recovered.slot = target.slot
+            recovered.target = target_macros
+            recovered.recipe = None
+            recovered.ai_idea = recovered_idea
+            recovered.deltas = {name: abs(_safe_float(macros.get(name)) - target_macros[name]) for name in _MACROS}
+            recovered.reason = "A verified meal from this week was safely adapted to complete your plan."
+            recovered.meta = {
+                **(recovered.meta or {}),
+                "mode": "create",
+                "ai_idea": recovered_idea,
+                "batch_recovery": "verified_week_reuse",
+                "reused_from_date": source_date,
+                "reused_from_slot": source_slot,
+                "quality": {"issues": quality_report.codes()},
+            }
+            return recovered
+    return None
+
+
 _LEADING_QUANTITY_RE = re.compile(r"^\s*(?:\d|[¼½¾⅓⅔⅛⅜⅝⅞])")
 _UNQUANTIFIED_PANTRY_MARKERS = {
     "cooking oil",
@@ -4284,7 +4363,11 @@ def _batch_week_recommendations(
                     rejection_reasons.append("nutrition_unreconciled")
                 logger.warning(
                     "weekly_meal_rejected",
-                    extra={"slot": slot or "invalid", "reason_codes": sorted(set(rejection_reasons))},
+                    extra={
+                        "date": date_iso,
+                        "slot": slot or "invalid",
+                        "reason_codes": sorted(set(rejection_reasons)),
+                    },
                 )
                 rejected += 1
                 continue
@@ -4695,6 +4778,33 @@ def recommend_weekly_apply(
                         "batch_recovery": (rec.meta or {}).get("batch_recovery", "verified_catalog"),
                     }
                     logger.info("weekly_missing_slot_recovered", extra={"date": date_iso, "slot": slot})
+                else:
+                    # The catalog may be intentionally sparse after strict
+                    # diet, allergen, nutrition-evidence, and cooking-guidance
+                    # filters. Reuse a meal that already passed those same
+                    # checks elsewhere in this generated week and personalize
+                    # its verified portions for this slot. One rejected cell
+                    # must not discard six otherwise-safe days.
+                    rec = (
+                        _reuse_verified_week_meal(
+                            batch_items,
+                            target_date=date_iso,
+                            target=scaled,
+                            primary_diet=primary_diet,
+                            exclusions=_preference_exclusions(pref),
+                        )
+                        or rec
+                    )
+                    if rec.recipe or rec.ai_idea:
+                        logger.warning(
+                            "weekly_missing_slot_reused",
+                            extra={
+                                "date": date_iso,
+                                "slot": slot,
+                                "source_date": (rec.meta or {}).get("reused_from_date"),
+                                "source_slot": (rec.meta or {}).get("reused_from_slot"),
+                            },
+                        )
             else:
                 meta = rec.meta or {}
                 protein_item = str(meta.get("protein_item") or "").strip().lower()
