@@ -587,6 +587,126 @@ def test_weekly_apply_relaxes_only_variety_for_final_verified_catalog_recovery(m
     assert recovered["meta"]["batch_recovery"] == "verified_catalog_relaxed_variety"
 
 
+def test_weekly_apply_reuses_verified_week_meals_when_catalog_is_empty(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    dates = ["2026-10-19", "2026-10-20"]
+    targets = {"kcal": 500.0, "protein_g": 35.0, "carbs_g": 65.0, "fat_g": 15.0}
+
+    def recommendation(slot: str, title: str):
+        ingredients = [
+            {
+                "name": "firm tofu",
+                "amount": 150.0,
+                "amount_g": 150.0,
+                "unit": "g",
+                "nutrition": {"kcal": 180.0, "protein_g": 20.0, "carbs_g": 4.0, "fat_g": 10.0},
+            },
+            {
+                "name": "cooked brown rice",
+                "amount": 200.0,
+                "amount_g": 200.0,
+                "unit": "g",
+                "nutrition": {"kcal": 246.0, "protein_g": 5.0, "carbs_g": 51.0, "fat_g": 2.0},
+            },
+            {
+                "name": "spinach",
+                "amount": 80.0,
+                "amount_g": 80.0,
+                "unit": "g",
+                "nutrition": {"kcal": 18.0, "protein_g": 2.3, "carbs_g": 2.9, "fat_g": 0.3},
+            },
+            {
+                "name": "olive oil",
+                "amount": 5.0,
+                "amount_g": 5.0,
+                "unit": "g",
+                "nutrition": {"kcal": 44.0, "protein_g": 0.0, "carbs_g": 0.0, "fat_g": 5.0},
+            },
+        ]
+        idea = {
+            "title": title,
+            "ingredients": ingredients,
+            "instructions": ["Warm the tofu, rice, and spinach in a skillet.", "Finish with olive oil and serve."],
+            "prep_time_min": 5,
+            "cook_time_min": 8,
+            "total_time_min": 13,
+            "protein_group": "plant",
+            "protein_item": "tofu",
+            "carb_item": "brown rice",
+            "approx_macros": llm_recommend.ingredient_nutrition_totals({"ingredients": ingredients}),
+        }
+        return llm_recommend.SlotRecommendation(
+            slot=slot,
+            target=targets,
+            ai_idea=idea,
+            meta={"mode": "create", "batch": True, "ai_idea": idea},
+        )
+
+    first_day = {
+        "lunch": recommendation("lunch", "First day tofu lunch"),
+        "snack": recommendation("snack", "First day tofu snack"),
+    }
+    second_day = {slot: recommendation(slot, f"Second day {slot}") for slot in llm_recommend.SLOTS}
+    monkeypatch.setattr(
+        llm_recommend,
+        "_parallel_week_recommendations",
+        lambda *_args, **_kwargs: (
+            {dates[0]: first_day, dates[1]: second_day},
+            {"accepted": 6, "rejected": 2, "latency_ms": 100},
+        ),
+    )
+    monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", lambda *_args, **_kwargs: ({}, {"rejected": 2}))
+    monkeypatch.setattr(
+        llm_recommend,
+        "_recommend_for_single_meal",
+        lambda **kwargs: llm_recommend.SlotRecommendation(
+            slot=kwargs["tgt"].slot,
+            target=targets,
+            meta={"mode": "empty"},
+        ),
+    )
+    monkeypatch.setattr(
+        llm_recommend,
+        "validate_meal",
+        lambda *_args, **_kwargs: SimpleNamespace(safe=True, codes=lambda: []),
+    )
+    monkeypatch.setattr(llm_recommend, "_get_openai_client", lambda: object())
+    monkeypatch.setattr(llm_recommend._RATE, "check_and_add", lambda *_args: None)
+    monkeypatch.setattr(llm_recommend, "_day_target_misses", lambda *_args: [])
+    monkeypatch.setattr(
+        llm_recommend,
+        "_persist_day_recommendations",
+        lambda **kwargs: {"date": kwargs["day_iso"], "skipped": False, "applied": len(kwargs["day_items"])},
+    )
+
+    with Session(engine) as db:
+        user = User(email="week-reuse@example.com", password_hash="test")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        payload = llm_recommend.WeeklyRecommendRequest(
+            days=[
+                llm_recommend.WeeklyDayRequest(
+                    date=date,
+                    meals=[llm_recommend.MealTarget(slot=slot, **targets) for slot in llm_recommend.SLOTS],
+                )
+                for date in dates
+            ]
+        )
+        result = llm_recommend.recommend_weekly_apply(
+            SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")), payload, db, user
+        )
+
+    first_result = {item["slot"]: item for item in result["days"][0]["items"]}
+    assert set(first_result) == set(llm_recommend.SLOTS)
+    for slot in ("breakfast", "dinner"):
+        assert first_result[slot]["meta"]["batch_recovery"] == "verified_week_reuse"
+        assert first_result[slot]["meta"]["reused_from_date"] == dates[1]
+        assert first_result[slot]["meta"]["reused_from_slot"] == slot
+        assert first_result[slot]["ai_idea"]["approx_macros"]
+
+
 def test_verified_day_is_rebalanced_before_persist_when_meals_all_overshoot_protein():
     targets = [
         llm_recommend.MealTarget(slot=slot, kcal=500, protein_g=30, carbs_g=60, fat_g=15)
