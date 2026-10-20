@@ -2989,6 +2989,45 @@ def _missing_recommendation_slots(items: list[SlotRecommendation]) -> list[str]:
     return [_normalize_slot(item.slot) for item in items if item.recipe is None and not item.ai_idea]
 
 
+def _recommendation_meal_key(item: SlotRecommendation | None) -> str:
+    """Return the semantic title used by the weekly diversity guard."""
+    if item is None:
+        return ""
+    if isinstance(item.ai_idea, dict):
+        title = item.ai_idea.get("title")
+    else:
+        title = getattr(item.recipe, "title", None)
+    return _meal_similarity_key(str(title or ""))
+
+
+def _deduplicate_week_batch(
+    batch_days: list[dict[str, Any]],
+    batch_items: dict[str, dict[str, SlotRecommendation]],
+) -> tuple[list[str], int]:
+    """Drop exact title repeats so targeted recovery can replace them.
+
+    Parallel day generation cannot share state. Run this both before and after
+    compact repair because either model pass can otherwise reintroduce an
+    identical meal on another day or in another slot.
+    """
+    seen: set[str] = set()
+    kept_titles: list[str] = []
+    removed = 0
+    for batch_day in batch_days:
+        slots = batch_items.get(str(batch_day["date"]), {})
+        for slot, recommendation in list(slots.items()):
+            title = str((recommendation.ai_idea or {}).get("title") or "").strip()
+            title_key = _recommendation_meal_key(recommendation)
+            if title_key and title_key in seen:
+                del slots[slot]
+                removed += 1
+                continue
+            if title_key:
+                seen.add(title_key)
+                kept_titles.append(title)
+    return kept_titles, removed
+
+
 def _reuse_verified_week_meal(
     batch_items: dict[str, dict[str, SlotRecommendation]],
     *,
@@ -2996,99 +3035,96 @@ def _reuse_verified_week_meal(
     target: MealTarget,
     primary_diet: str,
     exclusions: list[str],
+    meal_key_counts: dict[str, int],
+    day_meal_keys: set[str],
 ) -> SlotRecommendation | None:
     """Recover one missing cell from another already-verified meal in the week.
 
     Weekly generation validates every accepted cell independently. If the model,
     repair request, and catalog all miss one slot, reusing an accepted cell is
     safer than either trusting the rejected meal or aborting six otherwise-valid
-    days. Prefer the same slot, then another main-meal/snack peer, and refit its
-    USDA-backed portions to this slot's targets before accepting it.
+    days. Reuse is deliberately restricted to the exact same slot and one repeat
+    per title. Breakfast is never allowed to become lunch or dinner.
     """
     target_slot = _normalize_slot(target.slot)
-    if target_slot in _DAY_UNIQUE_SLOTS:
-        main_slots = ("breakfast", "lunch", "dinner")
-        compatible_slots = [target_slot, *[slot for slot in main_slots if slot != target_slot]]
-    else:
-        snack_slots = [slot for slot in ALL_SLOTS if slot.startswith("snack")]
-        compatible_slots = [target_slot, *[slot for slot in snack_slots if slot != target_slot]]
-
     target_macros = {name: _safe_float(getattr(target, name, 0.0)) for name in _MACROS}
-    for source_slot in compatible_slots:
-        for source_date, source_slots in batch_items.items():
-            if source_date == target_date:
-                continue
-            source = source_slots.get(source_slot)
-            if source is None or not isinstance(source.ai_idea, dict):
-                continue
-            idea = source.model_copy(deep=True).ai_idea or {}
-            raw_ingredients = idea.get("ingredients")
-            if (
-                not isinstance(raw_ingredients, list)
-                or ingredient_nutrition_totals({"ingredients": raw_ingredients}) is None
-            ):
-                continue
-            original_ingredients = [dict(ingredient) for ingredient in raw_ingredients if isinstance(ingredient, dict)]
-            if len(original_ingredients) != len(raw_ingredients):
-                continue
-            fitted_ingredients = fit_portions_to_targets(
-                [dict(ingredient) for ingredient in original_ingredients],
-                target_macros,
-            )
-            portion_strategies = [("target_fitted", fitted_ingredients)]
-            if fitted_ingredients != original_ingredients:
-                # Portion fitting is an optimization, not a safety
-                # requirement. It can turn an already-valid meal into an
-                # impractical serving when a slot has an unusual macro target.
-                # Preserve the verified source portions in that case; target
-                # misses remain warnings and the complete-day rebalancer can
-                # make smaller adjustments after every slot is present.
-                portion_strategies.append(("original_verified_portions", original_ingredients))
+    for source_date, source_slots in batch_items.items():
+        if source_date == target_date:
+            continue
+        source = source_slots.get(target_slot)
+        if source is None or not isinstance(source.ai_idea, dict):
+            continue
+        meal_key = _recommendation_meal_key(source)
+        if not meal_key or meal_key in day_meal_keys or meal_key_counts.get(meal_key, 0) >= 2:
+            continue
+        idea = source.model_copy(deep=True).ai_idea or {}
+        raw_ingredients = idea.get("ingredients")
+        if (
+            not isinstance(raw_ingredients, list)
+            or ingredient_nutrition_totals({"ingredients": raw_ingredients}) is None
+        ):
+            continue
+        original_ingredients = [dict(ingredient) for ingredient in raw_ingredients if isinstance(ingredient, dict)]
+        if len(original_ingredients) != len(raw_ingredients):
+            continue
+        fitted_ingredients = fit_portions_to_targets(
+            [dict(ingredient) for ingredient in original_ingredients],
+            target_macros,
+        )
+        portion_strategies = [("target_fitted", fitted_ingredients)]
+        if fitted_ingredients != original_ingredients:
+            # Portion fitting is an optimization, not a safety
+            # requirement. It can turn an already-valid meal into an
+            # impractical serving when a slot has an unusual macro target.
+            # Preserve the verified source portions in that case; target
+            # misses remain warnings and the complete-day rebalancer can
+            # make smaller adjustments after every slot is present.
+            portion_strategies.append(("original_verified_portions", original_ingredients))
 
-            for portion_strategy, ingredients in portion_strategies:
-                macros = ingredient_nutrition_totals({"ingredients": ingredients})
-                if macros is None:
-                    continue
-                recovered_idea = {**idea, "ingredients": ingredients, "approx_macros": macros}
-                quality_report = validate_meal(
-                    {**recovered_idea, "slot": target_slot, "macros": macros},
-                    target=target_macros,
-                    exclusions=exclusions,
-                    diet=primary_diet,
-                    require_ingredient_nutrition=True,
-                    target_miss_severity="warning",
+        for portion_strategy, ingredients in portion_strategies:
+            macros = ingredient_nutrition_totals({"ingredients": ingredients})
+            if macros is None:
+                continue
+            recovered_idea = {**idea, "ingredients": ingredients, "approx_macros": macros}
+            quality_report = validate_meal(
+                {**recovered_idea, "slot": target_slot, "macros": macros},
+                target=target_macros,
+                exclusions=exclusions,
+                diet=primary_diet,
+                require_ingredient_nutrition=True,
+                target_miss_severity="warning",
+            )
+            if not quality_report.safe:
+                logger.info(
+                    "weekly_reuse_candidate_rejected",
+                    extra={
+                        "target_date": target_date,
+                        "target_slot": target_slot,
+                        "source_date": source_date,
+                        "source_slot": target_slot,
+                        "portion_strategy": portion_strategy,
+                        "reason_codes": quality_report.codes(),
+                    },
                 )
-                if not quality_report.safe:
-                    logger.info(
-                        "weekly_reuse_candidate_rejected",
-                        extra={
-                            "target_date": target_date,
-                            "target_slot": target_slot,
-                            "source_date": source_date,
-                            "source_slot": source_slot,
-                            "portion_strategy": portion_strategy,
-                            "reason_codes": quality_report.codes(),
-                        },
-                    )
-                    continue
-                recovered = source.model_copy(deep=True)
-                recovered.slot = target.slot
-                recovered.target = target_macros
-                recovered.recipe = None
-                recovered.ai_idea = recovered_idea
-                recovered.deltas = {name: abs(_safe_float(macros.get(name)) - target_macros[name]) for name in _MACROS}
-                recovered.reason = "A verified meal from this week was safely adapted to complete your plan."
-                recovered.meta = {
-                    **(recovered.meta or {}),
-                    "mode": "create",
-                    "ai_idea": recovered_idea,
-                    "batch_recovery": "verified_week_reuse",
-                    "reused_from_date": source_date,
-                    "reused_from_slot": source_slot,
-                    "portion_strategy": portion_strategy,
-                    "quality": {"issues": quality_report.codes()},
-                }
-                return recovered
+                continue
+            recovered = source.model_copy(deep=True)
+            recovered.slot = target.slot
+            recovered.target = target_macros
+            recovered.recipe = None
+            recovered.ai_idea = recovered_idea
+            recovered.deltas = {name: abs(_safe_float(macros.get(name)) - target_macros[name]) for name in _MACROS}
+            recovered.reason = "A verified meal from this week was safely adapted to complete your plan."
+            recovered.meta = {
+                **(recovered.meta or {}),
+                "mode": "create",
+                "ai_idea": recovered_idea,
+                "batch_recovery": "verified_week_reuse",
+                "reused_from_date": source_date,
+                "reused_from_slot": target_slot,
+                "portion_strategy": portion_strategy,
+                "quality": {"issues": quality_report.codes()},
+            }
+            return recovered
     return None
 
 
@@ -4335,6 +4371,11 @@ def _batch_week_recommendations(
             total_time_min = int(_safe_float(meal.get("total_time_min"), 0))
             prep_time_min = int(_safe_float(meal.get("prep_time_min"), 0))
             cook_time_min = int(_safe_float(meal.get("cook_time_min"), 0))
+            calculated_total = prep_time_min + cook_time_min
+            if 1 <= calculated_total <= 240 and total_time_min != calculated_total:
+                # Timing arithmetic is deterministic. Correct a model addition
+                # error instead of discarding an otherwise safe, complete meal.
+                total_time_min = calculated_total
             macros = meal.get("macros") or {}
             protein_group = str(meal.get("protein_group") or "unknown").strip().lower()
             title_key = _meal_similarity_key(title)
@@ -4342,6 +4383,9 @@ def _batch_week_recommendations(
             quality_candidate = {
                 **meal,
                 "ingredients": ingredients,
+                "prep_time_min": prep_time_min,
+                "cook_time_min": cook_time_min,
+                "total_time_min": total_time_min,
                 # Prefer USDA-derived totals. If one or more foods are waiting
                 # for validation, retain the bounded model estimate.
                 "macros": reconciled_macros or macros,
@@ -4629,23 +4673,9 @@ def recommend_weekly_apply(
     )
 
     # Daily calls run concurrently for speed, so siblings cannot see one
-    # another's returned titles. Remove exact cross-day repeats here and let
-    # the existing compact repair pass replace only those cells.
-    kept_title_dates: dict[str, str] = {}
-    kept_titles: list[str] = []
-    duplicate_titles_removed = 0
-    for batch_day in batch_days:
-        slots = batch_items.get(batch_day["date"], {})
-        for slot, recommendation in list(slots.items()):
-            title = str((recommendation.ai_idea or {}).get("title") or "").strip()
-            title_key = _meal_similarity_key(title)
-            if title_key and title_key in kept_title_dates and kept_title_dates[title_key] != batch_day["date"]:
-                del slots[slot]
-                duplicate_titles_removed += 1
-                continue
-            if title_key:
-                kept_title_dates.setdefault(title_key, batch_day["date"])
-                kept_titles.append(title)
+    # another's returned titles. Remove exact repeats here and let compact
+    # repair replace only those cells.
+    kept_titles, duplicate_titles_removed = _deduplicate_week_batch(batch_days, batch_items)
     batch_meta["duplicate_titles_removed"] = duplicate_titles_removed
 
     # Repair only the rejected cells in one compact model call. USDA remains
@@ -4681,14 +4711,75 @@ def recommend_weekly_apply(
         )
         for repair_date, slots in repaired_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
+        # A repair call can itself repeat a title from another repair cell.
+        # Enforce the same whole-week rule after merging its output.
+        kept_titles, repair_duplicates_removed = _deduplicate_week_batch(batch_days, batch_items)
+        duplicate_titles_removed += repair_duplicates_removed
+        batch_meta["duplicate_titles_removed"] = duplicate_titles_removed
         batch_meta["repair"] = {
             "requested": missing_count,
             "accepted": sum(len(slots) for slots in repaired_items.values()),
             "rejected": int(repair_meta.get("rejected") or 0),
             "latency_ms": int(repair_meta.get("latency_ms") or 0),
+            "duplicates_removed": repair_duplicates_removed,
         }
     elif repair_days:
         batch_meta["repair"] = {"requested": missing_count, "skipped": "limit_exceeded"}
+
+    # Make one final compact request for cells that the first repair did not
+    # satisfy (including duplicates removed from that repair). This preserves
+    # whole-week context and is substantially faster than serial AI calls for
+    # every residual slot. Verified catalog recovery and tightly bounded,
+    # same-slot reuse remain the non-network safety nets below.
+    final_repair_days: list[dict[str, Any]] = []
+    final_missing_count = 0
+    for batch_day in batch_days:
+        missing_meals = [
+            meal
+            for meal in batch_day["meals"]
+            if _normalize_slot(str(meal["slot"])) not in batch_items.get(batch_day["date"], {})
+        ]
+        if missing_meals:
+            final_missing_count += len(missing_meals)
+            final_repair_days.append({**batch_day, "meals": missing_meals})
+    if final_repair_days and final_missing_count <= repair_limit:
+        final_items, final_meta = _batch_week_recommendations(
+            client,
+            days=final_repair_days,
+            primary_diet=primary_diet,
+            diet_tags=pref_tags,
+            exclusions=_preference_exclusions(pref),
+            athlete_feedback=athlete_feedback,
+            week_context=batch_days,
+            flexible_meal_count=True,
+            forbidden_titles=kept_titles,
+        )
+        for repair_date, slots in final_items.items():
+            batch_items.setdefault(repair_date, {}).update(slots)
+        kept_titles, final_duplicates_removed = _deduplicate_week_batch(batch_days, batch_items)
+        duplicate_titles_removed += final_duplicates_removed
+        batch_meta["duplicate_titles_removed"] = duplicate_titles_removed
+        batch_meta["final_repair"] = {
+            "requested": final_missing_count,
+            "accepted": sum(len(slots) for slots in final_items.values()),
+            "rejected": int(final_meta.get("rejected") or 0),
+            "latency_ms": int(final_meta.get("latency_ms") or 0),
+            "duplicates_removed": final_duplicates_removed,
+        }
+    elif final_repair_days:
+        batch_meta["final_repair"] = {"requested": final_missing_count, "skipped": "limit_exceeded"}
+
+    # Reserve every accepted batch title before targeted recovery begins.
+    # This prevents an early missing cell from selecting a catalog meal that
+    # is already scheduled later in the week.
+    used_meal_keys = set()
+    week_meal_key_counts: dict[str, int] = {}
+    for slots in batch_items.values():
+        for recommendation in slots.values():
+            meal_key = _recommendation_meal_key(recommendation)
+            if meal_key:
+                used_meal_keys.add(meal_key)
+                week_meal_key_counts[meal_key] = week_meal_key_counts.get(meal_key, 0) + 1
 
     for day in payload.days:
         date_iso = day.date
@@ -4738,10 +4829,12 @@ def recommend_weekly_apply(
         prior_carb_count = len(used_carb_items)
 
         day_items: list[SlotRecommendation] = []
+        day_meal_keys: set[str] = set()
 
         for scaled in adjusted_meals:
             slot = _normalize_slot(scaled.slot)
             rec = batch_items.get(date_iso, {}).get(slot)
+            recovered_slot = rec is None
             if rec is None:
                 # The compact repair request is the entire AI retry budget.
                 # If one cell is still absent, select the nearest fully
@@ -4767,35 +4860,6 @@ def recommend_weekly_apply(
                     prefer_fast_catalog=True,
                     athlete_feedback=athlete_feedback,
                 )
-                if rec.recipe is None and not rec.ai_idea:
-                    # Completion and nutrition safety outrank weekly novelty.
-                    # A replan may have every safe catalog recipe present in
-                    # the prior week, so retry without historical diversity
-                    # exclusions before failing the entire atomic update.
-                    rec = _recommend_for_single_meal(
-                        client=None,
-                        db=db,
-                        date=date_iso,
-                        tgt=scaled,
-                        diet_tags=day_diet_tags,
-                        primary_diet=primary_diet,
-                        pref=pref,
-                        provider="catalog",
-                        used_protein_items=[],
-                        used_carb_items=[],
-                        used_recipe_ids=set(),
-                        used_meal_keys=set(),
-                        allow_new_recipe=False,
-                        week_protein_counts={},
-                        protein_cap_per_slot=10_000,
-                        prefer_fast_catalog=True,
-                        athlete_feedback=athlete_feedback,
-                    )
-                    if rec.recipe or rec.ai_idea:
-                        rec.meta = {
-                            **(rec.meta or {}),
-                            "batch_recovery": "verified_catalog_relaxed_variety",
-                        }
                 if rec.recipe or rec.ai_idea:
                     rec.meta = {
                         **(rec.meta or {}),
@@ -4816,6 +4880,8 @@ def recommend_weekly_apply(
                             target=scaled,
                             primary_diet=primary_diet,
                             exclusions=_preference_exclusions(pref),
+                            meal_key_counts=week_meal_key_counts,
+                            day_meal_keys=day_meal_keys,
                         )
                         or rec
                     )
@@ -4845,6 +4911,34 @@ def recommend_weekly_apply(
                 if protein_group and protein_group != "unknown":
                     key = (slot, protein_group)
                     week_protein_counts[key] = week_protein_counts.get(key, 0) + 1
+            meal_key = _recommendation_meal_key(rec)
+            if meal_key and meal_key in day_meal_keys:
+                db.rollback()
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "message": "Unable to create a varied weekly meal plan",
+                        "date": date_iso,
+                        "slot": slot,
+                        "reason": "duplicate_meal_same_day",
+                    },
+                )
+            if meal_key:
+                day_meal_keys.add(meal_key)
+                if recovered_slot:
+                    week_meal_key_counts[meal_key] = week_meal_key_counts.get(meal_key, 0) + 1
+                    used_meal_keys.add(meal_key)
+                if week_meal_key_counts.get(meal_key, 0) > 2:
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=422,
+                        detail={
+                            "message": "Unable to create a sufficiently varied weekly meal plan",
+                            "date": date_iso,
+                            "slot": slot,
+                            "reason": "weekly_meal_repeat_limit",
+                        },
+                    )
             day_items.append(rec)
 
         slots_present = sorted({it.slot for it in day_items})
@@ -4889,6 +4983,22 @@ def recommend_weekly_apply(
                 prefer_fast_catalog=True,
                 athlete_feedback=athlete_feedback,
             )
+            dinner_key = _recommendation_meal_key(dinner_rec)
+            if dinner_key and (dinner_key in day_meal_keys or week_meal_key_counts.get(dinner_key, 0) >= 2):
+                db.rollback()
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "message": "Unable to create a varied weekly meal plan",
+                        "date": date_iso,
+                        "slot": "dinner",
+                        "reason": "duplicate_fallback_dinner",
+                    },
+                )
+            if dinner_key:
+                day_meal_keys.add(dinner_key)
+                used_meal_keys.add(dinner_key)
+                week_meal_key_counts[dinner_key] = week_meal_key_counts.get(dinner_key, 0) + 1
             day_items.append(dinner_rec)
 
         missing_slots = _missing_recommendation_slots(day_items)

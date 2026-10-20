@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -149,6 +150,8 @@ def test_weekly_batch_parallelizes_bounded_day_calls_and_accepts_complete_week(m
             for day, date in enumerate(dates, start=1)
         ]
     }
+    # A model arithmetic mistake must be normalized, not discard the meal.
+    response_body["days"][0]["meals"][0]["total_time_min"] = 99
     calls = []
 
     class Completions:
@@ -315,12 +318,18 @@ def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch)
     date_iso = "2026-09-01"
     targets = {"kcal": 500.0, "protein_g": 40.0, "carbs_g": 50.0, "fat_g": 15.0}
     calls = []
+    titles = {
+        "breakfast": "Blueberry almond oats",
+        "lunch": "Chicken quinoa salad",
+        "dinner": "Salmon sweet potato plate",
+        "snack": "Apple yogurt cup",
+    }
 
     def recommendation(slot):
         return llm_recommend.SlotRecommendation(
             slot=slot,
             target=targets,
-            ai_idea={"title": f"Verified {slot}", "approx_macros": targets},
+            ai_idea={"title": titles[slot], "approx_macros": targets},
             meta={"mode": "create", "batch": True},
         )
 
@@ -374,6 +383,7 @@ def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch)
         "accepted": 1,
         "rejected": 0,
         "latency_ms": 25,
+        "duplicates_removed": 0,
     }
     assert len(result["days"][0]["items"]) == 4
 
@@ -401,7 +411,16 @@ def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
                 date: {
                     slot: recommendation(
                         slot,
-                        "Repeated Oat Bowl" if slot == "breakfast" else f"{date} {slot.title()}",
+                        (
+                            "Repeated Oat Bowl"
+                            if slot == "breakfast"
+                            else f"{date} "
+                            + {
+                                "lunch": "chicken quinoa salad",
+                                "dinner": "salmon sweet potato",
+                                "snack": "apple yogurt cup",
+                            }[slot]
+                        ),
                     )
                     for slot in llm_recommend.SLOTS
                 }
@@ -455,6 +474,42 @@ def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
         "Repeated Oat Bowl",
         "Apple Egg Breakfast",
     ]
+
+
+def test_seven_day_batch_removes_cross_day_and_same_day_recipe_repeats():
+    dates = [f"2026-10-{day:02d}" for day in range(19, 26)]
+    targets = {"kcal": 500.0, "protein_g": 40.0, "carbs_g": 50.0, "fat_g": 15.0}
+
+    def recommendation(slot: str, title: str):
+        return llm_recommend.SlotRecommendation(
+            slot=slot,
+            target=targets,
+            ai_idea={"title": title, "approx_macros": targets},
+            meta={"mode": "create", "batch": True},
+        )
+
+    batch_days = [{"date": date} for date in dates]
+    batch_items = {
+        date: {
+            "breakfast": recommendation("breakfast", "Mediterranean Oat Bowl with Yogurt and Berries"),
+            "lunch": recommendation("lunch", f"{date} lentil quinoa salad"),
+            "dinner": recommendation(
+                "dinner",
+                "Mediterranean Oat Bowl with Yogurt and Berries" if index == 0 else f"{date} salmon rice plate",
+            ),
+        }
+        for index, date in enumerate(dates)
+    }
+
+    _titles, removed = llm_recommend._deduplicate_week_batch(batch_days, batch_items)
+    remaining_keys = [
+        llm_recommend._recommendation_meal_key(item) for slots in batch_items.values() for item in slots.values()
+    ]
+
+    assert removed == 7
+    assert len(remaining_keys) == len(set(remaining_keys))
+    assert "dinner" not in batch_items[dates[0]]
+    assert all("breakfast" not in batch_items[date] for date in dates[1:])
 
 
 def test_daily_recommend_uses_verified_catalog_after_ai_repair_fails(monkeypatch):
@@ -516,17 +571,24 @@ def test_daily_recommend_uses_verified_catalog_after_ai_repair_fails(monkeypatch
     assert recovered["meta"]["batch_recovery"] == "verified_catalog"
 
 
-def test_weekly_apply_relaxes_only_variety_for_final_verified_catalog_recovery(monkeypatch):
+def test_weekly_apply_does_not_fall_back_to_slow_per_slot_ai(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     date_iso = "2026-09-13"
     targets = {"kcal": 500.0, "protein_g": 40.0, "carbs_g": 50.0, "fat_g": 15.0}
 
+    titles = {
+        "breakfast": "Blueberry almond oats",
+        "lunch": "Chicken quinoa salad",
+        "dinner": "Salmon sweet potato plate",
+        "snack": "Apple yogurt cup",
+    }
+
     def recommendation(slot):
         return llm_recommend.SlotRecommendation(
             slot=slot,
             target=targets,
-            ai_idea={"title": f"Verified {slot}", "approx_macros": targets},
+            ai_idea={"title": titles[slot], "approx_macros": targets},
             meta={"mode": "create", "batch": True},
         )
 
@@ -543,14 +605,7 @@ def test_weekly_apply_relaxes_only_variety_for_final_verified_catalog_recovery(m
 
     def catalog_recovery(**kwargs):
         catalog_calls.append(kwargs)
-        if len(catalog_calls) == 1:
-            return llm_recommend.SlotRecommendation(slot="breakfast", target=targets, meta={"mode": "empty"})
-        return llm_recommend.SlotRecommendation(
-            slot="breakfast",
-            target=targets,
-            ai_idea={"title": "Verified repeat breakfast", "approx_macros": targets},
-            meta={"mode": "create"},
-        )
+        return llm_recommend.SlotRecommendation(slot="breakfast", target=targets, meta={"mode": "empty"})
 
     monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", generate)
     monkeypatch.setattr(llm_recommend, "_recommend_for_single_meal", catalog_recovery)
@@ -576,15 +631,15 @@ def test_weekly_apply_relaxes_only_variety_for_final_verified_catalog_recovery(m
                 )
             ]
         )
-        result = llm_recommend.recommend_weekly_apply(
-            SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")), payload, db, user
-        )
+        with pytest.raises(llm_recommend.HTTPException) as exc_info:
+            llm_recommend.recommend_weekly_apply(
+                SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")), payload, db, user
+            )
 
-    assert len(catalog_calls) == 2
-    assert catalog_calls[1]["used_recipe_ids"] == set()
-    assert catalog_calls[1]["used_meal_keys"] == set()
-    recovered = next(item for item in result["days"][0]["items"] if item["slot"] == "breakfast")
-    assert recovered["meta"]["batch_recovery"] == "verified_catalog_relaxed_variety"
+    assert exc_info.value.status_code == 422
+    assert len(catalog_calls) == 1
+    assert catalog_calls[0]["client"] is None
+    assert catalog_calls[0]["used_meal_keys"]
 
 
 def test_weekly_apply_reuses_verified_week_meals_when_catalog_is_empty(monkeypatch):
@@ -647,7 +702,13 @@ def test_weekly_apply_reuses_verified_week_meals_when_catalog_is_empty(monkeypat
         "lunch": recommendation("lunch", "First day tofu lunch"),
         "snack": recommendation("snack", "First day tofu snack"),
     }
-    second_day = {slot: recommendation(slot, f"Second day {slot}") for slot in llm_recommend.SLOTS}
+    second_day_titles = {
+        "breakfast": "Second day blueberry oats",
+        "lunch": "Second day lentil quinoa",
+        "dinner": "Second day tofu noodles",
+        "snack": "Second day apple yogurt",
+    }
+    second_day = {slot: recommendation(slot, second_day_titles[slot]) for slot in llm_recommend.SLOTS}
     monkeypatch.setattr(
         llm_recommend,
         "_parallel_week_recommendations",
@@ -761,11 +822,34 @@ def test_weekly_reuse_preserves_verified_portions_when_target_fitting_is_unsafe(
         target=llm_recommend.MealTarget(slot="lunch", kcal=700.0, protein_g=45.0, carbs_g=95.0, fat_g=18.0),
         primary_diet="pescatarian",
         exclusions=[],
+        meal_key_counts={llm_recommend._meal_similarity_key("Tofu rice bowl"): 1},
+        day_meal_keys=set(),
     )
 
     assert recovered is not None
     assert recovered.meta["portion_strategy"] == "original_verified_portions"
     assert recovered.ai_idea["ingredients"][0]["amount_g"] == 150.0
+
+
+def test_weekly_reuse_never_moves_breakfast_into_dinner():
+    source = llm_recommend.SlotRecommendation(
+        slot="breakfast",
+        target={"kcal": 500.0, "protein_g": 35.0, "carbs_g": 65.0, "fat_g": 15.0},
+        ai_idea={"title": "Berry oat bowl", "ingredients": []},
+        meta={"mode": "create"},
+    )
+
+    recovered = llm_recommend._reuse_verified_week_meal(
+        {"2026-10-20": {"breakfast": source}},
+        target_date="2026-10-19",
+        target=llm_recommend.MealTarget(slot="dinner", kcal=700, protein_g=45, carbs_g=95, fat_g=18),
+        primary_diet="omnivore",
+        exclusions=[],
+        meal_key_counts={llm_recommend._meal_similarity_key("Berry oat bowl"): 1},
+        day_meal_keys=set(),
+    )
+
+    assert recovered is None
 
 
 def test_verified_day_is_rebalanced_before_persist_when_meals_all_overshoot_protein():

@@ -46,7 +46,10 @@ def _batch_result(days, *, expected_diet: str, expected_exclusions: list[str], *
         slots = {}
         for meal_index, meal in enumerate(day["meals"]):
             target = meal["target_macros"]
-            idea = _safe_idea(meal["slot"], target, f"{day_index}-{meal_index}")
+            # Parallel weekly generation calls this fixture once per day, so a
+            # local day_index would otherwise generate the same four titles on
+            # every date and correctly trigger the production diversity guard.
+            idea = _safe_idea(meal["slot"], target, f"{day['date']}-{day_index}-{meal_index}")
             report = validate_meal(
                 idea,
                 target=target,
