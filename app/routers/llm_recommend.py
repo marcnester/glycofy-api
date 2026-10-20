@@ -3028,43 +3028,67 @@ def _reuse_verified_week_meal(
                 or ingredient_nutrition_totals({"ingredients": raw_ingredients}) is None
             ):
                 continue
-            ingredients = fit_portions_to_targets(
-                [dict(ingredient) for ingredient in raw_ingredients if isinstance(ingredient, dict)],
+            original_ingredients = [dict(ingredient) for ingredient in raw_ingredients if isinstance(ingredient, dict)]
+            if len(original_ingredients) != len(raw_ingredients):
+                continue
+            fitted_ingredients = fit_portions_to_targets(
+                [dict(ingredient) for ingredient in original_ingredients],
                 target_macros,
             )
-            if len(ingredients) != len(raw_ingredients):
-                continue
-            macros = ingredient_nutrition_totals({"ingredients": ingredients})
-            if macros is None:
-                continue
-            recovered_idea = {**idea, "ingredients": ingredients, "approx_macros": macros}
-            quality_report = validate_meal(
-                {**recovered_idea, "slot": target_slot, "macros": macros},
-                target=target_macros,
-                exclusions=exclusions,
-                diet=primary_diet,
-                require_ingredient_nutrition=True,
-                target_miss_severity="warning",
-            )
-            if not quality_report.safe:
-                continue
-            recovered = source.model_copy(deep=True)
-            recovered.slot = target.slot
-            recovered.target = target_macros
-            recovered.recipe = None
-            recovered.ai_idea = recovered_idea
-            recovered.deltas = {name: abs(_safe_float(macros.get(name)) - target_macros[name]) for name in _MACROS}
-            recovered.reason = "A verified meal from this week was safely adapted to complete your plan."
-            recovered.meta = {
-                **(recovered.meta or {}),
-                "mode": "create",
-                "ai_idea": recovered_idea,
-                "batch_recovery": "verified_week_reuse",
-                "reused_from_date": source_date,
-                "reused_from_slot": source_slot,
-                "quality": {"issues": quality_report.codes()},
-            }
-            return recovered
+            portion_strategies = [("target_fitted", fitted_ingredients)]
+            if fitted_ingredients != original_ingredients:
+                # Portion fitting is an optimization, not a safety
+                # requirement. It can turn an already-valid meal into an
+                # impractical serving when a slot has an unusual macro target.
+                # Preserve the verified source portions in that case; target
+                # misses remain warnings and the complete-day rebalancer can
+                # make smaller adjustments after every slot is present.
+                portion_strategies.append(("original_verified_portions", original_ingredients))
+
+            for portion_strategy, ingredients in portion_strategies:
+                macros = ingredient_nutrition_totals({"ingredients": ingredients})
+                if macros is None:
+                    continue
+                recovered_idea = {**idea, "ingredients": ingredients, "approx_macros": macros}
+                quality_report = validate_meal(
+                    {**recovered_idea, "slot": target_slot, "macros": macros},
+                    target=target_macros,
+                    exclusions=exclusions,
+                    diet=primary_diet,
+                    require_ingredient_nutrition=True,
+                    target_miss_severity="warning",
+                )
+                if not quality_report.safe:
+                    logger.info(
+                        "weekly_reuse_candidate_rejected",
+                        extra={
+                            "target_date": target_date,
+                            "target_slot": target_slot,
+                            "source_date": source_date,
+                            "source_slot": source_slot,
+                            "portion_strategy": portion_strategy,
+                            "reason_codes": quality_report.codes(),
+                        },
+                    )
+                    continue
+                recovered = source.model_copy(deep=True)
+                recovered.slot = target.slot
+                recovered.target = target_macros
+                recovered.recipe = None
+                recovered.ai_idea = recovered_idea
+                recovered.deltas = {name: abs(_safe_float(macros.get(name)) - target_macros[name]) for name in _MACROS}
+                recovered.reason = "A verified meal from this week was safely adapted to complete your plan."
+                recovered.meta = {
+                    **(recovered.meta or {}),
+                    "mode": "create",
+                    "ai_idea": recovered_idea,
+                    "batch_recovery": "verified_week_reuse",
+                    "reused_from_date": source_date,
+                    "reused_from_slot": source_slot,
+                    "portion_strategy": portion_strategy,
+                    "quality": {"issues": quality_report.codes()},
+                }
+                return recovered
     return None
 
 
