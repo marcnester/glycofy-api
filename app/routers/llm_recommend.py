@@ -3753,7 +3753,7 @@ def _rebalance_complete_verified_day(
 
 
 _DAY_TARGET_TOLERANCES = {"kcal": 0.08, "protein_g": 0.15, "carbs_g": 0.15, "fat_g": 0.12}
-_DAY_RECOVERY_LIMITS = {"kcal": 0.15, "protein_g": 0.25, "carbs_g": 0.30, "fat_g": 0.25}
+_DAY_RECOVERY_LIMITS = {"kcal": 0.15, "protein_g": 0.26, "carbs_g": 0.30, "fat_g": 0.25}
 
 
 def _day_target_misses(
