@@ -15,25 +15,29 @@ from app.services.meal_quality import SUPPORTED_ALLERGENS, SUPPORTED_DIETS, vali
 TARGET = {"kcal": 600.0, "protein_g": 35.0, "carbs_g": 78.0, "fat_g": 16.0}
 
 
-def _safe_idea(slot: str, target: dict[str, float], suffix: str) -> dict:
+def _safe_idea(slot: str, target: dict[str, float], suffix: str, variety_index: int = 0) -> dict:
+    proteins = ("lentils", "chickpeas", "black beans", "kidney beans", "white beans", "split peas", "mung beans")
+    carbs = ("brown rice", "quinoa", "potato", "corn", "millet", "buckwheat", "sorghum")
+    protein = proteins[variety_index % len(proteins)]
+    carb = carbs[variety_index % len(carbs)]
     return {
-        "title": f"Lentil Rice Bowl {slot} {suffix}",
+        "title": f"{protein.title()} {carb.title()} Bowl {slot} {suffix}",
         "ingredients": [
-            {"name": "lentils", "amount": 180, "amount_g": 180, "unit": "g"},
-            {"name": "brown rice", "amount": 220, "amount_g": 220, "unit": "g"},
+            {"name": protein, "amount": 180, "amount_g": 180, "unit": "g"},
+            {"name": carb, "amount": 220, "amount_g": 220, "unit": "g"},
             {"name": "broccoli", "amount": 100, "amount_g": 100, "unit": "g"},
             {"name": "olive oil", "amount": 12, "amount_g": 12, "unit": "g"},
         ],
         "instructions": [
-            "Cook the lentils and brown rice until tender.",
+            f"Cook the {protein} and {carb} until tender.",
             "Steam the broccoli, combine everything with olive oil, and serve.",
         ],
         "prep_time_min": 8,
         "cook_time_min": 20,
         "total_time_min": 28,
         "protein_group": "legume",
-        "protein_item": "lentils",
-        "carb_item": "brown rice",
+        "protein_item": protein,
+        "carb_item": carb,
         "approx_macros": dict(target),
     }
 
@@ -49,7 +53,13 @@ def _batch_result(days, *, expected_diet: str, expected_exclusions: list[str], *
             # Parallel weekly generation calls this fixture once per day, so a
             # local day_index would otherwise generate the same four titles on
             # every date and correctly trigger the production diversity guard.
-            idea = _safe_idea(meal["slot"], target, f"{day['date']}-{day_index}-{meal_index}")
+            variety_index = int(str(day["date"])[-2:])
+            idea = _safe_idea(
+                meal["slot"],
+                target,
+                f"{day['date']}-{day_index}-{meal_index}",
+                variety_index=variety_index,
+            )
             report = validate_meal(
                 idea,
                 target=target,

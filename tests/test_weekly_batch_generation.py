@@ -287,7 +287,11 @@ def test_weekly_batch_parallelizes_bounded_day_calls_and_accepts_complete_week(m
     assert sent_payload["athlete_feedback"]["favorite_meals"] == ["Salmon rice bowl"]
     assert len(sent_payload["days"]) == 1
     assert len(sent_payload["week_context"]) == 2
-    assert sent_payload["days"][0]["variety_assignment"] in llm_recommend._DAY_THEMES
+    variety_assignment = sent_payload["days"][0]["variety_assignment"]
+    assert variety_assignment.startswith("Cuisine: ")
+    assert "breakfast format:" in variety_assignment
+    assert "lunch format:" in variety_assignment
+    assert "dinner format:" in variety_assignment
     system_prompt = calls[0]["messages"][0]["content"]
     assert "never copy target_macros into macros" in system_prompt
     ingredient_schema = calls[0]["response_format"]["json_schema"]["schema"]["properties"]["days"]["items"][
@@ -596,6 +600,60 @@ def test_seven_day_batch_removes_cross_day_and_same_day_recipe_repeats():
     assert len(remaining_keys) == len(set(remaining_keys))
     assert "dinner" not in batch_items[dates[0]]
     assert all("breakfast" not in batch_items[date] for date in dates[1:])
+
+
+def test_seven_day_batch_limits_cosmetically_renamed_meal_archetypes():
+    dates = [f"2026-10-{day:02d}" for day in range(19, 26)]
+    targets = {"kcal": 500.0, "protein_g": 40.0, "carbs_g": 50.0, "fat_g": 15.0}
+
+    def recommendation(slot: str, title: str, *, protein: str, carb: str):
+        return llm_recommend.SlotRecommendation(
+            slot=slot,
+            target=targets,
+            ai_idea={
+                "title": title,
+                "protein_item": protein,
+                "carb_item": carb,
+                "approx_macros": targets,
+            },
+            meta={"mode": "create", "batch": True},
+        )
+
+    batch_days = [{"date": date} for date in dates]
+    unique_words = ["amber", "birch", "cedar", "dahlia", "elm", "fir", "ginger"]
+    dinner_words = ["harbor", "island", "juniper", "kale", "lemon", "maple", "nectar"]
+    batch_items = {
+        date: {
+            "breakfast": recommendation(
+                "breakfast",
+                f"{unique_words[index]} regional fruit oat bowl",
+                protein="greek yogurt",
+                carb="rolled oats",
+            ),
+            "lunch": recommendation(
+                "lunch",
+                f"{unique_words[index]} lunch",
+                protein=f"{unique_words[index]} protein",
+                carb=f"{unique_words[index]} carb",
+            ),
+            "dinner": recommendation(
+                "dinner",
+                f"{dinner_words[index]} dinner",
+                protein=f"dinner {dinner_words[index]} protein",
+                carb=f"dinner {dinner_words[index]} carb",
+            ),
+        }
+        for index, date in enumerate(dates)
+    }
+
+    _titles, removed = llm_recommend._deduplicate_week_batch(batch_days, batch_items)
+
+    assert removed == 5
+    assert sum("breakfast" in batch_items[date] for date in dates) == 2
+    _saturated = llm_recommend._saturated_week_variety_keys(batch_items)
+    assert _saturated
+    assert "breakfast:carb:oats rolled" in _saturated
+    assert "breakfast:protein:greek yogurt" in _saturated
 
 
 def test_daily_recommend_uses_verified_catalog_after_ai_repair_fails(monkeypatch):
