@@ -735,7 +735,10 @@ def validate_meal(
         if not isinstance(item, dict):
             continue
         identity = _words(f"{item.get('name', '')} {item.get('usda_search_query', '')}")
-        if any(_contains(identity, state) for state in ("cooked", "granola", "instant", "prepared", "ready to eat")):
+        if any(
+            _contains(identity, state)
+            for state in ("cooked", "granola", "instant", "prepared", "ready to eat", "rice cake")
+        ):
             continue
         grain = next(
             (
