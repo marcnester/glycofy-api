@@ -13,7 +13,7 @@ import re
 import threading
 import time
 import uuid
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -3103,6 +3103,33 @@ def _recommendation_meal_key(item: SlotRecommendation | None) -> str:
     return _meal_similarity_key(str(title or ""))
 
 
+def _recommendation_variety_key(item: SlotRecommendation | None, field: str) -> str:
+    """Return a normalized model-supplied protein or carbohydrate identity."""
+    if item is None:
+        return ""
+    idea = item.ai_idea if isinstance(item.ai_idea, dict) else {}
+    value = idea.get(field) or (item.meta or {}).get(field)
+    key = _meal_similarity_key(str(value or ""))
+    return "" if key in {"", "unknown", "none", "n a"} else key
+
+
+def _saturated_week_variety_keys(
+    batch_items: dict[str, dict[str, SlotRecommendation]],
+) -> list[str]:
+    """Describe slot-specific meal components that have reached their weekly cap."""
+    counts: Counter[str] = Counter()
+    for slots in batch_items.values():
+        for slot, recommendation in slots.items():
+            normalized_slot = _normalize_slot(slot)
+            carb = _recommendation_variety_key(recommendation, "carb_item")
+            protein = _recommendation_variety_key(recommendation, "protein_item")
+            if carb:
+                counts[f"{normalized_slot}:carb:{carb}"] += 1
+            if normalized_slot in _DAY_UNIQUE_SLOTS and protein:
+                counts[f"{normalized_slot}:protein:{protein}"] += 1
+    return sorted(key for key, count in counts.items() if count >= 2)
+
+
 def _deduplicate_week_batch(
     batch_days: list[dict[str, Any]],
     batch_items: dict[str, dict[str, SlotRecommendation]],
@@ -3114,20 +3141,31 @@ def _deduplicate_week_batch(
     identical meal on another day or in another slot.
     """
     seen: set[str] = set()
+    component_counts: Counter[str] = Counter()
     kept_titles: list[str] = []
     removed = 0
     for batch_day in batch_days:
         slots = batch_items.get(str(batch_day["date"]), {})
         for slot, recommendation in list(slots.items()):
+            normalized_slot = _normalize_slot(slot)
             title = str((recommendation.ai_idea or {}).get("title") or "").strip()
             title_key = _recommendation_meal_key(recommendation)
-            if title_key and title_key in seen:
+            carb = _recommendation_variety_key(recommendation, "carb_item")
+            protein = _recommendation_variety_key(recommendation, "protein_item")
+            component_keys = []
+            if carb:
+                component_keys.append(f"{normalized_slot}:carb:{carb}")
+            if normalized_slot in _DAY_UNIQUE_SLOTS and protein:
+                component_keys.append(f"{normalized_slot}:protein:{protein}")
+            if (title_key and title_key in seen) or any(component_counts[key] >= 2 for key in component_keys):
                 del slots[slot]
                 removed += 1
                 continue
             if title_key:
                 seen.add(title_key)
                 kept_titles.append(title)
+            for key in component_keys:
+                component_counts[key] += 1
     return kept_titles, removed
 
 
@@ -4275,6 +4313,7 @@ def _batch_week_recommendations(
     flexible_meal_count: bool = False,
     synchronous_lookup_limit: int | None = None,
     forbidden_titles: list[str] | None = None,
+    forbidden_variety_keys: list[str] | None = None,
 ) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
     """Generate the whole week in one model round-trip and discard unsafe cells."""
     if not client or not days or _circuit_open() or _BUDGET.spent_usd >= _daily_budget_usd():
@@ -4325,7 +4364,10 @@ def _batch_week_recommendations(
         "Keep the week practical to shop: intentionally reuse produce, grains, sauces, and seasonings across meals; "
         "avoid one-off ingredients; and target no more than about 40 unique non-pantry grocery products for the week. "
         "Create variety through preparation and seasoning rather than a completely different ingredient set every day. "
-        "Never use a title listed in forbidden_titles. If an ingredient is explicitly cooked, leftover, deli, canned, "
+        "Never use a title listed in forbidden_titles. Never use a protein_item or carb_item for a slot when its "
+        "slot:type:value identity is listed in forbidden_variety_keys. These component limits prevent cosmetic title "
+        "changes from disguising the same meal archetype across the week. If an ingredient is explicitly cooked, "
+        "leftover, deli, canned, "
         "or ready-to-eat, only warm or assemble it; never add a raw-meat direction such as 'no longer pink'. "
         "For a recipe under 45 minutes, use canned or explicitly cooked legumes. Dry legumes need their full soaking "
         "and cooking time stated and included in total_time_min. "
@@ -4354,6 +4396,7 @@ def _batch_week_recommendations(
         ],
         "days": days,
         "forbidden_titles": forbidden_titles or [],
+        "forbidden_variety_keys": forbidden_variety_keys or [],
     }
     started = time.perf_counter()
     try:
@@ -4645,6 +4688,36 @@ _DAY_THEMES = (
     "European bistro",
 )
 
+_DAY_BREAKFAST_FORMATS = (
+    "savory eggs or tofu with potatoes and vegetables",
+    "oats with fruit and a measured protein food",
+    "whole-grain toast with eggs, fish, or dairy",
+    "yogurt or skyr parfait without oats",
+    "savory rice or quinoa breakfast bowl",
+    "smoothie plus a substantial whole-food side",
+    "whole-grain pancakes or waffles with a protein food",
+)
+
+_DAY_LUNCH_FORMATS = (
+    "grain-and-protein bowl",
+    "tacos or stuffed flatbread",
+    "noodle or pasta dish",
+    "substantial composed salad with bread or potatoes",
+    "wrap or sandwich with a substantial side",
+    "rice plate or curry",
+    "soup or stew with a substantial side",
+)
+
+_DAY_DINNER_FORMATS = (
+    "roasted sheet-pan plate",
+    "stir-fry",
+    "tacos or fajitas",
+    "grain bowl",
+    "pasta or noodles",
+    "curry or stew",
+    "bistro-style protein, potato, and vegetables",
+)
+
 
 def _parallel_week_recommendations(
     client: ClientType,
@@ -4668,7 +4741,16 @@ def _parallel_week_recommendations(
         )
 
     themed_days = [
-        {**day, "variety_assignment": _DAY_THEMES[index % len(_DAY_THEMES)]} for index, day in enumerate(days)
+        {
+            **day,
+            "variety_assignment": (
+                f"Cuisine: {_DAY_THEMES[index % len(_DAY_THEMES)]}; "
+                f"breakfast format: {_DAY_BREAKFAST_FORMATS[index % len(_DAY_BREAKFAST_FORMATS)]}; "
+                f"lunch format: {_DAY_LUNCH_FORMATS[index % len(_DAY_LUNCH_FORMATS)]}; "
+                f"dinner format: {_DAY_DINNER_FORMATS[index % len(_DAY_DINNER_FORMATS)]}."
+            ),
+        }
+        for index, day in enumerate(days)
     ]
     weekly_lookup_limit = max(0, int(os.environ.get("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "12")))
     lookups_per_day, extra_lookup_days = divmod(weekly_lookup_limit, len(themed_days))
@@ -4836,6 +4918,7 @@ def recommend_weekly_apply(
             week_context=batch_days,
             flexible_meal_count=True,
             forbidden_titles=kept_titles,
+            forbidden_variety_keys=_saturated_week_variety_keys(batch_items),
         )
         for repair_date, slots in repaired_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
@@ -4881,6 +4964,7 @@ def recommend_weekly_apply(
             week_context=batch_days,
             flexible_meal_count=True,
             forbidden_titles=kept_titles,
+            forbidden_variety_keys=_saturated_week_variety_keys(batch_items),
         )
         for repair_date, slots in final_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
@@ -4928,6 +5012,7 @@ def recommend_weekly_apply(
             week_context=batch_days,
             flexible_meal_count=True,
             forbidden_titles=kept_titles,
+            forbidden_variety_keys=_saturated_week_variety_keys(batch_items),
             synchronous_lookup_limit=0,
         )
         focused_recommendation = focused_items.get(repair_date, {}).get(repair_slot)
