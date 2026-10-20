@@ -707,6 +707,67 @@ def test_weekly_apply_reuses_verified_week_meals_when_catalog_is_empty(monkeypat
         assert first_result[slot]["ai_idea"]["approx_macros"]
 
 
+def test_weekly_reuse_preserves_verified_portions_when_target_fitting_is_unsafe(monkeypatch):
+    ingredients = [
+        {
+            "name": "firm tofu",
+            "amount": 150.0,
+            "amount_g": 150.0,
+            "unit": "g",
+            "nutrition": {"kcal": 180.0, "protein_g": 20.0, "carbs_g": 4.0, "fat_g": 10.0},
+        },
+        {
+            "name": "cooked brown rice",
+            "amount": 200.0,
+            "amount_g": 200.0,
+            "unit": "g",
+            "nutrition": {"kcal": 246.0, "protein_g": 5.0, "carbs_g": 51.0, "fat_g": 2.0},
+        },
+    ]
+    idea = {
+        "title": "Tofu rice bowl",
+        "ingredients": ingredients,
+        "instructions": ["Warm the tofu and rice.", "Combine and serve."],
+        "prep_time_min": 5,
+        "cook_time_min": 8,
+        "total_time_min": 13,
+        "approx_macros": llm_recommend.ingredient_nutrition_totals({"ingredients": ingredients}),
+    }
+    source = llm_recommend.SlotRecommendation(
+        slot="lunch",
+        target={"kcal": 500.0, "protein_g": 35.0, "carbs_g": 65.0, "fat_g": 15.0},
+        ai_idea=idea,
+        meta={"mode": "create", "ai_idea": idea},
+    )
+
+    def unsafe_fit(raw_ingredients, _target):
+        fitted = [dict(ingredient) for ingredient in raw_ingredients]
+        fitted[0] = {**fitted[0], "amount": 999.0, "amount_g": 999.0}
+        return fitted
+
+    def validate(candidate, **_kwargs):
+        impractical = any(ingredient.get("amount_g") == 999.0 for ingredient in candidate["ingredients"])
+        return SimpleNamespace(
+            safe=not impractical,
+            codes=lambda: ["impractical_primary_protein"] if impractical else [],
+        )
+
+    monkeypatch.setattr(llm_recommend, "fit_portions_to_targets", unsafe_fit)
+    monkeypatch.setattr(llm_recommend, "validate_meal", validate)
+
+    recovered = llm_recommend._reuse_verified_week_meal(
+        {"2026-10-20": {"lunch": source}},
+        target_date="2026-10-19",
+        target=llm_recommend.MealTarget(slot="lunch", kcal=700.0, protein_g=45.0, carbs_g=95.0, fat_g=18.0),
+        primary_diet="pescatarian",
+        exclusions=[],
+    )
+
+    assert recovered is not None
+    assert recovered.meta["portion_strategy"] == "original_verified_portions"
+    assert recovered.ai_idea["ingredients"][0]["amount_g"] == 150.0
+
+
 def test_verified_day_is_rebalanced_before_persist_when_meals_all_overshoot_protein():
     targets = [
         llm_recommend.MealTarget(slot=slot, kcal=500, protein_g=30, carbs_g=60, fat_g=15)
