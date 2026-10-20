@@ -91,6 +91,93 @@ def test_usda_failure_codes_distinguish_matching_from_measurement_errors():
     assert llm_recommend._usda_error_code("Ingredient has no valid gram weight") == "usda_invalid_measurement"
 
 
+def test_weekly_normalization_raises_undersized_primary_protein_with_evidence():
+    ingredients = [
+        {
+            "name": "cod fillet",
+            "amount": 50,
+            "amount_g": 50,
+            "unit": "g",
+            "nutrition": {"kcal": 45, "protein_g": 10, "carbs_g": 0, "fat_g": 0.5},
+        }
+    ]
+
+    normalized = llm_recommend._enforce_practical_batch_portions(
+        ingredients,
+        slot="lunch",
+        protein_item="cod",
+        protein_group="fish",
+    )
+
+    assert normalized[0]["amount"] == 75
+    assert normalized[0]["amount_g"] == 75
+    assert normalized[0]["nutrition"] == {"kcal": 67.5, "protein_g": 15.0, "carbs_g": 0.0, "fat_g": 0.8}
+    assert normalized[0]["_fit_minimum_g"] == 75
+
+
+def test_weekly_normalization_adds_missing_dry_grain_cooking_step_and_time():
+    instructions, cook_time, total_time = llm_recommend._ensure_dry_grains_are_cooked(
+        [{"name": "dry brown rice", "usda_search_query": "rice brown long grain dry"}],
+        ["Fold the rice into the vegetables.", "Serve with the prepared fish."],
+        prep_time_min=8,
+        cook_time_min=5,
+    )
+
+    assert instructions[0] == "Cook the rice in water until tender, following the package directions."
+    assert cook_time == 20
+    assert total_time == 28
+    report = llm_recommend.validate_meal(
+        {
+            "slot": "lunch",
+            "title": "Cod rice bowl",
+            "ingredients": [
+                {"name": "dry brown rice", "amount": 80, "amount_g": 80, "unit": "g"},
+                {"name": "cod", "amount": 120, "amount_g": 120, "unit": "g"},
+            ],
+            "instructions": instructions,
+            "prep_time_min": 8,
+            "cook_time_min": cook_time,
+            "total_time_min": total_time,
+            "protein_group": "fish",
+            "protein_item": "cod",
+            "macros": {"kcal": 500, "protein_g": 40, "carbs_g": 65, "fat_g": 10},
+        }
+    )
+    assert "uncooked_dry_grain" not in report.codes()
+
+
+def test_ready_to_eat_rice_cakes_are_not_treated_as_uncooked_grain():
+    instructions = ["Spread the almond butter over the rice cakes.", "Top with banana and serve."]
+
+    normalized, cook_time, total_time = llm_recommend._ensure_dry_grains_are_cooked(
+        [{"name": "brown rice cakes", "usda_search_query": "rice cakes brown rice ready to eat"}],
+        instructions,
+        prep_time_min=5,
+        cook_time_min=0,
+    )
+
+    assert normalized == instructions
+    assert cook_time == 0
+    assert total_time == 5
+    report = llm_recommend.validate_meal(
+        {
+            "slot": "snack",
+            "title": "Banana almond rice cakes",
+            "ingredients": [
+                {"name": "brown rice cakes", "amount": 18, "amount_g": 18, "unit": "g"},
+                {"name": "almond butter", "amount": 16, "amount_g": 16, "unit": "g"},
+                {"name": "banana", "amount": 100, "amount_g": 100, "unit": "g"},
+            ],
+            "instructions": instructions,
+            "prep_time_min": 5,
+            "cook_time_min": 0,
+            "total_time_min": 5,
+            "macros": {"kcal": 300, "protein_g": 10, "carbs_g": 45, "fat_g": 10},
+        }
+    )
+    assert "uncooked_dry_grain" not in report.codes()
+
+
 def test_preferred_snacks_split_existing_daily_targets_without_adding_calories():
     day = llm_recommend.WeeklyDayRequest(
         date="2026-09-01",

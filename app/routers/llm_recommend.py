@@ -41,6 +41,7 @@ from app.services.meal_quality import (
     QUALITY_POLICY_VERSION,
     ensure_safe_doneness_instruction,
     ingredient_nutrition_totals,
+    practical_minimum_grams,
     text_violates_exclusions,
     validate_meal,
 )
@@ -2989,6 +2990,108 @@ def _missing_recommendation_slots(items: list[SlotRecommendation]) -> list[str]:
     return [_normalize_slot(item.slot) for item in items if item.recipe is None and not item.ai_idea]
 
 
+_ANIMAL_PROTEIN_MARKERS: dict[str, tuple[str, ...]] = {
+    "fish": ("salmon", "cod", "tuna", "tilapia", "trout", "shrimp", "fish"),
+    "poultry": ("chicken", "turkey"),
+    "beef": ("beef", "steak"),
+    "pork": ("pork", "ham"),
+}
+_DRY_GRAIN_COOK_MINUTES: dict[str, int] = {
+    "oats": 5,
+    "oat": 5,
+    "couscous": 5,
+    "pasta": 10,
+    "quinoa": 15,
+    "bulgur": 15,
+    "rice": 20,
+    "barley": 25,
+}
+
+
+def _enforce_practical_batch_portions(
+    ingredients: list[dict[str, Any]],
+    *,
+    slot: str,
+    protein_item: str,
+    protein_group: str,
+) -> list[dict[str, Any]]:
+    """Raise undersized gram portions while preserving nutrition evidence.
+
+    The model chooses the foods, while Glycofy owns deterministic portion
+    safety. Scaling an existing USDA/model nutrient vector is preferable to
+    rejecting an otherwise usable meal or repeatedly asking the model to fix
+    the same arithmetic mistake.
+    """
+    main_meal = _normalize_slot(slot) in _DAY_UNIQUE_SLOTS
+    normalized_protein = protein_item.strip().lower()
+    group_markers = _ANIMAL_PROTEIN_MARKERS.get(protein_group.strip().lower(), ())
+    normalized: list[dict[str, Any]] = []
+    for ingredient in ingredients:
+        item = dict(ingredient)
+        name = str(item.get("name") or "").strip().lower()
+        query = str(item.get("usda_search_query") or "").strip().lower()
+        identity = f"{name} {query}".strip()
+        try:
+            amount_g = float(item.get("amount_g"))
+            amount = float(item.get("amount"))
+        except (TypeError, ValueError):
+            normalized.append(item)
+            continue
+        if str(item.get("unit") or "").strip().lower() not in {"g", "gram", "grams"} or amount_g <= 0:
+            normalized.append(item)
+            continue
+        minimum = practical_minimum_grams(name, query)
+        protein_matches = bool(normalized_protein and normalized_protein in identity)
+        group_matches = any(marker in identity for marker in group_markers)
+        if main_meal and (protein_matches or group_matches):
+            minimum = max(minimum, 75.0)
+            item["_fit_minimum_g"] = minimum
+        if amount_g < minimum:
+            factor = minimum / amount_g
+            item["amount_g"] = round(minimum, 1)
+            item["amount"] = round(minimum, 1)
+            nutrition = item.get("nutrition")
+            if isinstance(nutrition, dict):
+                item["nutrition"] = {macro: round(_safe_float(nutrition.get(macro)) * factor, 1) for macro in _MACROS}
+        elif abs(amount - amount_g) > 0.1:
+            item["amount"] = amount_g
+        normalized.append(item)
+    return normalized
+
+
+def _ensure_dry_grains_are_cooked(
+    ingredients: list[dict[str, Any]],
+    instructions: list[Any],
+    *,
+    prep_time_min: int,
+    cook_time_min: int,
+) -> tuple[list[str], int, int]:
+    """Add a concrete cooking step when a generated recipe omits one."""
+    cleaned_steps = [str(step).strip() for step in instructions if str(step).strip()]
+    required: list[tuple[str, int]] = []
+    for ingredient in ingredients:
+        identity = " ".join(str(ingredient.get(field) or "").strip().lower() for field in ("name", "usda_search_query"))
+        if any(
+            state in identity for state in ("cooked", "granola", "instant", "prepared", "ready to eat", "rice cake")
+        ):
+            continue
+        for grain, minutes in _DRY_GRAIN_COOK_MINUTES.items():
+            if grain in identity and not any(
+                grain in step and any(action in step for action in ("boil", "cook", "simmer", "soak"))
+                for step in cleaned_steps
+            ):
+                required.append((grain, minutes))
+                break
+    if not required:
+        return cleaned_steps, cook_time_min, prep_time_min + cook_time_min
+    grain_names = list(dict.fromkeys(grain for grain, _minutes in required))
+    required_cook = max(minutes for _grain, minutes in required)
+    label = " and ".join(grain_names)
+    cleaned_steps.insert(0, f"Cook the {label} in water until tender, following the package directions.")
+    cook_time_min = max(cook_time_min, required_cook)
+    return cleaned_steps, cook_time_min, prep_time_min + cook_time_min
+
+
 def _recommendation_meal_key(item: SlotRecommendation | None) -> str:
     """Return the semantic title used by the weekly diversity guard."""
     if item is None:
@@ -4363,15 +4466,39 @@ def _batch_week_recommendations(
                 ingredients, unresolved_nutrition = _verify_ingredient_nutrition_resilient(
                     ingredients, resolved_foods=resolved_usda
                 )
+                ingredients = _enforce_practical_batch_portions(
+                    ingredients,
+                    slot=slot,
+                    protein_item=protein,
+                    protein_group=str(meal.get("protein_group") or "unknown"),
+                )
                 if unresolved_nutrition == 0:
                     ingredients = fit_portions_to_targets(ingredients, target or {})
+                    # The fitter observes private minimum hints, but enforce
+                    # once more for non-adjustable or provisional edge cases
+                    # and remove those hints before persistence.
+                    ingredients = _enforce_practical_batch_portions(
+                        ingredients,
+                        slot=slot,
+                        protein_item=protein,
+                        protein_group=str(meal.get("protein_group") or "unknown"),
+                    )
+                ingredients = [
+                    {key: value for key, value in ingredient.items() if key != "_fit_minimum_g"}
+                    for ingredient in ingredients
+                ]
             except USDANutritionError as exc:
                 usda_error = str(exc)
             instructions = meal.get("instructions") or []
             total_time_min = int(_safe_float(meal.get("total_time_min"), 0))
             prep_time_min = int(_safe_float(meal.get("prep_time_min"), 0))
             cook_time_min = int(_safe_float(meal.get("cook_time_min"), 0))
-            calculated_total = prep_time_min + cook_time_min
+            instructions, cook_time_min, calculated_total = _ensure_dry_grains_are_cooked(
+                ingredients,
+                instructions,
+                prep_time_min=prep_time_min,
+                cook_time_min=cook_time_min,
+            )
             if 1 <= calculated_total <= 240 and total_time_min != calculated_total:
                 # Timing arithmetic is deterministic. Correct a model addition
                 # error instead of discarding an otherwise safe, complete meal.
@@ -4383,6 +4510,7 @@ def _batch_week_recommendations(
             quality_candidate = {
                 **meal,
                 "ingredients": ingredients,
+                "instructions": instructions,
                 "prep_time_min": prep_time_min,
                 "cook_time_min": cook_time_min,
                 "total_time_min": total_time_min,
