@@ -4769,6 +4769,61 @@ def recommend_weekly_apply(
     elif final_repair_days:
         batch_meta["final_repair"] = {"requested": final_missing_count, "skipped": "limit_exceeded"}
 
+    # Bulk repair is efficient, but one difficult cell can still be rejected
+    # twice for a correctable portion or cooking-state mistake. Give only the
+    # remaining cells a final isolated attempt. Each request contains exactly
+    # one slot plus the full week context and the current forbidden-title set,
+    # so a bad lunch cannot fail six good days or be replaced by a repeated
+    # breakfast. Keep this bounded to protect latency and provider spend.
+    residual_meals: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for batch_day in batch_days:
+        for meal in batch_day["meals"]:
+            slot = _normalize_slot(str(meal["slot"]))
+            if slot not in batch_items.get(batch_day["date"], {}):
+                residual_meals.append((batch_day, meal))
+    try:
+        focused_repair_limit = max(0, int(os.environ.get("WEEKLY_FOCUSED_REPAIR_MAX_SLOTS", "3")))
+    except ValueError:
+        focused_repair_limit = 3
+    focused_repair_meta: list[dict[str, Any]] = []
+    for batch_day, meal in residual_meals[:focused_repair_limit]:
+        repair_date = str(batch_day["date"])
+        repair_slot = _normalize_slot(str(meal["slot"]))
+        focused_day = {**batch_day, "meals": [meal]}
+        focused_items, focused_meta = _batch_week_recommendations(
+            client,
+            days=[focused_day],
+            primary_diet=primary_diet,
+            diet_tags=pref_tags,
+            exclusions=_preference_exclusions(pref),
+            athlete_feedback=athlete_feedback,
+            week_context=batch_days,
+            flexible_meal_count=True,
+            forbidden_titles=kept_titles,
+            synchronous_lookup_limit=0,
+        )
+        focused_recommendation = focused_items.get(repair_date, {}).get(repair_slot)
+        accepted = focused_recommendation is not None
+        if accepted:
+            batch_items.setdefault(repair_date, {})[repair_slot] = focused_recommendation
+            kept_titles, focused_duplicates_removed = _deduplicate_week_batch(batch_days, batch_items)
+            accepted = repair_slot in batch_items.get(repair_date, {})
+            duplicate_titles_removed += focused_duplicates_removed
+            batch_meta["duplicate_titles_removed"] = duplicate_titles_removed
+        focused_repair_meta.append(
+            {
+                "date": repair_date,
+                "slot": repair_slot,
+                "accepted": accepted,
+                "rejected": int(focused_meta.get("rejected") or 0),
+                "latency_ms": int(focused_meta.get("latency_ms") or 0),
+            }
+        )
+    if focused_repair_meta:
+        batch_meta["focused_repair"] = focused_repair_meta
+    if len(residual_meals) > focused_repair_limit:
+        batch_meta["focused_repair_skipped"] = len(residual_meals) - focused_repair_limit
+
     # Reserve every accepted batch title before targeted recovery begins.
     # This prevents an early missing cell from selecting a catalog meal that
     # is already scheduled later in the week.

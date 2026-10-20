@@ -4,7 +4,6 @@ import time
 from datetime import datetime
 from types import SimpleNamespace
 
-import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -571,7 +570,7 @@ def test_daily_recommend_uses_verified_catalog_after_ai_repair_fails(monkeypatch
     assert recovered["meta"]["batch_recovery"] == "verified_catalog"
 
 
-def test_weekly_apply_does_not_fall_back_to_slow_per_slot_ai(monkeypatch):
+def test_weekly_apply_uses_one_bounded_focused_repair_before_catalog(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     date_iso = "2026-09-13"
@@ -592,8 +591,23 @@ def test_weekly_apply_does_not_fall_back_to_slow_per_slot_ai(monkeypatch):
             meta={"mode": "create", "batch": True},
         )
 
-    def generate(_client, *, flexible_meal_count=False, **_kwargs):
+    generation_calls = []
+
+    def generate(_client, *, days, flexible_meal_count=False, forbidden_titles=None, **_kwargs):
+        generation_calls.append(
+            {
+                "flexible": flexible_meal_count,
+                "slots": [meal["slot"] for day in days for meal in day["meals"]],
+                "forbidden_titles": forbidden_titles,
+            }
+        )
         if flexible_meal_count:
+            if len(generation_calls) == 4:
+                return {date_iso: {"breakfast": recommendation("breakfast")}}, {
+                    "accepted": 1,
+                    "rejected": 0,
+                    "latency_ms": 20,
+                }
             return {date_iso: {}}, {"rejected": 1, "latency_ms": 25}
         return {date_iso: {slot: recommendation(slot) for slot in ("lunch", "dinner", "snack")}}, {
             "accepted": 3,
@@ -631,15 +645,29 @@ def test_weekly_apply_does_not_fall_back_to_slow_per_slot_ai(monkeypatch):
                 )
             ]
         )
-        with pytest.raises(llm_recommend.HTTPException) as exc_info:
-            llm_recommend.recommend_weekly_apply(
-                SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")), payload, db, user
-            )
+        result = llm_recommend.recommend_weekly_apply(
+            SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")), payload, db, user
+        )
 
-    assert exc_info.value.status_code == 422
-    assert len(catalog_calls) == 1
-    assert catalog_calls[0]["client"] is None
-    assert catalog_calls[0]["used_meal_keys"]
+    assert len(generation_calls) == 4
+    assert generation_calls[-1]["flexible"] is True
+    assert generation_calls[-1]["slots"] == ["breakfast"]
+    assert set(generation_calls[-1]["forbidden_titles"]) == {
+        "Chicken quinoa salad",
+        "Salmon sweet potato plate",
+        "Apple yogurt cup",
+    }
+    assert catalog_calls == []
+    assert result["generation"]["focused_repair"] == [
+        {
+            "date": date_iso,
+            "slot": "breakfast",
+            "accepted": True,
+            "rejected": 0,
+            "latency_ms": 20,
+        }
+    ]
+    assert {item["slot"] for item in result["days"][0]["items"]} == set(llm_recommend.SLOTS)
 
 
 def test_weekly_apply_reuses_verified_week_meals_when_catalog_is_empty(monkeypatch):
