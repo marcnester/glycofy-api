@@ -253,3 +253,23 @@ def test_csv_validation_does_not_echo_exception_values():
     assert rows == []
     assert errors
     assert "private-token-marker" not in str(errors)
+
+
+def test_parallel_language_gates_do_not_read_other_language_stale_results():
+    python_alert = {
+        "number": 1,
+        "state": "open",
+        "rule": {"security_severity_level": "high"},
+        "most_recent_instance": {"category": "/language:python"},
+    }
+    javascript_alert = {
+        "number": 2,
+        "state": "open",
+        "rule": {"security_severity_level": "critical"},
+        "most_recent_instance": {"category": "/language:javascript-typescript"},
+    }
+    pages = [[python_alert, javascript_alert]]
+    assert blocking_alerts(pages, "/language:python") == [python_alert]
+    assert blocking_alerts(pages, "/language:javascript-typescript") == [javascript_alert]
+    assert blocking_alerts([[python_alert]], "/language:javascript-typescript") == []
+    assert blocking_alerts(pages) == [python_alert, javascript_alert]
