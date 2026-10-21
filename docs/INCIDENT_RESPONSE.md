@@ -128,3 +128,16 @@ dates. Convert every preventable failure into a test, alert, or runbook update.
 4. Verify Cloudflare origin lockout, Render health alerts, database isolation,
    backup restoration, and `security@glycofy.ai` delivery.
 5. Record date, participants, results, gaps, and corrective commits.
+
+## Planned OAuth encryption-key rotation
+
+Do not rotate live keys just to resolve a scanner alert. Key changes require an approved maintenance window and a verified restore point. Keep all keys in the platform secret store; never enter them into shell command arguments or logs.
+
+1. Deploy the rotation-capable code and rehearse against an isolated restore. Local synthetic regression tests are supporting evidence, not proof of a live restore.
+2. Prepare a new Fernet key securely. While retaining the old primary, add the new key to `OAUTH_TOKEN_PREVIOUS_ENCRYPTION_KEYS` and deploy. This compatibility phase ensures both keys can be read during a rolling deployment.
+3. Set the new primary in `OAUTH_TOKEN_ENCRYPTION_KEY` and retain the old key in `OAUTH_TOKEN_PREVIOUS_ENCRYPTION_KEYS`. Deploy and confirm all old instances and background workers have drained. New token writes now use the new key.
+4. Run `python -m scripts.rotate_oauth_tokens` in the trusted service environment. The default validates every stored credential without rewriting. Then run `python -m scripts.rotate_oauth_tokens --apply`. The rewrite uses a single transaction and a PostgreSQL write lock; a failure rolls back all updates. Schedule it when brief token-write blocking is acceptable.
+5. Verify provider sync and token decryption. Record only aggregate counts, request IDs, and success/failure. Keep old keys available until rollback and backup-retention requirements are satisfied; old backups still require their original key.
+6. Remove the old decrypt-only key only after the migration and retention checks succeed. Revoke/reconnect affected provider tokens instead if the old encryption key was exposed.
+
+Never remove the old key before rewriting and verifying every stored credential. If validation fails, leave both keys configured and investigate without printing token values.

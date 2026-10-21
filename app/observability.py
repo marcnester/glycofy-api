@@ -6,7 +6,9 @@ import hmac
 import json
 import logging
 import sys
+import traceback
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -61,7 +63,15 @@ class JsonFormatter(logging.Formatter):
             if key not in _STANDARD_FIELDS and key not in payload and not key.startswith("_"):
                 payload[key] = value
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            # Exception messages can contain SQL parameters, provider bodies,
+            # tokens, or athlete data. Keep stack locations without values.
+            payload["exception"] = {
+                "type": record.exc_info[0].__name__ if record.exc_info[0] else "UnknownError",
+                "frames": [
+                    {"file": Path(frame.filename).name, "function": frame.name, "line": frame.lineno}
+                    for frame in traceback.extract_tb(record.exc_info[2])
+                ],
+            }
         return json.dumps(payload, default=str, separators=(",", ":"))
 
 

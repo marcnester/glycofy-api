@@ -97,6 +97,8 @@ class Settings(BaseSettings):
     PASSWORD_BREACH_CHECK_TIMEOUT_SECONDS: float = 3.0
     OAUTH_STATE_TTL_SECONDS: int = 600
     OAUTH_TOKEN_ENCRYPTION_KEY: str | None = None
+    # Comma-separated previous keys are decrypt-only during a planned rotation.
+    OAUTH_TOKEN_PREVIOUS_ENCRYPTION_KEYS: str = ""
     WEBAUTHN_RP_ID: str = "localhost"
     WEBAUTHN_RP_NAME: str = "Glycofy"
     WEBAUTHN_EXPECTED_ORIGIN: str = "http://localhost:8090"

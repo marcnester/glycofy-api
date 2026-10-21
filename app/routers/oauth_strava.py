@@ -25,6 +25,7 @@ from app.db import SessionLocal, get_db
 from app.models import Activity, OAuthAccount, User
 from app.observability import record_security_event
 from app.rate_limit import AUTH_LIMITER, client_key
+from app.redirects import safe_return_path
 
 # Router for OAuth endpoints (mounted at /oauth/strava)
 router = APIRouter(tags=["oauth/strava"])
@@ -37,7 +38,7 @@ STRAVA_ACTIVITIES = "https://www.strava.com/api/v3/athlete/activities"
 STRAVA_ACTIVITY_DETAIL = "https://www.strava.com/api/v3/activities/{id}"
 
 DEFAULT_PROFILE_URL = "/ui/profile.html"
-STATE_COOKIE_NAME = "strava_oauth_state"
+STATE_COOKIE_NAME = "__Host-strava-oauth-state" if settings.is_production else "strava_oauth_state"
 UA = "glycofy-app/1.0 (+https://example.invalid)"  # simple UA for Strava API etiquette
 
 # ---- kcal detail fetch cap per sync to protect rate limits
@@ -104,16 +105,7 @@ def _configured() -> bool:
 
 
 def _safe_return_path(raw: str | None) -> str | None:
-    """
-    Only allow same-origin paths like /ui/profile.html or /xyz.
-    Reject full URLs and suspicious values.
-    """
-    if not raw:
-        return None
-    raw = raw.strip()
-    if raw.startswith("/") and not raw.startswith("//") and "://" not in raw:
-        return raw
-    return None
+    return safe_return_path(raw, None)
 
 
 def _scope_values(raw: str | None) -> set[str]:
@@ -243,8 +235,8 @@ def _background_incremental_sync(user_id: int) -> None:
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 return
-            result = sync_strava(replace=False, months=INITIAL_INCREMENTAL_MONTHS, db=db, user=user)
-            logger.info("Strava login sync completed user_id=%s result=%s", user_id, result)
+            sync_strava(replace=False, months=INITIAL_INCREMENTAL_MONTHS, db=db, user=user)
+            logger.info("strava_login_sync_completed")
     except Exception:
         logger.exception("Strava login sync failed user_id=%s", user_id)
     finally:
@@ -590,7 +582,7 @@ def strava_start_url(
         httponly=True,
         secure=settings.COOKIE_SECURE,
         samesite="lax",
-        path="/oauth/strava/callback",
+        path="/",
     )
     return response
 
@@ -618,7 +610,7 @@ def strava_start(
         httponly=True,
         secure=settings.COOKIE_SECURE,
         samesite="lax",
-        path="/oauth/strava/callback",
+        path="/",
     )
     return response
 
@@ -768,7 +760,14 @@ def strava_callback(
     sep = "&" if "?" in dest else "?"
     response = RedirectResponse(url=f"{dest}{sep}linked=strava", status_code=302)
     record_security_event(db, request, "oauth_strava_link", "success", user_id=user.id)
-    response.delete_cookie(STATE_COOKIE_NAME, path="/oauth/strava/callback", samesite="lax")
+    response.delete_cookie(STATE_COOKIE_NAME, path="/", secure=settings.COOKIE_SECURE, httponly=True, samesite="lax")
+    response.delete_cookie(
+        "strava_oauth_state",
+        path="/oauth/strava/callback",
+        secure=settings.COOKIE_SECURE,
+        httponly=True,
+        samesite="lax",
+    )
     return response
 
 

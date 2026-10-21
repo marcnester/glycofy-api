@@ -665,18 +665,12 @@ def _filter_by_diet_tags(
     primary_diet: str,
 ) -> list[Recipe]:
     if not diet_tags:
-        logger.info(
-            "LLM diet filter: primary_diet=%r has no explicit diet_tags; skipping filter",
-            primary_diet,
-        )
+        logger.info("diet_filter_skipped")
         return items
 
     need = {t.lower().strip() for t in diet_tags if t and t.strip()}
     if not need:
-        logger.info(
-            "LLM diet filter: primary_diet=%r diet_tags normalized empty; skipping filter",
-            primary_diet,
-        )
+        logger.info("diet_filter_skipped")
         return items
 
     primary = str(primary_diet or "").strip().lower()
@@ -705,32 +699,14 @@ def _filter_by_diet_tags(
         if primary_compatible and required_secondary_tags.issubset(have):
             out.append(r)
 
-    logger.info(
-        "LLM diet filter: primary_diet=%r requested_tags=%s -> kept=%d / total=%d",
-        primary_diet,
-        sorted(list(need)),
-        len(out),
-        len(items),
-    )
+    logger.info("diet_filter_completed", extra={"kept_count": len(out), "candidate_count": len(items)})
 
     if not out and primary in ("", "omnivore"):
-        logger.warning(
-            "LLM diet filter: primary_diet=%r requested_tags=%s eliminated all %d candidates; "
-            "falling back to unfiltered list",
-            primary_diet,
-            sorted(list(need)),
-            len(items),
-        )
+        logger.warning("diet_filter_fallback")
         return items
 
     if not out and primary in ("pescatarian", "vegetarian", "vegan"):
-        logger.warning(
-            "LLM diet filter: STRICT primary_diet=%r requested_tags=%s removed all %d candidates; "
-            "NOT falling back to omnivore",
-            primary_diet,
-            sorted(list(need)),
-            len(items),
-        )
+        logger.warning("diet_filter_no_candidates")
 
     return out
 
@@ -781,13 +757,7 @@ def _top_k_candidates(
 ) -> list[tuple[Recipe, dict[str, float], float]]:
     q = db.query(Recipe).filter(Recipe.meal_type == slot)
     all_items: list[Recipe] = q.all()
-    logger.info(
-        "LLM top_k_candidates: slot=%s raw_count=%d merged_diet_tags=%s primary_diet=%r",
-        slot,
-        len(all_items),
-        diet_tags or [],
-        primary_diet,
-    )
+    logger.info("meal_candidates_loaded", extra={"candidate_count": len(all_items)})
 
     items = _filter_by_diet_tags(all_items, diet_tags, primary_diet)
 
@@ -797,55 +767,29 @@ def _top_k_candidates(
     before_verified = len(items)
     items = [recipe for recipe in items if _recipe_has_reconciled_nutrition(recipe)]
     if before_verified != len(items):
-        logger.info(
-            "LLM top_k_candidates: slot=%s excluded_unverified_nutrition=%d remaining=%d",
-            slot,
-            before_verified - len(items),
-            len(items),
-        )
+        logger.info("unverified_nutrition_filtered", extra={"removed_count": before_verified - len(items)})
 
     before_guidance = len(items)
     items = [recipe for recipe in items if _recipe_has_complete_cooking_guidance(recipe)]
     if before_guidance != len(items):
-        logger.info(
-            "LLM top_k_candidates: slot=%s excluded_incomplete_cooking_guidance=%d remaining=%d",
-            slot,
-            before_guidance - len(items),
-            len(items),
-        )
+        logger.info("incomplete_guidance_filtered", extra={"removed_count": before_guidance - len(items)})
 
     if ingredient_exclusions:
         before = len(items)
         items = [r for r in items if not _recipe_violates_exclusions(r, ingredient_exclusions)]
-        logger.info(
-            "LLM top_k_candidates: slot=%s ingredient_exclusions=%s removed=%d remaining=%d",
-            slot,
-            ingredient_exclusions,
-            before - len(items),
-            len(items),
-        )
+        logger.info("ingredient_exclusions_applied", extra={"removed_count": before - len(items)})
 
     exclude_set = set(exclude_ids) if exclude_ids else None
     if exclude_set:
         before = len(items)
         items = [r for r in items if int(getattr(r, "id", -1)) not in exclude_set]
-        logger.info(
-            "LLM top_k_candidates: slot=%s excluded_used_ids=%d remaining=%d",
-            slot,
-            before - len(items),
-            len(items),
-        )
+        logger.info("used_recipes_filtered", extra={"removed_count": before - len(items)})
 
     banned_meals = {key for key in (disallowed_meal_keys or set()) if key}
     if banned_meals:
         before = len(items)
         items = [r for r in items if _meal_similarity_key(getattr(r, "title", None)) not in banned_meals]
-        logger.info(
-            "LLM top_k_candidates: slot=%s excluded_used_meal_keys=%d remaining=%d",
-            slot,
-            before - len(items),
-            len(items),
-        )
+        logger.info("used_meals_filtered", extra={"removed_count": before - len(items)})
 
     banned_pg = {pg.strip().lower() for pg in (disallowed_protein_groups or set()) if pg.strip()}
     if banned_pg:
@@ -858,13 +802,7 @@ def _top_k_candidates(
                 continue
             filtered.append(r)
         items = filtered
-        logger.info(
-            "LLM top_k_candidates: slot=%s disallowed_protein_groups=%s removed=%d remaining=%d",
-            slot,
-            sorted(list(banned_pg)),
-            before - len(items),
-            len(items),
-        )
+        logger.info("protein_groups_filtered", extra={"removed_count": before - len(items)})
 
     banned_pi = {x.strip().lower() for x in (disallowed_protein_items or set()) if x and x.strip()}
     if banned_pi:
@@ -877,13 +815,7 @@ def _top_k_candidates(
                 continue
             filtered2.append(r)
         items = filtered2
-        logger.info(
-            "LLM top_k_candidates: slot=%s disallowed_protein_items=%s removed=%d remaining=%d",
-            slot,
-            sorted(list(banned_pi)),
-            before - len(items),
-            len(items),
-        )
+        logger.info("protein_items_filtered", extra={"removed_count": before - len(items)})
 
     banned_ci = {x.strip().lower() for x in (disallowed_carb_items or set()) if x and x.strip()}
     if banned_ci:
@@ -896,21 +828,10 @@ def _top_k_candidates(
                 continue
             filtered3.append(r)
         items = filtered3
-        logger.info(
-            "LLM top_k_candidates: slot=%s disallowed_carb_items=%s removed=%d remaining=%d",
-            slot,
-            sorted(list(banned_ci)),
-            before - len(items),
-            len(items),
-        )
+        logger.info("carb_items_filtered", extra={"removed_count": before - len(items)})
 
     if not items:
-        logger.warning(
-            "LLM top_k_candidates: slot=%s diet_tags=%s primary_diet=%r produced 0 candidates (after excludes/variety caps)",
-            slot,
-            diet_tags or [],
-            primary_diet,
-        )
+        logger.warning("meal_candidates_empty")
 
     # Rank only recipes that can actually be cooked. Filtering after slicing
     # the top K can otherwise hide valid measured recipes ranked just below a
@@ -918,12 +839,7 @@ def _top_k_candidates(
     before_quantities = len(items)
     items = [recipe for recipe in items if _recipe_has_quantified_ingredients(recipe)]
     if before_quantities != len(items):
-        logger.info(
-            "LLM top_k_candidates: slot=%s removed_unquantified=%d remaining=%d",
-            slot,
-            before_quantities - len(items),
-            len(items),
-        )
+        logger.info("unquantified_ingredients_filtered", extra={"removed_count": before_quantities - len(items)})
 
     scored: list[tuple[Recipe, dict[str, float], float]] = []
     for r in items:
@@ -932,24 +848,7 @@ def _top_k_candidates(
 
     scored.sort(key=lambda t: t[2])
 
-    summary = [
-        {
-            "id": r.id,
-            "title": r.title,
-            "diet_tags": _coerce_tag_list(getattr(r, "diet_tags", None)),
-            "protein_group": _guess_protein_group_for_recipe(r),
-            "protein_item": _guess_protein_item_for_recipe(r),
-            "carb_item": _guess_carb_item_for_recipe(r),
-            "score": s,
-        }
-        for (r, _d, s) in scored[:k]
-    ]
-    logger.info(
-        "LLM top_k_candidates: slot=%s returning_top_k=%d summary=%s",
-        slot,
-        min(k, len(scored)),
-        summary,
-    )
+    logger.info("meal_candidates_ranked", extra={"candidate_count": min(k, len(scored))})
 
     return scored[:k]
 
@@ -978,36 +877,29 @@ def _recipe_pick_from_model(r: Recipe) -> RecipePick:
 
 def _diet_tags_from_preferences(pref: UserPreference | None) -> list[str]:
     if not pref:
-        logger.info("LLM prefs: no UserPreference row, treating as omnivore (no diet tags)")
+        logger.info("preferences_defaulted")
         return []
 
     raw_type = getattr(pref, "diet_type", None) or getattr(pref, "diet", None) or ""
     diet_type = str(raw_type).strip().lower()
 
-    logger.info(
-        "LLM prefs: user_id=%s raw_diet_type=%r",
-        getattr(pref, "user_id", None),
-        raw_type,
-    )
+    logger.info("preferences_loaded")
 
     if not diet_type or diet_type == "omnivore":
-        logger.info("LLM prefs: diet_type=%r -> no diet tags (omnivore)", diet_type)
+        logger.info("preference_tags_resolved")
         return []
 
     if diet_type == "pescatarian":
-        logger.info("LLM prefs: diet_type=pescatarian -> ['pescatarian']")
+        logger.info("preference_tags_resolved")
         return ["pescatarian"]
     if diet_type == "vegetarian":
-        logger.info("LLM prefs: diet_type=vegetarian -> ['vegetarian']")
+        logger.info("preference_tags_resolved")
         return ["vegetarian"]
     if diet_type == "vegan":
-        logger.info("LLM prefs: diet_type=vegan -> ['vegan']")
+        logger.info("preference_tags_resolved")
         return ["vegan"]
 
-    logger.warning(
-        "LLM prefs: unknown diet_type=%r -> treating as omnivore (no tags)",
-        diet_type,
-    )
+    logger.warning("preference_tags_unknown")
     return []
 
 
@@ -1025,17 +917,12 @@ def _get_user_pref(db: Session, user_id: int) -> UserPreference | None:
     try:
         pref = db.query(UserPreference).filter(UserPreference.user_id == user_id).first()
         if pref:
-            logger.info(
-                "LLM prefs: loaded UserPreference for user_id=%s diet_type=%r ingredient_exclusions=%r",
-                user_id,
-                getattr(pref, "diet_type", None),
-                getattr(pref, "ingredient_exclusions", None),
-            )
+            logger.info("preferences_loaded")
         else:
-            logger.info("LLM prefs: no UserPreference row for user_id=%s", user_id)
+            logger.info("preferences_defaulted")
         return pref
-    except Exception as e:
-        logger.exception("LLM prefs: error loading UserPreference for user_id=%s: %s", user_id, e)
+    except Exception:
+        logger.exception("preferences_load_failed")
         return None
 
 
@@ -1076,8 +963,8 @@ def _get_openai_client() -> ClientType | None:
         return None
     try:
         from openai import OpenAI  # type: ignore
-    except Exception as e:
-        logger.exception("LLM: failed to import OpenAI client: %s", e)
+    except Exception:
+        logger.exception("ai_client_import_failed")
         return None
     # Reuse one thread-safe connection pool for the process. Constructing a new
     # SDK client for every plan retained multiple HTTP pools until garbage
@@ -1231,24 +1118,7 @@ def _safe_openai_json_pick(
     t0 = time.time()
     for attempt in range(3):
         try:
-            logger.info(
-                "LLM: calling OpenAI (chat.completions) model=%s attempt=%d payload_summary=%s",
-                model,
-                attempt,
-                {
-                    "slot": user_payload.get("slot"),
-                    "target_macros": user_payload.get("target_macros"),
-                    "diet_tags": user_payload.get("diet_tags"),
-                    "candidates_ids": [c.get("id") for c in user_payload.get("candidates", [])],
-                    "used_protein_items_today": user_payload.get("used_protein_items_today", []),
-                    "used_carb_items_today": user_payload.get("used_carb_items_today", []),
-                    "used_recipe_ids_week": user_payload.get("used_recipe_ids_week")
-                    or user_payload.get("used_recipe_ids"),
-                    "banned_protein_groups_slot_week": user_payload.get("banned_protein_groups_slot_week", []),
-                    "disallowed_protein_items_today": user_payload.get("disallowed_protein_items_today", []),
-                    "disallowed_carb_items_today": user_payload.get("disallowed_carb_items_today", []),
-                },
-            )
+            logger.info("ai_request_started", extra={"attempt": attempt})
             resp = client.chat.completions.create(
                 model=model,
                 **_chat_generation_options(model),
@@ -1279,12 +1149,7 @@ def _safe_openai_json_pick(
             except Exception:
                 data = None
 
-            logger.info(
-                "LLM response parsed=%s slot=%s date=%s",
-                isinstance(data, dict),
-                user_payload.get("slot"),
-                user_payload.get("date"),
-            )
+            logger.info("ai_response_parsed", extra={"parsed": isinstance(data, dict)})
 
             if not data or not isinstance(data, dict):
                 meta["fallback"] = "parse_error"
@@ -1316,7 +1181,7 @@ def _safe_openai_json_pick(
         except Exception as e:
             err = str(e)
             _record_failure()
-            logger.exception("LLM: error calling OpenAI (attempt %d): %s", attempt, e)
+            logger.exception("ai_request_failed", extra={"attempt": attempt})
             if attempt < 2:
                 _sleep_backoff(attempt)
             else:
@@ -1351,7 +1216,7 @@ def _get_activity_model():
 def _compute_training_load_for_date(db: Session, user_id: int, date_str: str) -> dict[str, Any]:
     Activity = _get_activity_model()
     if Activity is None:
-        logger.info("Training load: Activity model not available; treating %s as rest", date_str)
+        logger.info("training_model_unavailable")
         return {
             "score": 0.0,
             "tss": 0.0,
@@ -1367,7 +1232,7 @@ def _compute_training_load_for_date(db: Session, user_id: int, date_str: str) ->
     try:
         day = datetime.fromisoformat(date_str).date()
     except Exception:
-        logger.warning("Training load: invalid date %r; treating as rest", date_str)
+        logger.warning("training_date_invalid")
         return {
             "score": 0.0,
             "tss": 0.0,
@@ -1385,7 +1250,7 @@ def _compute_training_load_for_date(db: Session, user_id: int, date_str: str) ->
         date_col = getattr(Activity, "start_time", None)
 
     if date_col is None:
-        logger.warning("Training load: Activity model has no suitable date column; treating %s as rest", date_str)
+        logger.warning("training_date_column_unavailable")
         return {
             "score": 0.0,
             "tss": 0.0,
@@ -1409,8 +1274,8 @@ def _compute_training_load_for_date(db: Session, user_id: int, date_str: str) ->
             .filter(date_col < day_end)
         )
         acts = q.all()
-    except Exception as e:
-        logger.exception("Training load: query failed for user_id=%s date=%s: %s", user_id, date_str, e)
+    except Exception:
+        logger.exception("training_query_failed")
         return {
             "score": 0.0,
             "tss": 0.0,
@@ -1542,21 +1407,7 @@ def _compute_training_load_for_date(db: Session, user_id: int, date_str: str) ->
         metric_name = "score"
         metric_value = score
 
-    logger.info(
-        "Training load: user_id=%s date=%s acts=%d metric=%s value=%.2f tss=%.2f work_kj=%.1f kcal=%.1f "
-        "dur_min=%.1f dist_km=%.1f is_race=%s",
-        user_id,
-        date_str,
-        len(acts),
-        metric_name,
-        metric_value,
-        total_tss,
-        total_work_kj,
-        total_kcal,
-        duration_min,
-        distance_km,
-        is_race,
-    )
+    logger.info("training_load_calculated")
 
     return {
         "score": float(score),
@@ -1617,7 +1468,7 @@ def _compute_training_factors_for_week(db: Session, user_id: int, dates: list[st
 
     non_zero = [v for v in values if v > 0]
     if not non_zero:
-        logger.info("Training load: all days zero; returning neutral factors (1.0)")
+        logger.info("training_factors_defaulted")
         out: dict[str, dict[str, Any]] = {}
         for d in unique_dates:
             m = meta_by_date[d]
@@ -1631,8 +1482,7 @@ def _compute_training_factors_for_week(db: Session, user_id: int, dates: list[st
             }
         return out
 
-    median_non_zero = sorted(non_zero)[len(non_zero) // 2]
-    logger.info("Training load: weekly median_non_zero_metric=%.2f", median_non_zero)
+    logger.info("training_baseline_calculated")
 
     out: dict[str, dict[str, Any]] = {}
     for d in unique_dates:
@@ -1641,15 +1491,7 @@ def _compute_training_factors_for_week(db: Session, user_id: int, dates: list[st
         factor = _factor_from_load(mv, m["is_race"])
         zone = _zone_from_factor(factor, m["is_race"])
 
-        logger.info(
-            "Training load: date=%s metric=%s value=%.2f factor=%.3f zone=%s is_race=%s",
-            d,
-            m["metric_name"],
-            mv,
-            factor,
-            zone,
-            m["is_race"],
-        )
+        logger.info("training_factor_calculated")
 
         out[d] = {
             "factor": factor,
@@ -2630,14 +2472,7 @@ def _get_week_used_recipe_ids(db: Session, user: User, target_date: date) -> set
             out.add(int(rid))
         except Exception:
             continue
-    logger.info(
-        "LLM week_used_recipe_ids: user_id=%s target_date=%s week_span=(%s,%s) count=%d",
-        user.id,
-        target_date.isoformat(),
-        ws.isoformat(),
-        we.isoformat(),
-        len(out),
-    )
+    logger.info("used_recipes_loaded", extra={"recipe_count": len(out)})
     return out
 
 
@@ -2658,14 +2493,7 @@ def _get_week_used_meal_keys(db: Session, user: User, target_date: date) -> set[
     )
     meal_keys = {_meal_similarity_key(title) for (title,) in rows}
     meal_keys.discard("")
-    logger.info(
-        "LLM week_used_meal_keys: user_id=%s target_date=%s week_span=(%s,%s) count=%d",
-        user.id,
-        target_date.isoformat(),
-        ws.isoformat(),
-        we.isoformat(),
-        len(meal_keys),
-    )
+    logger.info("used_meals_loaded", extra={"meal_count": len(meal_keys)})
     return meal_keys
 
 
@@ -2699,14 +2527,7 @@ def _get_week_protein_counts(db: Session, user: User, target_date: date) -> dict
         key = (slot, pg)
         counts[key] = counts.get(key, 0) + 1
 
-    logger.info(
-        "LLM week_protein_counts: user_id=%s target_date=%s week_span=(%s,%s) entries=%s",
-        user.id,
-        target_date.isoformat(),
-        ws.isoformat(),
-        we.isoformat(),
-        counts,
-    )
+    logger.info("weekly_variety_counts_loaded")
     return counts
 
 
@@ -2734,7 +2555,7 @@ def _recommend_for_single_meal(
     prefer_fast_catalog: bool = False,
     athlete_feedback: dict[str, Any] | None = None,
 ) -> SlotRecommendation:
-    logger.info("LLM recommend-slot: date=%s slot=%s target_macros=%s", date, tgt.slot, tgt.model_dump())
+    logger.info("meal_recommendation_started")
 
     slot_norm = _normalize_slot(tgt.slot)
     ingredient_exclusions = _preference_exclusions(pref)
@@ -2746,12 +2567,7 @@ def _recommend_for_single_meal(
             if slot_key == slot_norm and count >= protein_cap_per_slot:
                 banned_groups_week.add(pg)
         if banned_groups_week:
-            logger.info(
-                "LLM recommend-slot: date=%s slot=%s weekly protein cap reached for groups=%s",
-                date,
-                slot_norm,
-                sorted(list(banned_groups_week)),
-            )
+            logger.info("weekly_variety_cap_applied")
 
     # Day-level uniqueness across main meals (protein_item + carb_item)
     banned_protein_items_day: set[str] = set()
@@ -2760,13 +2576,7 @@ def _recommend_for_single_meal(
         banned_protein_items_day = _normalize_key_set(used_protein_items)
         banned_carb_items_day = _normalize_key_set(used_carb_items)
         if banned_protein_items_day or banned_carb_items_day:
-            logger.info(
-                "LLM recommend-slot: date=%s slot=%s day variety enforced; disallowed_protein_items=%s disallowed_carb_items=%s",
-                date,
-                slot_norm,
-                sorted(list(banned_protein_items_day)),
-                sorted(list(banned_carb_items_day)),
-            )
+            logger.info("daily_variety_applied")
 
     candidates = _top_k_candidates(
         db=db,
@@ -2793,11 +2603,7 @@ def _recommend_for_single_meal(
     # same-day uniqueness constraints.
     weekly_cap_relaxed = False
     if not candidates and banned_groups_week:
-        logger.warning(
-            "LLM recommend-slot: date=%s slot=%s exhausted weekly protein groups; relaxing cap",
-            date,
-            slot_norm,
-        )
+        logger.warning("weekly_variety_cap_relaxed")
         banned_groups_week = set()
         weekly_cap_relaxed = True
         candidates = _top_k_candidates(
@@ -2858,14 +2664,10 @@ def _recommend_for_single_meal(
                 if attempt > 1:
                     _meta["slot_retry_attempts"] = attempt
                 break
-            logger.warning(
-                "LLM recommend-slot: date=%s slot=%s attempt=%d returned empty; retrying",
-                date,
-                tgt.slot,
-                attempt,
-            )
+            logger.warning("meal_recommendation_retry", extra={"attempt": attempt})
 
-    assert result is not None
+    if result is None:
+        raise HTTPException(status_code=503, detail="Meal recommendation unavailable")
     mode, picked_recipe, deltas, reason, pick_meta, ai_idea_payload = result
 
     pick_meta.setdefault("timestamp", datetime.now(UTC).isoformat())
@@ -2940,7 +2742,8 @@ def _recommend_for_single_meal(
             ai_idea=ai_idea_payload,
         )
 
-    assert picked_recipe is not None, "picked_recipe should not be None in 'pick' mode"
+    if picked_recipe is None:
+        raise HTTPException(status_code=503, detail="Meal recommendation unavailable")
 
     if used_recipe_ids is not None:
         try:
@@ -3839,7 +3642,7 @@ def _persist_day_recommendations(
 
     # Respect locks: do not overwrite locked plans
     if getattr(plan, "locked", False):
-        logger.info("LLM weekly persist: date=%s plan is locked; skipping persist", day_iso)
+        logger.info("locked_plan_persistence_skipped")
         return {"date": day_iso, "skipped": True, "reason": "locked", "applied": 0, "created_recipes": 0}
 
     requested_slots = [_normalize_slot(item.slot) for item in day_items]
@@ -3999,7 +3802,7 @@ def recommend_recipes(
         if cached_items and all(item.get("recipe") or item.get("ai_idea") for item in cached_items):
             return cached
         _CACHE.discard(key)
-        logger.warning("LLM cache: discarded incomplete recommendation key=%s", key)
+        logger.warning("incomplete_cache_entry_discarded")
 
     client = _get_openai_client()
     provider = "openai" if client else "stub"
@@ -4164,18 +3967,9 @@ def recommend_recipes(
     day_target_totals = _rebalance_verified_day(items, adjusted_meals)
     target_misses = _day_target_misses(items, day_target_totals)
     if target_misses:
-        before_totals = _day_macro_totals(items)
         _rebalance_complete_verified_day(items, adjusted_meals)
         target_misses = _day_target_misses(items, day_target_totals)
-        logger.info(
-            "daily_complete_day_rebalance",
-            extra={
-                "target_totals": day_target_totals,
-                "before_totals": before_totals,
-                "after_totals": _day_macro_totals(items),
-                "remaining_misses": target_misses,
-            },
-        )
+        logger.info("daily_complete_day_rebalance")
     if target_misses:
         hard_misses = _day_target_misses(items, day_target_totals, _DAY_RECOVERY_LIMITS)
         if not hard_misses:
@@ -4187,14 +3981,7 @@ def recommend_recipes(
                 item.meta = {**(item.meta or {}), "day_target_variance": target_misses}
             target_misses = []
     if target_misses:
-        logger.warning(
-            "daily_target_rejected",
-            extra={
-                "reason_codes": [f"daily_{name}_target_miss" for name in target_misses],
-                "target_totals": day_target_totals,
-                "actual_totals": _day_macro_totals(items),
-            },
-        )
+        logger.warning("daily_target_rejected")
         raise HTTPException(
             status_code=422,
             detail={
@@ -4429,7 +4216,7 @@ def _batch_week_recommendations(
         parsed = json.loads(raw) if raw else {}
     except Exception as exc:
         _record_failure()
-        logger.exception("LLM weekly batch failed: %s", exc)
+        logger.exception("weekly_batch_failed")
         record_ai_operation(
             "weekly_plan",
             status="failed",
@@ -4663,7 +4450,7 @@ def _batch_week_recommendations(
         "prompt_version": PROMPT_VERSION,
         "quality_policy_version": QUALITY_POLICY_VERSION,
     }
-    logger.info("LLM weekly batch completed: %s", meta)
+    logger.info("weekly_batch_completed")
     record_ai_operation(
         "weekly_plan",
         status="success" if rejected == 0 else "partial",
@@ -4809,7 +4596,7 @@ def recommend_weekly_apply(
     _RATE.check_and_add(user.id, ip)
 
     dates = [d.date for d in payload.days if d.date]
-    logger.info("LLM weekly: user_id=%s ip=%s days=%s", user.id, ip, dates)
+    logger.info("weekly_recommendation_started", extra={"day_count": len(dates)})
 
     pref = _get_user_pref(db, user.id)
     pref_tags = _diet_tags_from_preferences(pref)
@@ -5284,19 +5071,9 @@ def recommend_weekly_apply(
         day_target_totals = _rebalance_verified_day(day_items, adjusted_meals)
         target_misses = _day_target_misses(day_items, day_target_totals)
         if target_misses:
-            before_totals = _day_macro_totals(day_items)
             _rebalance_complete_verified_day(day_items, adjusted_meals)
             target_misses = _day_target_misses(day_items, day_target_totals)
-            logger.info(
-                "weekly_complete_day_rebalance",
-                extra={
-                    "date": date_iso,
-                    "target_totals": day_target_totals,
-                    "before_totals": before_totals,
-                    "after_totals": _day_macro_totals(day_items),
-                    "remaining_misses": target_misses,
-                },
-            )
+            logger.info("weekly_complete_day_rebalance")
         if target_misses:
             hard_misses = _day_target_misses(day_items, day_target_totals, _DAY_RECOVERY_LIMITS)
             if not hard_misses:
@@ -5312,15 +5089,7 @@ def recommend_weekly_apply(
                 target_misses = []
         if target_misses:
             db.rollback()
-            logger.warning(
-                "weekly_day_target_rejected",
-                extra={
-                    "date": date_iso,
-                    "reason_codes": [f"daily_{name}_target_miss" for name in target_misses],
-                    "target_totals": day_target_totals,
-                    "actual_totals": _day_macro_totals(day_items),
-                },
-            )
+            logger.warning("weekly_day_target_rejected")
             raise HTTPException(
                 status_code=422,
                 detail={
@@ -5362,9 +5131,9 @@ def recommend_weekly_apply(
     try:
         _raise_if_weekly_job_cancelled(db)
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        logger.exception("LLM weekly: failed to commit persisted plans: %s", e)
+        logger.exception("weekly_plan_commit_failed")
         raise HTTPException(status_code=500, detail="Failed to persist weekly recommendations")
 
     resp = {
@@ -5375,7 +5144,7 @@ def recommend_weekly_apply(
             "applied": persist_summaries,
         },
     }
-    logger.info("LLM weekly: user_id=%s completed provider=%s days=%d", user.id, provider, len(out_days))
+    logger.info("weekly_recommendation_completed", extra={"day_count": len(out_days)})
     return resp
 
 

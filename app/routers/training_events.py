@@ -207,9 +207,9 @@ def _parse_trainingpeaks_csv(contents: bytes, today: date | None = None) -> tupl
                     "external_id": "tp-csv:" + hashlib.sha256(fingerprint.encode()).hexdigest()[:32],
                 }
             )
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError):
             if len(errors) < 25:
-                errors.append(f"Row {line_number}: {exc}")
+                errors.append(f"Row {line_number}: invalid date, duration, distance, or intensity")
     return rows, errors, skipped_past
 
 

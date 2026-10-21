@@ -125,7 +125,7 @@ def _normalize_snack_times(values: list[str] | None, count: int) -> list[str]:
 def _to_out(pref: UserPreference | None) -> PreferencesOut:
     if not pref:
         # Default for new users
-        logger.info("Preferences _to_out: no existing row, returning defaults")
+        logger.info("preferences_defaulted")
         return PreferencesOut(diet="omnivore", ingredient_exclusions="", allergens=[])
 
     # 1) Prefer explicit diet_type column if present
@@ -145,16 +145,7 @@ def _to_out(pref: UserPreference | None) -> PreferencesOut:
     excl_list = _coerce_list(raw_excl)
     excl_str = ", ".join(excl_list) if excl_list else ""
 
-    logger.info(
-        "Preferences _to_out: id=%s user_id=%s diet_type=%r dietary_tags=%r ingredient_exclusions_raw=%r -> diet=%s, excl=%s",
-        getattr(pref, "id", None),
-        getattr(pref, "user_id", None),
-        raw_diet,
-        getattr(pref, "dietary_tags", None),
-        raw_excl,
-        diet,
-        excl_str,
-    )
+    logger.info("preferences_serialized")
 
     allergens = _coerce_list(getattr(pref, "allergies", None))
     raw_snack_count = getattr(pref, "daily_snack_count", None)
@@ -189,14 +180,7 @@ def get_preferences(
     """
     pref = db.query(UserPreference).filter(UserPreference.user_id == user.id).first()
 
-    logger.info(
-        "Preferences GET: user_id=%s row=%r (diet_type=%r, dietary_tags=%r, ingredient_exclusions=%r)",
-        user.id,
-        getattr(pref, "id", None),
-        getattr(pref, "diet_type", None),
-        getattr(pref, "dietary_tags", None),
-        getattr(pref, "ingredient_exclusions", None),
-    )
+    logger.info("preferences_loaded")
 
     return _to_out(pref)
 
@@ -220,14 +204,7 @@ def upsert_preferences(
     snack_count = payload.daily_snack_count if payload.daily_snack_count is not None else 1
     snack_times = _normalize_snack_times(payload.snack_times, snack_count)
 
-    logger.info(
-        "Preferences PUT incoming: user_id=%s raw_diet=%r normalized_diet=%s raw_exclusions=%r -> excl_list=%r",
-        user.id,
-        payload.diet,
-        diet,
-        payload.ingredient_exclusions,
-        excl_list,
-    )
+    logger.info("preferences_update_started")
 
     pref = db.query(UserPreference).filter(UserPreference.user_id == user.id).first()
 
@@ -237,11 +214,7 @@ def upsert_preferences(
         pref = UserPreference(user_id=user.id, created_at=now, updated_at=now)
         db.add(pref)
         db.flush()
-        logger.info(
-            "Preferences PUT: created new row id=%s for user_id=%s",
-            getattr(pref, "id", None),
-            user.id,
-        )
+        logger.info("preferences_created")
 
     # Persist canonical diet:
     #   - diet_type TEXT: 'omnivore'|'pescatarian'|'vegetarian'|'vegan'
@@ -265,13 +238,6 @@ def upsert_preferences(
     db.commit()
     db.refresh(pref)
 
-    logger.info(
-        "Preferences PUT saved: id=%s user_id=%s diet_type=%r dietary_tags=%r ingredient_exclusions=%r",
-        getattr(pref, "id", None),
-        getattr(pref, "user_id", None),
-        getattr(pref, "diet_type", None),
-        getattr(pref, "dietary_tags", None),
-        getattr(pref, "ingredient_exclusions", None),
-    )
+    logger.info("preferences_saved")
 
     return _to_out(pref)

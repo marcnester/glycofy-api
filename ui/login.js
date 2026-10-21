@@ -16,10 +16,18 @@
 
   // --- return handling ---
   function sanitizeReturnPath(p) {
-    try {
-      if (p && p.startsWith("/") && !p.startsWith("//")) return p;
-    } catch {}
-    return null;
+    if (typeof p !== "string") return "/ui/index.html";
+    // Resolve only known application pages; never redirect to caller URLs.
+    switch (p.split("?")[0].split("#")[0]) {
+      case "/ui/index.html": return "/ui/index.html";
+      case "/ui/plan.html": return "/ui/plan.html";
+      case "/ui/profile.html": return "/ui/profile.html";
+      case "/ui/activities.html": return "/ui/activities.html";
+      case "/ui/grocery.html": return "/ui/grocery.html";
+      case "/ui/plan-week.html": return "/ui/plan-week.html";
+      case "/ui/operations.html": return "/ui/operations.html";
+      default: return "/ui/index.html";
+    }
   }
   function parseReturn(def) {
     try {
@@ -27,9 +35,9 @@
       let v = u.searchParams.get("return");
       // force home if caller tried to send us to /ui/plan.html
       if (v === "/ui/plan.html" || v === "/ui/plan") v = null;
-      return sanitizeReturnPath(v) || (def || "/ui/index.html");
+      return sanitizeReturnPath(v || def);
     } catch {}
-    return def || "/ui/index.html";
+    return sanitizeReturnPath(def);
   }
 
   let authMode = "signin";

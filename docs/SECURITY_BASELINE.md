@@ -70,7 +70,7 @@ Production data is not copied to developer devices. Support and security notific
 
 ## Vulnerability management
 
-CI blocks failed tests, migration-chain failures, lint/type failures, committed secrets, fixable high/critical container findings, and known vulnerable direct Python or npm runtime dependencies. The owner reviews security alerts and dependency updates.
+CI blocks failed tests, migration-chain failures, lint/type failures, committed secrets, fixable high/critical container findings, and known vulnerable Python dependencies and moderate-or-higher vulnerabilities across the full npm dependency tree. CodeQL analyses also fail on unresolved high/critical findings on the analyzed ref; contextual false positives need evidence-based disposition. Weekly runs keep dependency evidence current even without deployments. The owner reviews security alerts and dependency updates.
 
 Remediation targets begin at confirmation: critical actively exploitable issues within 24 hours, high within 7 days, medium within 30 days, and low within 90 days. If the target cannot be met, the affected feature is disabled or isolated and the exception, compensating controls, owner, and expiry are recorded. Internet-facing authentication and authorization defects are never accepted without a time-bounded mitigation.
 
@@ -91,3 +91,9 @@ Logs must not contain passwords, session IDs, OAuth credentials, passkey asserti
 Pydantic schemas define API types and length/range constraints. Request bodies are capped at 1 MiB. Training CSV data is parsed as data, schema-validated, bounded, and never served as an uploaded file. Identifiers are server-resolved under the authenticated owner; clients cannot select a user ID. Dates, meal counts, snack counts, durations, units, macro ranges, provider URLs, redirect paths, and job concurrency all have explicit bounds in schemas or domain services. SQLAlchemy parameterization is mandatory; dynamic SQL, shell construction from user input, unsafe deserialization, and server-side template evaluation are prohibited.
 
 Changes to these limits require tests for minimum, maximum, malformed, duplicate, cross-user, and resource-exhaustion cases.
+
+## October 20, 2026 remediation evidence
+
+Privacy-safe logging now excludes raw diet/exclusion values, training metrics, and provider error messages from planning/preference events. Exception formatting preserves stack locations without exception messages or source lines. The legacy weekly compatibility endpoint no longer derives an outbound host from requests or forwards authentication cookies; it invokes owner-scoped planning internally, allowlists engines, bounds dates, rate-limits calls, and returns fixed failure codes.
+
+OAuth token key rotation now has dual-key reads, primary-only writes, a validation-only default, and an atomic rewrite command. Synthetic rehearsals verify dry-run behavior, old-key reads, new-key writes, and rollback of the entire rewrite on corrupt credentials. This closes the missing implementation/rehearsal portion of the rotation gap; a production-restore rehearsal remains operational evidence to obtain.

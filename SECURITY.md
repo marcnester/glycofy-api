@@ -27,7 +27,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 ## Verification gates
 
-Pull requests run unit/security regression tests, Ruff, Bandit, pip-audit, npm audit, and Gitleaks. Production releases must additionally receive authenticated two-user authorization testing, dynamic application testing in staging, restore testing, and an independent penetration test.
+Pull requests run unit/security regression tests, Ruff, Bandit (medium and high severity), pip-audit, full-tree npm audit (moderate and above), Gitleaks, and CodeQL. CodeQL gates unresolved high/critical alerts on the analyzed ref; the full security workflow also runs weekly. Reviewed false positives require recorded evidence; a green analysis job alone is not evidence of zero findings. Production releases must additionally receive authenticated two-user authorization testing, dynamic application testing in staging, restore testing, and an independent penetration test.
 
 The control baseline is OWASP ASVS 5.0 plus OWASP API Security Top 10 2023 and OWASP AISVS 1.0. The Top 10 lists are awareness documents, not a substitute for testable ASVS requirements.
 
@@ -42,7 +42,7 @@ This assessment is not a certification or a claim of full ASVS conformance.
 - Glycofy sessions have a 24-hour idle and seven-day absolute lifetime by default. Google sign-out and Glycofy sign-out are separate: signing out of Glycofy revokes Glycofy sessions but does not sign the user out of Google.
 - Logout and account deletion remove session cookies, revoke server-side token versions, prevent caching of authenticated responses, and ask the browser to clear this origin's cache and storage.
 
-Glycofy does not currently require or independently verify MFA for every user and does not yet provide per-device session inventory or selective revocation. Those remain required before claiming complete ASVS Level 2 conformance.
+Glycofy provides per-device session inventory and selective revocation. Passkeys require user verification, but MFA is not mandatory across the independent password and Google pathways. Mandatory step-up remains a requirement before claiming complete ASVS Level 2 conformance.
 
 ## Operational work required before launch
 
@@ -85,3 +85,9 @@ SMTP_USE_TLS=true
 ```
 
 For Gmail, use an application-specific credential or a transactional-email provider; do not store a normal mailbox password. Alert email is a temporary delivery channel. The structured log platform should remain the authoritative alert source because an application or SMTP outage can prevent the application from sending its own alert.
+
+## October 20, 2026 hardening
+
+Preference and meal-planning logs use fixed event names and aggregate counts, without raw diet, exclusions, training loads, provider bodies, or client addresses. Exception logs retain error classes and stack locations without exception messages or source lines. Review platform log access and retention for values logged by earlier releases; preserve incident evidence rather than deleting it indiscriminately.
+
+The legacy weekly planner uses authenticated internal calls instead of self-HTTP requests and limits calls per account. Development dependency scanning covers the whole lockfile; the unused nodemon dependency chain was removed. OAuth credential rotation supports a primary key and decrypt-only previous keys; follow `docs/INCIDENT_RESPONSE.md` and rehearse against an isolated restore before touching production keys.

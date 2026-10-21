@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from sqlalchemy import Text
 from sqlalchemy.types import TypeDecorator
 
@@ -12,18 +12,19 @@ from app.config import settings
 _PREFIX = "gfy1:"
 
 
-def _fernet() -> Fernet:
+def _fernet() -> MultiFernet:
     configured = (settings.OAUTH_TOKEN_ENCRYPTION_KEY or "").strip()
     if configured:
         try:
-            return Fernet(configured.encode("ascii"))
+            keys = [configured, *settings.csv_values(settings.OAUTH_TOKEN_PREVIOUS_ENCRYPTION_KEYS)]
+            return MultiFernet([Fernet(key.encode("ascii")) for key in keys])
         except (ValueError, UnicodeEncodeError) as exc:
-            raise RuntimeError("OAUTH_TOKEN_ENCRYPTION_KEY must be a valid Fernet key") from exc
+            raise RuntimeError("OAuth encryption keys must be valid Fernet keys") from exc
 
     # Local development remains zero-config. Production rejects a missing key
     # in Settings before the application can start.
     digest = hashlib.sha256(f"glycofy-dev:{settings.JWT_SECRET}".encode()).digest()
-    return Fernet(base64.urlsafe_b64encode(digest))
+    return MultiFernet([Fernet(base64.urlsafe_b64encode(digest))])
 
 
 class EncryptedText(TypeDecorator):
