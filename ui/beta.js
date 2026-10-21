@@ -7,7 +7,6 @@
   sessionStorage.setItem("glycofy.betaSession", sessionId);
   let lastRequestId = sessionStorage.getItem("glycofy.lastRequestId");
   let analyticsEnabled = false;
-  const TOUR_KEY = "glycofy.welcomeTour.v1";
 
   async function event(eventName) {
     if (!analyticsEnabled) return;
@@ -98,9 +97,9 @@
     addEventListener("offline", syncConnection);
   }
 
-  function buildWelcomeTour() {
+  function buildWelcomeTour(dismissed) {
     if (!/^\/ui\/(index|plan|profile|activities|grocery|plan-week)\.html$/.test(pagePath)) return;
-    try { if (localStorage.getItem(TOUR_KEY)) return; } catch (_) { return; }
+    if (dismissed) return;
     const steps = [
       {eyebrow:"Welcome to Glycofy", title:"Fuel the way you train", copy:"Glycofy combines your athlete profile, training context, and food preferences to build practical meal plans for performance."},
       {eyebrow:"1 · Training", title:"Give every plan context", copy:"Connect Strava, import a TrainingPeaks CSV, or add upcoming sessions. More training context means more precise fueling and recovery guidance."},
@@ -117,7 +116,31 @@
     const progress = dialog.querySelector(".welcome-tour__progress");
     const back = dialog.querySelector(".welcome-tour__back");
     const next = dialog.querySelector(".welcome-tour__next");
-    const finish = () => { try { localStorage.setItem(TOUR_KEY, "complete"); } catch (_) {} dialog.close(); dialog.remove(); };
+    const saveState = document.createElement("p");
+    saveState.setAttribute("role", "status");
+    dialog.querySelector(".welcome-tour__actions").before(saveState);
+    let saving = false;
+    const finish = async () => {
+      if (saving) return;
+      saving = true;
+      const buttons = dialog.querySelectorAll("button");
+      buttons.forEach(button => { button.disabled = true; });
+      saveState.textContent = "Saving your choice…";
+      try {
+        const response = await originalFetch("/v1/beta/welcome-tour", {
+          method: "PUT", credentials: "include",
+          headers: {"X-Requested-With": "XMLHttpRequest"}
+        });
+        if (!response.ok) throw new Error("save failed");
+        dialog.close();
+        dialog.remove();
+      } catch (_) {
+        saveState.textContent = "Couldn’t save your choice. Please try again.";
+      } finally {
+        saving = false;
+        buttons.forEach(button => { button.disabled = false; });
+      }
+    };
     const render = () => {
       const step = steps[index];
       dialog.querySelector(".welcome-tour__eyebrow").textContent = step.eyebrow;
@@ -142,7 +165,7 @@
     analyticsEnabled = config.analytics_enabled;
     buildResilienceUI();
     if (config.feedback_enabled) buildFeedback();
-    buildWelcomeTour();
+    buildWelcomeTour(config.welcome_tour_dismissed);
     event(pagePath.includes("grocery") ? "grocery_opened" : "page_view");
   }).catch(() => {});
 })();

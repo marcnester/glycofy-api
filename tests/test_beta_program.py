@@ -176,7 +176,7 @@ def test_beta_shell_includes_tour_offline_state_and_accessibility_escape_hatch()
     script = Path("ui/beta.js").read_text(encoding="utf-8")
     styles = Path("ui/styles.css").read_text(encoding="utf-8")
     theme = Path("ui/theme.css").read_text(encoding="utf-8")
-    assert "glycofy.welcomeTour.v1" in script
+    assert "config.welcome_tour_dismissed" in script
     assert "TrainingPeaks CSV" in script
     assert "You’re offline" in script
     assert 'skip.href = "#" + main.id' in script
@@ -204,3 +204,42 @@ def test_plan_page_exposes_clear_ai_planning_actions_without_heuristic_regenerat
     assert 'id="plan-regen"' not in page
     assert "Plan regenerated (heuristic)." not in script
     assert "btn.textContent = 'Plan Today'" in script
+
+
+def test_tour_dismissal_survives_logout_and_is_account_scoped(beta_app):
+    client, engine = beta_app
+    from app.models import UserPreference
+
+    assert client.get("/v1/beta/config").json()["welcome_tour_dismissed"] is False
+    with Session(engine) as db:
+        user = db.query(User).filter_by(email="beta@example.com").one()
+        db.add(UserPreference(user_id=user.id, settings={"unrelated": "preserved"}))
+        db.commit()
+    for _ in range(2):
+        assert client.put("/v1/beta/welcome-tour").status_code == 200
+    with Session(engine) as db:
+        pref = db.query(UserPreference).one()
+        assert pref.settings == {"unrelated": "preserved", "welcome_tour_v1_dismissed": True}
+    assert client.post("/auth/logout").status_code == 200
+    client.cookies.clear()
+    assert client.put("/v1/beta/welcome-tour").status_code == 401
+    assert (
+        client.post("/auth/login", json={"email": "beta@example.com", "password": "a-secure-password-123"}).status_code
+        == 200
+    )
+    assert client.get("/v1/beta/config").json()["welcome_tour_dismissed"] is True
+    assert client.post("/auth/logout").status_code == 200
+    client.cookies.clear()
+    assert (
+        client.post(
+            "/auth/signup", json={"email": "other@example.com", "password": "a-secure-password-123"}
+        ).status_code
+        == 200
+    )
+    assert client.get("/v1/beta/config").json()["welcome_tour_dismissed"] is False
+
+
+def test_tour_dismissal_creates_preferences(beta_app):
+    client, _ = beta_app
+    assert client.put("/v1/beta/welcome-tour").status_code == 200
+    assert client.get("/v1/beta/config").json()["welcome_tour_dismissed"] is True

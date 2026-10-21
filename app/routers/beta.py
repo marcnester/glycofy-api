@@ -14,7 +14,7 @@ from app.auth_utils import get_current_user
 from app.config import settings
 from app.db import get_db
 from app.feedback_email import queue_feedback_notification
-from app.models import BetaFeedback, ProductEvent, User
+from app.models import BetaFeedback, ProductEvent, User, UserPreference
 from app.observability import request_id
 
 router = APIRouter()
@@ -90,12 +90,14 @@ class FeedbackIn(ContextIn):
 
 
 @router.get("/config")
-def beta_config(_user: User = Depends(get_current_user)):
+def beta_config(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    pref = db.query(UserPreference).filter(UserPreference.user_id == user.id).first()
     enabled = _feature_flags()
     return {
         "feedback_enabled": settings.BETA_FEEDBACK_ENABLED and "beta_feedback" in enabled,
         "analytics_enabled": settings.BETA_ANALYTICS_ENABLED and "beta_analytics" in enabled,
         "flags": sorted(enabled),
+        "welcome_tour_dismissed": bool(pref and (pref.settings or {}).get("welcome_tour_v1_dismissed")),
     }
 
 
@@ -158,3 +160,16 @@ def submit_feedback(
         }
     )
     return {"feedback_id": row.id, "status": row.status}
+
+
+@router.put("/welcome-tour")
+def dismiss_welcome_tour(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    pref = db.query(UserPreference).filter(UserPreference.user_id == user.id).first()
+    now = datetime.utcnow()
+    if pref is None:
+        pref = UserPreference(user_id=user.id, created_at=now)
+        db.add(pref)
+    pref.settings = {**(pref.settings or {}), "welcome_tour_v1_dismissed": True}
+    pref.updated_at = now
+    db.commit()
+    return {"welcome_tour_dismissed": True}
