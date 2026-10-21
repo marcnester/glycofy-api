@@ -1179,7 +1179,7 @@ def _safe_openai_json_pick(
             return data, meta
 
         except Exception as e:
-            err = str(e)
+            err = type(e).__name__
             _record_failure()
             logger.exception("ai_request_failed", extra={"attempt": attempt})
             if attempt < 2:
@@ -2220,10 +2220,10 @@ def _llm_pick_or_create(
                 ingredients,
                 resolved_foods=resolved_daily,
             )
-        except USDANutritionError as exc:
+        except USDANutritionError:
             meta["quality"] = {"policy_version": QUALITY_POLICY_VERSION, "issues": ["usda_unverified"]}
             meta["mode"] = "empty"
-            return "empty", None, None, str(exc), meta, None
+            return "empty", None, None, "Ingredient nutrition could not be verified", meta, None
 
         reconciled_macros = ingredient_nutrition_totals({"ingredients": ingredients})
         quality_candidate = {

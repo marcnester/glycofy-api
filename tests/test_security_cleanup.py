@@ -273,3 +273,39 @@ def test_parallel_language_gates_do_not_read_other_language_stale_results():
     assert blocking_alerts(pages, "/language:javascript-typescript") == [javascript_alert]
     assert blocking_alerts([[python_alert]], "/language:javascript-typescript") == []
     assert blocking_alerts(pages) == [python_alert, javascript_alert]
+
+
+def test_ai_provider_errors_do_not_escape_in_response_metadata(monkeypatch):
+    def fail(**kwargs):
+        raise RuntimeError("private-provider-token-and-payload")
+
+    monkeypatch.setattr(llm_recommend, "_circuit_open", lambda: False)
+    monkeypatch.setattr(llm_recommend, "_daily_budget_usd", lambda: float("inf"))
+    monkeypatch.setattr(llm_recommend, "_record_failure", lambda: None)
+    monkeypatch.setattr(llm_recommend, "_sleep_backoff", lambda attempt: None)
+    monkeypatch.setattr(llm_recommend, "record_ai_operation", lambda *args, **kwargs: None)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fail)))
+    result, meta = llm_recommend._safe_openai_json_pick(client, "test-model", "system", {})
+    assert result is None
+    assert meta["error"] == "RuntimeError"
+    assert "private-provider-token" not in str(meta)
+
+
+def test_strava_fetch_error_is_safe_for_authenticated_caller(cleanup_app, monkeypatch):
+    from app.routers import oauth_strava
+
+    client, _ = cleanup_app
+    signup(client)
+    monkeypatch.setattr(oauth_strava, "_configured", lambda: True)
+    monkeypatch.setattr(oauth_strava, "_load_strava_account", lambda *args: SimpleNamespace(access_token="test-token"))
+    monkeypatch.setattr(oauth_strava, "_refresh_if_needed", lambda *args: "test-token")
+    monkeypatch.setattr(oauth_strava, "_latest_strava_activity_at", lambda *args: None)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("private-provider-token-and-payload")
+
+    monkeypatch.setattr(oauth_strava, "_fetch_all_strava_activities", fail)
+    response = client.post("/sync/strava")
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Unable to fetch Strava activities. Please retry."
+    assert "private-provider-token" not in response.text
