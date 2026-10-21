@@ -883,8 +883,9 @@ def sync_strava(
         raw_items = _fetch_all_strava_activities(token, after_ts=after_ts)
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch from Strava: {e}")
+    except Exception:
+        logger.exception("strava_activity_fetch_failed")
+        raise HTTPException(status_code=502, detail="Unable to fetch Strava activities. Please retry.")
 
     created = 0
     updated = 0

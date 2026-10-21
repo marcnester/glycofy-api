@@ -84,7 +84,7 @@ def _pull_page(token: str, page: int, per_page: int, after_epoch: int | None) ->
     url = f"{STRAVA_API_BASE}/athlete/activities"
     resp = requests.get(url, headers=headers, params=params, timeout=30)
     if resp.status_code != 200:
-        raise RuntimeError(f"Strava API error {resp.status_code}: {resp.text[:200]}")
+        raise RuntimeError(f"Strava API error {resp.status_code}")
     return resp.json()  # list of activities
 
 
