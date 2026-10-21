@@ -44,3 +44,15 @@ Quarterly, confirm:
 - The disabled `glycofy-api.onrender.com` hostname returns `404`, including for application UI paths.
 - Production responses include HSTS, CSP, frame denial, MIME-sniffing protection, referrer policy, permissions policy, COOP, CORP, and request IDs.
 - GitHub `Security and tests` and `CodeQL` workflows passed for the deployed commit. The workflow includes the full test suite, PostgreSQL migration-chain test, Ruff, mypy, Bandit, pip-audit, npm audit, Gitleaks, SBOM generation, and a container scan that fails on fixable high or critical vulnerabilities.
+
+## October 20, 2026 verification
+
+- Render dashboard inspected: production PostgreSQL is available; external traffic is disallowed; point-in-time recovery is available for the past three days.
+- An isolated restore was prepared for review, without starting it. The smallest matching plan is Basic-256mb with 15 GB storage, listed at $10.50/month total and prorated by the second. Provisioning/billing approval is outstanding. No production restore was attempted.
+- No new live restore or alert-delivery test is claimed. The last documented successful live restore remains September 9.
+- Current Dockerfile explicitly copies runtime paths and omits .git/.env/local databases; CI verifies the unprivileged user and scans the resulting image.
+- Active main-branch ruleset requires pull requests and status checks, linear history, and rejects deletion/non-fast-forward updates.
+- GitHub alerts 6, 7, 9, 10, 11, 12, 53 and 54 were dispositioned as contextual false positives with evidence: signed expiring OAuth CSRF state in a protected cookie, and the HIBP lookup digest rather than password storage. Other alerts are left for actual remediation and fresh analysis.
+
+- Complete alert enumeration uses pagination. The initial chat review only counted the first response page (27 open findings); the full baseline contained 48 open findings before reviewed false-positive dispositions. Fresh post-remediation analysis is required before reporting a final count.
+- Additional fixes restrict login/OAuth return destinations to fixed app pages, suppress import/initialization exception disclosure, and remove raw Strava sync results and schema-column names from logs. Production Strava state cookies now use the __Host- prefix, Secure, HttpOnly and root path. Existing in-progress Strava linking may need restarting once after deployment.

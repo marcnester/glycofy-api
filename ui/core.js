@@ -29,15 +29,25 @@
   // ----- return helpers (DEFAULT → /ui/index.html) -----
   const DEFAULT_RETURN = "/ui/index.html";
   function safePath(p) {
-    try { if (p && p.startsWith("/") && !p.startsWith("//")) return p; } catch {}
-    return DEFAULT_RETURN;
+    if (typeof p !== "string") return "/ui/index.html";
+    // Resolve only known application pages; never redirect to caller URLs.
+    switch (p.split("?")[0].split("#")[0]) {
+      case "/ui/index.html": return "/ui/index.html";
+      case "/ui/plan.html": return "/ui/plan.html";
+      case "/ui/profile.html": return "/ui/profile.html";
+      case "/ui/activities.html": return "/ui/activities.html";
+      case "/ui/grocery.html": return "/ui/grocery.html";
+      case "/ui/plan-week.html": return "/ui/plan-week.html";
+      case "/ui/operations.html": return "/ui/operations.html";
+      default: return "/ui/index.html";
+    }
   }
   function parseReturn(def) {
     try {
       const u = new URL(window.location.href);
       const r = u.searchParams.get("return");
-      return safePath(r) || (def || DEFAULT_RETURN);
-    } catch { return def || DEFAULT_RETURN; }
+      return safePath(r || def);
+    } catch { return safePath(def); }
   }
   function redirectToReturn(def) {
     const dest = parseReturn(def);

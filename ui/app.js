@@ -59,6 +59,21 @@
     return txt||null;
   }
 
+  function safePath(p) {
+    if (typeof p !== "string") return "/ui/index.html";
+    // Resolve only known application pages; never redirect to caller URLs.
+    switch (p.split("?")[0].split("#")[0]) {
+      case "/ui/index.html": return "/ui/index.html";
+      case "/ui/plan.html": return "/ui/plan.html";
+      case "/ui/profile.html": return "/ui/profile.html";
+      case "/ui/activities.html": return "/ui/activities.html";
+      case "/ui/grocery.html": return "/ui/grocery.html";
+      case "/ui/plan-week.html": return "/ui/plan-week.html";
+      case "/ui/operations.html": return "/ui/operations.html";
+      default: return "/ui/index.html";
+    }
+  }
+
   // ---------- login / logout ----------
   async function doLogin(email, password, returnTo){
     console.log('[glyco:login] submitting', { email: !!email, hasPassword: !!password });
@@ -75,9 +90,9 @@
     const data=await r.json();
     if(!data || data.ok !== true) throw new Error('Unable to establish session');
     // Normalize any /ui/plan.html → Home
-    let dest = returnTo || DEFAULT_RETURN;
+    let dest = safePath(returnTo);
     if (dest === '/ui/plan.html' || dest === '/ui/plan') dest = DEFAULT_RETURN;
-    console.log('[glyco:login] success → redirect', dest);
+
     location.replace(dest);
   }
 

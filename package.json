@@ -5,8 +5,8 @@
   "private": true,
   "main": "index.js",
   "scripts": {
-    "test": "npm audit --omit=dev --audit-level=high",
-    "security": "npm audit --omit=dev"
+    "test": "npm audit --audit-level=moderate",
+    "security": "npm audit --audit-level=moderate"
   },
   "repository": {
     "type": "git",
@@ -26,8 +26,5 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "jose": "^6.1.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.10"
   }
 }

@@ -21,6 +21,7 @@ from app.db import get_db
 from app.models import OAuthAccount, User
 from app.observability import record_security_event
 from app.rate_limit import AUTH_LIMITER, client_key
+from app.redirects import safe_return_path
 from app.routers.auth import COOKIE_ACCESS, _cookie_kwargs, _create_access_token, hash_password
 from app.services.user_sessions import create_user_session
 
@@ -143,10 +144,7 @@ def _units_from_locale(locale: str | None) -> str | None:
 
 
 def _safe_return_path(val: str | None) -> str:
-    """Only allow same-origin /ui paths; default to /ui/index.html."""
-    if isinstance(val, str) and val.startswith("/") and not val.startswith("//"):
-        return val
-    return DEFAULT_RETURN_PATH
+    return safe_return_path(val, DEFAULT_RETURN_PATH)
 
 
 def _derive_full_name(profile: dict, email: str, existing_display: str | None) -> str | None:

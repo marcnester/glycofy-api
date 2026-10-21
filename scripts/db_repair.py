@@ -185,7 +185,7 @@ def ensure_oauth_accounts(conn):
         for col, decl in REQUIRED_OAUTH_SOFT.items():
             if col not in cols:
                 alter_add_column(cur, "oauth_accounts", col, decl)
-                print(f"✔ added column oauth_accounts.{col}")
+                print("✔ added missing OAuth schema column")
         # Backfill timestamps if present but NULL
         try:
             cur.execute("UPDATE oauth_accounts SET created_at=CURRENT_TIMESTAMP WHERE created_at IS NULL;")

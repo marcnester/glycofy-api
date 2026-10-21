@@ -30,3 +30,11 @@ jobs:
       - uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
         with:
           category: /language:${{ matrix.language }}
+      - name: Block unresolved high and critical code findings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ANALYZED_REF: ${{ github.ref }}
+        run: |
+          gh api --method GET --paginate --slurp "repos/$GH_REPO/code-scanning/alerts" -f state=open -f ref="$ANALYZED_REF" > "$RUNNER_TEMP/code-alerts.json"
+          python scripts/check_code_scanning.py "$RUNNER_TEMP/code-alerts.json"

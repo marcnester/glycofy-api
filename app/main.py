@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
@@ -322,7 +322,7 @@ else:
 
     @app.get("/dashboard/today", include_in_schema=False)
     def _dashboard_not_available():
-        return {"error": "dashboard router not loaded", "detail": DASHBOARD_IMPORT_ERROR}
+        raise HTTPException(status_code=503, detail="Dashboard temporarily unavailable")
 
 
 # --- DEV-only: recipes import endpoint ---

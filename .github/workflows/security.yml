@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "41 8 * * 1"
 
 permissions:
   contents: read
@@ -43,7 +45,7 @@ jobs:
           alembic upgrade head
           test "$(alembic current 2>/dev/null | awk '{print $1}')" = "$(alembic heads 2>/dev/null | awk '{print $1}')"
       - run: pip-audit -r requirements.txt
-      - run: bandit -q -lll -r app -x tests
+      - run: bandit -q -ll -r app -x tests
 
   javascript:
     runs-on: ubuntu-latest
@@ -55,7 +57,7 @@ jobs:
           cache: npm
       - run: npm install --global npm@11
       - run: npm ci --ignore-scripts
-      - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit --audit-level=moderate
 
   secrets:
     runs-on: ubuntu-latest
@@ -76,6 +78,8 @@ jobs:
         run: docker build --tag glycofy:${{ github.sha }} .
       - name: Verify the image runs as the unprivileged app user
         run: test "$(docker image inspect glycofy:${{ github.sha }} --format '{{.Config.User}}')" = "glycofy"
+      - name: Verify private build inputs are absent from the runtime image
+        run: docker run --rm --entrypoint python glycofy:${{ github.sha }} -c "from pathlib import Path; assert not any(Path(p).exists() for p in ['/app/.git', '/app/.env', '/app/node_modules', '/app/glycofy.db', '/app/app.db'])"
       - name: Generate the production image SBOM
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
