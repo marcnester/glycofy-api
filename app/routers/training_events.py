@@ -37,7 +37,7 @@ class TrainingEventCreate(BaseModel):
     workout_date: date
     start_time: datetime | None = None
     sport: str = Field(min_length=1, max_length=32)
-    duration_min: int = Field(ge=10, le=1440)
+    duration_min: int = Field(ge=1, le=1440)
     intensity: Literal["easy", "moderate", "hard", "race"]
     distance_km: float | None = Field(default=None, ge=0, le=1000)
     priority: Literal["normal", "key"] = "normal"
@@ -48,7 +48,7 @@ class TrainingEventUpdate(BaseModel):
     workout_date: date | None = None
     start_time: datetime | None = None
     sport: str | None = Field(default=None, min_length=1, max_length=32)
-    duration_min: int | None = Field(default=None, ge=10, le=1440)
+    duration_min: int | None = Field(default=None, ge=1, le=1440)
     intensity: Literal["easy", "moderate", "hard", "race"] | None = None
     distance_km: float | None = Field(default=None, ge=0, le=1000)
     priority: Literal["normal", "key"] | None = None
@@ -174,8 +174,8 @@ def _parse_trainingpeaks_csv(contents: bytes, today: date | None = None) -> tupl
                 skipped_past += 1
                 continue
             duration_min = _csv_duration_minutes(row)
-            if not 10 <= duration_min <= 1440:
-                raise ValueError("duration must be 10–1440 minutes")
+            if not 1 <= duration_min <= 1440:
+                raise ValueError("duration must be 1–1440 minutes")
             sport = _first(row, "WorkoutType", "ActivityType", "Sport", "Type") or "Other"
             sport = {"bike": "Ride", "biking": "Ride", "cycling": "Ride"}.get(sport.lower(), sport.title())[:32]
             title = _first(row, "WorkoutTitle", "Title", "WorkoutName", "Name") or f"{sport} workout"
@@ -363,7 +363,7 @@ async def import_trainingpeaks_csv(
         {
             **row,
             "workout_date": row["workout_date"].isoformat(),
-            "start_time": f'{row["start_time"].isoformat()}Z' if row["start_time"] else None,
+            "start_time": f"{row['start_time'].isoformat()}Z" if row["start_time"] else None,
         }
         for row in list(unique_rows.values())[:100]
     ]

@@ -85,7 +85,7 @@ def test_training_event_rejects_invalid_duration_and_range():
             json={
                 "workout_date": "2026-09-05",
                 "sport": "Run",
-                "duration_min": 2,
+                "duration_min": 0,
                 "intensity": "hard",
             },
         )
@@ -122,8 +122,8 @@ def test_trainingpeaks_csv_preview_and_idempotent_import():
 
         listed = client.get("/v1/training-events?from=2099-09-10&to=2099-09-11").json()["items"]
         assert {item["source"] for item in listed} == {"trainingpeaks_csv"}
-        assert client.patch(f'/v1/training-events/{listed[0]["id"]}', json={"duration_min": 30}).status_code == 409
-        assert client.delete(f'/v1/training-events/{listed[0]["id"]}').status_code == 204
+        assert client.patch(f"/v1/training-events/{listed[0]['id']}", json={"duration_min": 30}).status_code == 409
+        assert client.delete(f"/v1/training-events/{listed[0]['id']}").status_code == 204
     app.dependency_overrides.clear()
 
 
@@ -206,4 +206,23 @@ def test_completed_strava_activity_is_removed_from_upcoming_and_context():
         assert context.status_code == 200
         assert context.json()["upcoming_planned"] == 0
         assert context.json()["completed_plan_matches"] == 1
+    app.dependency_overrides.clear()
+
+
+def test_manual_duration_accepts_exact_minutes_and_short_sessions():
+    with _client() as client:
+        client.post("/auth/signup", json={"email": "minutes@example.com", "password": "a-secure-password-123"})
+        created = client.post(
+            "/v1/training-events",
+            json={"workout_date": "2026-10-26", "sport": "Run", "duration_min": 36, "intensity": "easy"},
+        )
+        assert created.status_code == 201
+        assert created.json()["duration_min"] == 36
+        event_id = created.json()["id"]
+        for minutes in (1, 7, 37, 1440):
+            changed = client.patch(f"/v1/training-events/{event_id}", json={"duration_min": minutes})
+            assert changed.status_code == 200
+            assert changed.json()["duration_min"] == minutes
+        for minutes in (0, -1, 1441, 36.5):
+            assert client.patch(f"/v1/training-events/{event_id}", json={"duration_min": minutes}).status_code == 422
     app.dependency_overrides.clear()
