@@ -243,3 +243,21 @@ def test_tour_dismissal_creates_preferences(beta_app):
     client, _ = beta_app
     assert client.put("/v1/beta/welcome-tour").status_code == 200
     assert client.get("/v1/beta/config").json()["welcome_tour_dismissed"] is True
+
+
+def test_tour_dismissal_reads_all_legacy_preference_rows(beta_app):
+    client, engine = beta_app
+    from app.models import UserPreference
+
+    with Session(engine) as db:
+        user = db.query(User).filter_by(email="beta@example.com").one()
+        db.add_all(
+            [
+                UserPreference(user_id=user.id, settings={"unrelated": "first"}),
+                UserPreference(user_id=user.id, settings={"welcome_tour_v1_dismissed": True}),
+            ]
+        )
+        db.commit()
+    response = client.get("/v1/beta/config")
+    assert response.json()["welcome_tour_dismissed"] is True
+    assert response.headers["cache-control"] == "no-store"
