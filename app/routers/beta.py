@@ -91,13 +91,15 @@ class FeedbackIn(ContextIn):
 
 @router.get("/config")
 def beta_config(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    pref = db.query(UserPreference).filter(UserPreference.user_id == user.id).first()
+    # Legacy accounts may have multiple preference rows. A saved dismissal in
+    # any owner-scoped row must win regardless of database retrieval order.
+    prefs = db.query(UserPreference).filter(UserPreference.user_id == user.id).all()
     enabled = _feature_flags()
     return {
         "feedback_enabled": settings.BETA_FEEDBACK_ENABLED and "beta_feedback" in enabled,
         "analytics_enabled": settings.BETA_ANALYTICS_ENABLED and "beta_analytics" in enabled,
         "flags": sorted(enabled),
-        "welcome_tour_dismissed": bool(pref and (pref.settings or {}).get("welcome_tour_v1_dismissed")),
+        "welcome_tour_dismissed": any((pref.settings or {}).get("welcome_tour_v1_dismissed") is True for pref in prefs),
     }
 
 

@@ -99,7 +99,8 @@
 
   function buildWelcomeTour(dismissed) {
     if (!/^\/ui\/(index|plan|profile|activities|grocery|plan-week)\.html$/.test(pagePath)) return;
-    if (dismissed) return;
+    // Only show on an explicit fresh account-level response, never an old config.
+    if (dismissed !== false) return;
     const steps = [
       {eyebrow:"Welcome to Glycofy", title:"Fuel the way you train", copy:"Glycofy combines your athlete profile, training context, and food preferences to build practical meal plans for performance."},
       {eyebrow:"1 · Training", title:"Give every plan context", copy:"Connect Strava, import a TrainingPeaks CSV, or add upcoming sessions. More training context means more precise fueling and recovery guidance."},
@@ -159,7 +160,7 @@
     dialog.showModal();
   }
 
-  originalFetch("/v1/beta/config", {credentials:"include"}).then(async response => {
+  originalFetch("/v1/beta/config", {credentials:"include", cache:"no-store"}).then(async response => {
     if (!response.ok) return;
     const config = await response.json();
     analyticsEnabled = config.analytics_enabled;

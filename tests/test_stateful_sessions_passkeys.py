@@ -128,6 +128,8 @@ def test_passkey_registration_login_and_replay_protection(client_and_engine, mon
             credential_backed_up=True,
         ),
     )
+    assert client.put("/v1/beta/welcome-tour").status_code == 200
+    assert client.post("/auth/logout").status_code == 200
     client.cookies.clear()
     auth_options = client.post("/auth/passkeys/login/options")
     authenticated = client.post(
@@ -140,6 +142,7 @@ def test_passkey_registration_login_and_replay_protection(client_and_engine, mon
     assert authenticated.status_code == 200
     assert client.get("/users/me").status_code == 200
     assert client.get("/auth/sessions").json()["sessions"][0]["auth_method"] == "passkey"
+    assert client.get("/v1/beta/config").json()["welcome_tour_dismissed"] is True
 
 
 def test_failed_passkey_verification_still_consumes_challenge(client_and_engine, monkeypatch):
