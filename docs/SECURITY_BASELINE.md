@@ -97,3 +97,14 @@ Changes to these limits require tests for minimum, maximum, malformed, duplicate
 Privacy-safe logging now excludes raw diet/exclusion values, training metrics, and provider error messages from planning/preference events. Exception formatting preserves stack locations without exception messages or source lines. The legacy weekly compatibility endpoint no longer derives an outbound host from requests or forwards authentication cookies; it invokes owner-scoped planning internally, allowlists engines, bounds dates, rate-limits calls, and returns fixed failure codes.
 
 OAuth token key rotation now has dual-key reads, primary-only writes, a validation-only default, and an atomic rewrite command. Synthetic rehearsals verify dry-run behavior, old-key reads, new-key writes, and rollback of the entire rewrite on corrupt credentials. This closes the missing implementation/rehearsal portion of the rotation gap; a production-restore rehearsal remains operational evidence to obtain.
+
+
+## Complete container vulnerability inventory
+
+The security workflow retains a 30-day JSON inventory named
+`container-vulnerabilities-<commit>` for each successfully built production image.
+It includes all severities and findings without an available fix. The separate
+release gate continues to reject fixable high/critical vulnerabilities and secrets;
+the inventory is evidence for triage, not a clean-bill-of-health gate. Scanner or
+artifact failures remain visible failures rather than silently passing. Review the
+inventory during weekly maintenance, prioritizing exposure and available updates.
