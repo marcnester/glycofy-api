@@ -81,6 +81,27 @@ jobs:
         run: test "$(docker image inspect glycofy:${{ github.sha }} --format '{{.Config.User}}')" = "glycofy"
       - name: Verify private build inputs are absent from the runtime image
         run: docker run --rm --entrypoint python glycofy:${{ github.sha }} -c "from pathlib import Path; assert not any(Path(p).exists() for p in ['/app/.git', '/app/.env', '/app/node_modules', '/app/glycofy.db', '/app/app.db'])"
+      - name: Smoke-test native libraries in the production image
+        run: |
+          docker run --rm -i --entrypoint python glycofy:${{ github.sha }} - <<'PYTHON'
+          import ssl
+          import sqlite3
+          import bcrypt
+          import psycopg
+          from cryptography.fernet import Fernet
+          from app.main import app
+          assert app is not None
+          assert ssl.create_default_context().get_ca_certs()
+          assert psycopg.pq.version() > 0
+          with sqlite3.connect(":memory:") as db:
+              assert db.execute("SELECT 36").fetchone() == (36,)
+          key = Fernet.generate_key()
+          cipher = Fernet(key)
+          assert cipher.decrypt(cipher.encrypt(b"synthetic-smoke-test")) == b"synthetic-smoke-test"
+          password = b"synthetic-smoke-test"
+          assert bcrypt.checkpw(password, bcrypt.hashpw(password, bcrypt.gensalt()))
+          print("Native library and application import smoke checks passed")
+          PYTHON
       - name: Generate the production image SBOM
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
