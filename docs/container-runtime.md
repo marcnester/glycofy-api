@@ -38,3 +38,34 @@ Do not rebuild a moving base tag as a rollback substitute.
 Future Python native extensions must be included by the ELF dependency collector;
 non-ELF data/dlopen dependencies need explicit inclusion plus runtime checks.
 Rebuild when the pinned base or package updates change and retain full scan counts.
+
+## Build-once release artifact
+
+For an approved release candidate, manually dispatch **Security and tests** on
+that exact candidate branch with `publish_runtime=true`. The container job runs
+its native-library, PostgreSQL, authentication and vulnerability checks first,
+then saves the tested image and its checksum. A separate job, after all four
+required jobs pass, loads that saved image and publishes it to GHCR without a
+second build. Package-write permission is confined to that manual publication
+job; PR builds retain read-only permissions.
+
+The `runtime-image-release-<commit>` artifact records the registry reference as
+`ghcr.io/marcnester/glycofy-api@sha256:...`, the local image ID, and the tested
+archive checksum. Deploy that digest to staging, finish all integration and
+production-mode edge validation, then start the observation window. Any code,
+image or material configuration change resets that window. Do not promote the
+older Git-built staging deployment by rebuilding its commit.
+
+Production source changes remain a release action: Render's Dashboard source
+editor automatically deploys the new source. Do not edit production's source,
+merge a change that triggers its automatic deployment, or move the public
+hostname until the release gates pass. Update the Blueprint to match the
+approved digest-backed deployment as part of that gated promotion. A private
+registry image requires a Render pull credential; a public image is suitable
+only after the tested image has passed the secret/private-input checks.
+
+The production-mode WebAuthn configuration is bound to `PUBLIC_BASE_URL`:
+`WEBAUTHN_RP_ID` must equal its hostname, and `WEBAUTHN_EXPECTED_ORIGIN` must equal
+its HTTPS origin. This permits a protected staging hostname to run the same
+production security checks. Cloudflare origin authentication, secure cookies,
+PostgreSQL, and all other production requirements remain mandatory.

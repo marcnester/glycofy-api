@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from urllib.parse import urlsplit
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -229,10 +230,34 @@ class Settings(BaseSettings):
             errors.append("PASSWORD_BREACH_CHECK_ENABLED must be true")
         if not self.REQUIRE_STATEFUL_SESSIONS:
             errors.append("REQUIRE_STATEFUL_SESSIONS must be true")
-        if self.WEBAUTHN_RP_ID != "app.glycofy.ai":
-            errors.append("WEBAUTHN_RP_ID must be app.glycofy.ai")
-        if self.WEBAUTHN_EXPECTED_ORIGIN != "https://app.glycofy.ai":
-            errors.append("WEBAUTHN_EXPECTED_ORIGIN must be https://app.glycofy.ai")
+        # The same hardened image must run on the isolated staging hostname.
+        # Bind passkeys to the configured public origin, never a separate
+        # hardcoded production domain or an arbitrary RP parent domain.
+        try:
+            public = urlsplit(self.PUBLIC_BASE_URL or "")
+            public_port = public.port
+            valid_public_origin = (
+                public.scheme == "https"
+                and bool(public.hostname)
+                and public.username is None
+                and public.password is None
+                and public.path in {"", "/"}
+                and not public.query
+                and not public.fragment
+            )
+        except ValueError:
+            valid_public_origin = False
+            public_port = None
+        if not valid_public_origin:
+            errors.append("PUBLIC_BASE_URL must be a single HTTPS origin without credentials, query or path")
+        else:
+            expected_origin = f"https://{public.hostname}"
+            if public_port is not None and public_port != 443:
+                expected_origin += f":{public_port}"
+            if public.hostname != self.WEBAUTHN_RP_ID:
+                errors.append("WEBAUTHN_RP_ID must match the PUBLIC_BASE_URL hostname")
+            if expected_origin != self.WEBAUTHN_EXPECTED_ORIGIN:
+                errors.append("WEBAUTHN_EXPECTED_ORIGIN must match the PUBLIC_BASE_URL origin")
         if self.WEB_PROCESS_COUNT > 1 and not (self.SHARED_JOB_QUEUE_URL and self.SHARED_RATE_LIMIT_URL):
             errors.append("multiple web processes require shared job queue and rate-limit backends")
         if not self.OAUTH_TOKEN_ENCRYPTION_KEY:

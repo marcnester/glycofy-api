@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish_runtime:
+        description: Publish the exact validated image to GHCR for staging and later digest promotion
+        type: boolean
+        default: false
   schedule:
     - cron: "41 8 * * 1"
 
@@ -88,7 +93,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build the production image
         id: image_build
-        run: docker build --tag glycofy:${{ github.sha }} .
+        run: docker build --label org.opencontainers.image.source=https://github.com/${{ github.repository }} --label org.opencontainers.image.revision=${{ github.sha }} --tag glycofy:${{ github.sha }} .
       - name: Verify the image runs as the unprivileged app user
         run: test "$(docker image inspect glycofy:${{ github.sha }} --format '{{.Config.User}}')" = "65532:65532"
       - name: Verify private build inputs are absent from the runtime image
@@ -219,5 +224,67 @@ jobs:
         with:
           name: container-vulnerabilities-${{ github.sha }}
           path: container-vulnerabilities.json
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Retain the exact tested runtime image
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_runtime }}
+        run: |
+          docker save glycofy:${{ github.sha }} --output runtime-image.tar
+          sha256sum runtime-image.tar > runtime-image.tar.sha256
+          docker image inspect glycofy:${{ github.sha }} --format '{{.Id}}' > runtime-image-id.txt
+      - name: Upload the tested image for publication without rebuilding
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_runtime }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tested-runtime-${{ github.sha }}
+          path: |
+            runtime-image.tar
+            runtime-image.tar.sha256
+            runtime-image-id.txt
+          retention-days: 7
+          if-no-files-found: error
+
+  publish_runtime:
+    # No package-write credential is available to the build/test jobs or PR events.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_runtime }}
+    needs: [python, javascript, secrets, container]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    steps:
+      - name: Download this run's exact tested image
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tested-runtime-${{ github.sha }}
+      - name: Verify, load and publish without a rebuild
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          sha256sum --check runtime-image.tar.sha256
+          docker load --input runtime-image.tar
+          test "$(docker image inspect "glycofy:$SOURCE_SHA" --format '{{.Id}}')" = "$(cat runtime-image-id.txt)"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
+          trap 'docker logout ghcr.io' EXIT
+          docker tag "glycofy:$SOURCE_SHA" "$IMAGE_REPOSITORY:$SOURCE_SHA"
+          docker push "$IMAGE_REPOSITORY:$SOURCE_SHA"
+          docker image inspect "$IMAGE_REPOSITORY:$SOURCE_SHA" --format '{{index .RepoDigests 0}}' > runtime-image-reference.txt
+          grep -Eq '^ghcr.io/[^[:space:]]+@sha256:[0-9a-f]{64}$' runtime-image-reference.txt
+          printf '## Tested runtime image\n\nSource commit: `%s`\n\n' "$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat runtime-image-reference.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain promotion evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: runtime-image-release-${{ github.sha }}
+          path: |
+            runtime-image-reference.txt
+            runtime-image-id.txt
+            runtime-image.tar.sha256
           retention-days: 30
           if-no-files-found: error
