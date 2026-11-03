@@ -4219,7 +4219,14 @@ def _batch_week_recommendations(
             "and individual portions. Do not assign leftovers, reserved dinner portions, batch-cooking dependencies, "
             "or meals carried over from earlier that day or another day. Reuse grocery ingredients, not prepared meals. "
             "A repeated breakfast or snack recipe must be prepared separately each time. "
-            "Keep lunches distinct from dinner and simple to assemble. All dietary and safety constraints still apply. "
+            "When shopping_context is supplied, preferentially reuse its actual ingredients and fresh routine recipes. "
+            "Follow its meal-specific directions. Shared ingredients do not mean identical dinners: vary the primary "
+            "protein and preparation, allowing a few additional protein products for dinner variety. "
+            "Keep lunches distinct from dinner and simple to assemble. Prefer substantial sandwiches, wraps or canned-bean "
+            "salads for lunches. Do not use dry rice, dry pasta or other long-cooking starches for breakfast, lunch or snacks. "
+            "If using ready-cooked grains, explicitly name a purchased ready-to-eat product; do not assume prior meal prep. "
+            "The preference for dry grain weights above applies to dinners only in Easy week. "
+            "All dietary and safety constraints still apply. "
         )
     payload = {
         "primary_diet": primary_diet,
@@ -4235,6 +4242,7 @@ def _batch_week_recommendations(
             for day in (week_context or days)
         ],
         "days": days,
+        "shopping_context": next((day["shopping_context"] for day in days if day.get("shopping_context")), {}),
         "forbidden_titles": forbidden_titles or [],
         "forbidden_variety_keys": forbidden_variety_keys or [],
     }
@@ -4572,7 +4580,7 @@ def _parallel_week_recommendations(
     athlete_feedback: dict[str, Any] | None = None,
 ) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
     """Generate bounded daily payloads concurrently while retaining full-week context."""
-    if len(days) <= 1 or any(day.get("planning_style") == "easy" for day in days):
+    if len(days) <= 1:
         return _batch_week_recommendations(
             client,
             days=days,
@@ -4582,6 +4590,97 @@ def _parallel_week_recommendations(
             athlete_feedback=athlete_feedback,
             week_context=days,
         )
+
+    if any(day.get("planning_style") == "easy" for day in days):
+        # Establish a real basket with one bounded day, then let the remaining
+        # daily calls share it. A 35-recipe response exceeds the request timeout.
+        lookup_budget = max(0, int(os.environ.get("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "12")))
+        anchor_lookups = min(2, lookup_budget)
+        anchor, anchor_meta = _batch_week_recommendations(
+            client,
+            days=[days[0]],
+            primary_diet=primary_diet,
+            diet_tags=diet_tags,
+            exclusions=exclusions,
+            athlete_feedback=athlete_feedback,
+            week_context=days,
+            synchronous_lookup_limit=anchor_lookups,
+        )
+        anchor_meals = list(anchor.get(days[0]["date"], {}).values())
+        basket = sorted(
+            {
+                str(ingredient.get("name") or "")
+                for item in anchor_meals
+                for ingredient in (item.ai_idea or {}).get("ingredients", [])
+                if isinstance(ingredient, dict) and ingredient.get("name")
+            }
+        )
+        routines = [
+            {"slot": item.slot, "recipe": item.ai_idea}
+            for item in anchor_meals
+            if item.slot == "breakfast" or item.slot.startswith("snack")
+        ]
+        context = {"preferred_ingredients": basket, "fresh_routine_recipes": routines}
+        dinner_directions = (
+            "Use the anchor protein with a different dinner preparation.",
+            "Prefer a permitted plant protein (such as tofu or legumes) instead of the anchor dinner protein.",
+            "Prefer a permitted different fish or protein from the anchor dinner; reuse the vegetables and starches.",
+            "Prefer a permitted bean, lentil or egg dinner; reuse vegetables and pantry staples.",
+        )
+        remaining = [
+            {
+                **day,
+                "shopping_context": {
+                    **context,
+                    "dinner_direction": dinner_directions[index % len(dinner_directions)],
+                    "lunch_direction": (
+                        "Fresh sandwich or wrap."
+                        if index % 2 == 0
+                        else "Fresh substantial bean or protein salad with bread; no saved meal portions."
+                    ),
+                    "breakfast_direction": (
+                        "An alternate quick breakfast using the same basket."
+                        if index % 2
+                        else "Use the anchor breakfast recipe, prepared fresh."
+                    ),
+                },
+            }
+            for index, day in enumerate(days[1:], start=1)
+        ]
+        weekly_limit = lookup_budget - anchor_lookups
+        per_day, extra_days = divmod(weekly_limit, len(remaining))
+
+        def generate_easy(index_day):
+            index, day = index_day
+            return _batch_week_recommendations(
+                client,
+                days=[day],
+                primary_diet=primary_diet,
+                diet_tags=diet_tags,
+                exclusions=exclusions,
+                athlete_feedback=athlete_feedback,
+                week_context=days,
+                synchronous_lookup_limit=per_day + int(index < extra_days),
+            )
+
+        metas = [anchor_meta]
+        try:
+            easy_workers = max(1, int(os.environ.get("WEEKLY_DAY_MAX_WORKERS", "3")))
+        except ValueError:
+            easy_workers = 3
+        with ThreadPoolExecutor(
+            max_workers=min(easy_workers, len(remaining)), thread_name_prefix="easy-week"
+        ) as executor:
+            for day_output, day_meta in executor.map(generate_easy, enumerate(remaining)):
+                anchor.update(day_output)
+                metas.append(day_meta)
+        return anchor, {
+            "mode": "shared_basket_days",
+            "day_generations": len(metas),
+            "accepted": sum(int(meta.get("accepted") or 0) for meta in metas),
+            "rejected": sum(int(meta.get("rejected") or 0) for meta in metas),
+            "shared_ingredient_count": len(basket),
+        }
 
     themed_days = [
         {

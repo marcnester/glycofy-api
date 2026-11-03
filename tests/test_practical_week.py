@@ -231,3 +231,33 @@ def test_grocery_aggregation_preserves_legacy_preferences_after_alias_merge():
 )
 def test_fresh_meals_reject_dependencies_without_rejecting_storage_advice(meal, expected):
     assert llm_recommend._requires_prepared_meal(meal) is expected
+
+
+def test_easy_generation_uses_bounded_calls_with_actual_shared_basket(monkeypatch):
+    calls = []
+    monkeypatch.setenv("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "0")
+    monkeypatch.setenv("WEEKLY_DAY_MAX_WORKERS", "1")
+    days = [{"date": f"2026-11-0{i}", "planning_style": "easy", "meals": []} for i in (2, 3, 4)]
+
+    def generate(_client, **kwargs):
+        calls.append(kwargs)
+        assert len(kwargs["days"]) == 1
+        assert kwargs["synchronous_lookup_limit"] == 0
+        day = kwargs["days"][0]
+        return {day["date"]: {"breakfast": _recommendation("breakfast", "Fresh Tofu Rice Toast")}}, {
+            "accepted": 1,
+            "rejected": 0,
+        }
+
+    monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", generate)
+    result, meta = llm_recommend._parallel_week_recommendations(
+        None, days=days, primary_diet="pescatarian", diet_tags=[], exclusions=[]
+    )
+    assert set(result) == {day["date"] for day in days}
+    assert meta["mode"] == "shared_basket_days"
+    assert len(calls) == 3
+    assert "shopping_context" not in calls[0]["days"][0]
+    for call in calls[1:]:
+        context = call["days"][0]["shopping_context"]
+        assert context["preferred_ingredients"] == ["cooked brown rice", "firm tofu"]
+        assert context["fresh_routine_recipes"][0]["recipe"]["title"] == "Fresh Tofu Rice Toast"
