@@ -138,6 +138,34 @@ jobs:
                   time.sleep(1)
           else:
               raise RuntimeError("Runtime PostgreSQL readiness did not pass")
+          import http.cookiejar
+          import json
+          from urllib.error import HTTPError
+          def browser():
+              return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+          def request(client, path, payload=None, method=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request("http://127.0.0.1:10000" + path, data=data, method=method,
+                                           headers={"Content-Type": "application/json"})
+              with client.open(req, timeout=10) as response:
+                  assert response.status == 200
+                  return json.load(response)
+          first, second = browser(), browser()
+          account = {"email": "runtime-smoke@example.com", "password": "runtime-only-session-passphrase-2026"}
+          assert request(first, "/auth/signup", account)["ok"]
+          assert request(second, "/auth/login", account)["ok"]
+          sessions = request(first, "/auth/sessions")["sessions"]
+          assert len(sessions) == 2
+          other = next(row for row in sessions if not row["current"])
+          request(first, f"/auth/sessions/{other['id']}", method="DELETE")
+          try:
+              request(second, "/users/me")
+          except HTTPError as exc:
+              assert exc.code == 401
+          else:
+              raise AssertionError("Revoked PostgreSQL session was accepted")
+          request(first, "/users/me")
+          print("Runtime signup, login, PostgreSQL sessions and revocation passed")
           PYTHON
       - name: Generate the production image SBOM
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
