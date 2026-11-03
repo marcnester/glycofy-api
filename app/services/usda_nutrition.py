@@ -309,7 +309,7 @@ def _plausible_nutrient_density(query: str, nutrients: dict[str, float]) -> bool
     carbs = nutrients["carbs_g"]
     fat = nutrients["fat_g"]
 
-    if "oil" in text:
+    if re.search(r"\boil\b", text):
         return 750 <= kcal <= 950 and fat >= 80 and protein <= 2 and carbs <= 2
     if "banana" in text:
         return 55 <= kcal <= 140 and 12 <= carbs <= 38
@@ -603,7 +603,7 @@ def verify_ingredients(
         # culinary modifiers. Both candidates are resolved up front in weekly
         # mode, so this fallback adds no request-path latency.
         normalized_name = name.lower()
-        if isinstance(match, USDANutritionError) and normalized_name != normalized_query:
+        if (match is None or isinstance(match, USDANutritionError)) and normalized_name != normalized_query:
             match = resolved_foods.get(normalized_name) if resolved_foods is not None else lookup_food(normalized_name)
         if isinstance(match, USDANutritionError):
             raise match
@@ -675,7 +675,7 @@ def fit_portions_to_targets(
     lower_factors: list[float] = []
     for index, ingredient in enumerate(ingredients):
         identity = " ".join(str(ingredient.get(field) or "").lower() for field in ("name", "usda_search_query"))
-        if any(token in identity for token in ("oil", "butter")):
+        if re.search(r"\b(?:oil|butter)\b", identity):
             cap_g = 30.0
         elif any(token in identity for token in ("honey", "syrup", "jam")):
             cap_g = 40.0

@@ -5,8 +5,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-PROMPT_VERSION = "meal-planner-2026-11-02-v15-varied-dinners"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-11-02-v21-food-sources"
+PROMPT_VERSION = "meal-planner-2026-11-03-v16-lunch-snack-rotation"
+QUALITY_POLICY_VERSION = "nutrition-safety-2026-11-03-v22-boiled-food-sources"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 SUPPORTED_DIETS = ("omnivore", "pescatarian", "vegetarian", "vegan")
@@ -172,6 +172,8 @@ DONENESS_MARKERS = {
 }
 NONFOOD_HAZARDS = {"bleach", "borax", "detergent", "dish soap", "rubbing alcohol"}
 PROTEIN_SOURCE_MARKERS = {
+    "cheese",
+    "hummus",
     "bean",
     "chickpea",
     "beef",
@@ -197,6 +199,11 @@ PROTEIN_SOURCE_MARKERS = {
     "whey",
 }
 CARB_SOURCE_MARKERS = {
+    "cracker",
+    "blueberries",
+    "strawberries",
+    "pear",
+    "orange",
     "apple",
     "bagel",
     "banana",
@@ -270,7 +277,20 @@ SMALL_AMOUNT_EXEMPTIONS = SEASONING_MARKERS | {
 
 def practical_minimum_grams(name: Any, query: Any = None) -> float:
     """Return a conservative minimum portion that remains useful to a cook."""
-    identity = _words(f"{name or ''} {query or ''}")
+    identities = [_words(name)]
+    if query:
+        identities.append(_words(query))
+    # USDA qualifiers such as "with salt" must not turn peanut butter into a
+    # seasoning. A secondary component (hummus prepared with tahini) must not
+    # lower the minimum implied by the ingredient's own food identity either.
+    minima = [
+        _food_minimum_grams(re.split(r"\b(?:with|without)\b", identity, maxsplit=1)[0].strip())
+        for identity in identities
+    ]
+    return max((minimum for minimum in minima if minimum is not None), default=5.0)
+
+
+def _food_minimum_grams(identity: str) -> float | None:
     if any(_contains(identity, marker) for marker in SMALL_AMOUNT_EXEMPTIONS):
         return 0.5
     if any(_contains(identity, marker) for marker in ("olive oil", "sesame oil", "cooking oil")):
@@ -340,7 +360,7 @@ def practical_minimum_grams(name: Any, query: Any = None) -> float:
         return 30.0
     if any(_contains(identity, marker) for marker in ("hummus", "lentil", "bean", "chickpea", "edamame")):
         return 30.0
-    return 5.0
+    return None
 
 
 @dataclass(frozen=True)

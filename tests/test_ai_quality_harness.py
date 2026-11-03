@@ -588,3 +588,19 @@ def test_measured_apple_and_hummus_are_recognized_macro_sources():
     # Recognition does not excuse fabricated macro totals.
     candidate["macros"]["carbs_g"] = 100
     assert "ingredient_macro_mismatch" in validate_meal(candidate, require_ingredient_nutrition=True).codes()
+
+
+@pytest.mark.parametrize(
+    "name,query,minimum",
+    [
+        ("peanut butter", "peanut butter smooth with salt", 8),
+        ("peanut butter with salt", "peanut butter smooth with salt", 8),
+        ("hummus", "hummus prepared chickpeas tahini", 30),
+        ("olive oil", "oil olive salad or cooking", 3),
+        ("salt", "salt table", 0.5),
+    ],
+)
+def test_food_portion_minimum_is_not_reduced_by_usda_qualifiers(name, query, minimum):
+    from app.services.meal_quality import practical_minimum_grams
+
+    assert practical_minimum_grams(name, query) == minimum

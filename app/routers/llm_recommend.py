@@ -2896,6 +2896,45 @@ def _ensure_dry_grains_are_cooked(
     return cleaned_steps, cook_time_min, prep_time_min + cook_time_min
 
 
+def _contains_tuna(meal: dict[str, Any]) -> bool:
+    return any(
+        re.search(r"\btuna\b", str(ingredient.get("name") or ""), re.IGNORECASE)
+        for ingredient in meal.get("ingredients", [])
+        if isinstance(ingredient, dict)
+    )
+
+
+def _easy_day_directions(index: int, primary_diet: str) -> dict[str, Any]:
+    lunches = [
+        "Fresh chickpea hummus vegetable wrap; no fish.",
+        "Fresh white bean cucumber tomato salad with bread; no fish.",
+        "Fresh tofu hummus vegetable pita; use purchased ready-to-eat tofu, no fish.",
+        "Fresh tuna vegetable sandwich; this is the week's only tuna meal.",
+        "Fresh chickpea tomato cucumber bread salad; no fish.",
+        "Fresh tofu peanut vegetable wrap; use purchased ready-to-eat tofu, no fish.",
+        "Fresh white bean hummus vegetable pita; no fish.",
+    ]
+    if primary_diet not in {"pescatarian", "omnivore"}:
+        lunches[3] = "Fresh white bean vegetable sandwich; no fish."
+    if primary_diet in {"pescatarian", "omnivore", "vegetarian"}:
+        lunches[1] = "Fresh egg salad sandwich with vegetables; use purchased hard-boiled eggs, no fish."
+        lunches[4] = "Whole-milk mozzarella tomato hummus pita with cucumber; no fish."
+    snacks = (
+        "Yogurt, fruit and nuts; no seafood. Use a permitted dairy-free yogurt for a vegan diet.",
+        "Fruit, peanut butter and whole-grain crackers; assembly only, no toaster or cooking; no seafood.",
+        "Hummus, raw vegetables and whole-grain crackers; no seafood.",
+        "Cottage cheese, fruit and whole-grain crackers; no seafood. For a vegan diet use ready-to-eat tofu instead.",
+        "Yogurt, fruit and granola; no seafood. Use a permitted dairy-free yogurt for a vegan diet.",
+        "Fruit, nuts and whole-grain crackers; no seafood.",
+    )
+    return {
+        "lunch_direction": lunches[index % len(lunches)],
+        "snack_direction": snacks[(index % 3) * 2],
+        "snack_2_direction": snacks[(index % 3) * 2 + 1],
+        "allow_tuna": index % 7 == 3 and primary_diet in {"pescatarian", "omnivore"},
+    }
+
+
 def _requires_prepared_meal(meal: dict[str, Any]) -> bool:
     """Fresh meal plans may share groceries, but cannot depend on saved meals."""
     names = " ".join(
@@ -4209,31 +4248,31 @@ def _batch_week_recommendations(
         )
         system += (
             " EASY WEEK POLICY: Build the whole week around a shared basket before choosing recipes. "
-            "Use at most two breakfast recipes and two recipes per snack slot, repeated with target-fitted portions. "
+            "Use two breakfast recipes and three recipes per snack slot, repeated with target-fitted portions. "
             "Breakfast must take at most 10 minutes total; fresh lunches at most 15 minutes; snacks at most 5 minutes. "
             "Favor yogurt, ready-to-eat foods, toast, sandwiches, and assembly meals for these slots. "
-            "Never disguise soaking, chilling or cooking as zero time. Reserve substantial cooking for dinner, "
+            "Never disguise soaking, chilling or cooking as zero time. Reserve substantial cooking for dinner. "
             "For breakfast prefer toast or ready-to-eat yogurt and fruit; do not require overnight oats or chilling. "
             "For dinner choose starches that cook within the full 45-minute budget, including preparation: "
             "white rice, couscous, pasta or small diced potatoes rather than long-cooking brown rice. "
-            "with up to 45 minutes total. Reuse the same produce, grain products and sauces throughout the week, "
+            "Dinner may take up to 45 minutes total. Reuse the same produce, grain products and sauces throughout the week, "
             "prefer a pantry item already used to a one-off condiment, and target 30–40 non-pantry shopping products. "
             "Plan every breakfast, lunch, dinner and snack as its own freshly prepared meal with complete instructions "
             "and individual portions. Do not assign leftovers, reserved dinner portions, batch-cooking dependencies, "
             "or meals carried over from earlier that day or another day. Reuse grocery ingredients, not prepared meals. "
             "A repeated breakfast or snack recipe must be prepared separately each time. "
             "When shopping_context is supplied, preferentially reuse its actual ingredients and fresh routine recipes. "
-            "Follow its meal-specific directions. Shared ingredients do not mean identical dinners: vary the primary "
+            "Follow its lunch, snack and dinner directions even when they add a few products. Vary dinner proteins and preparation. "
             "The assigned dinner_direction takes priority over reusing the anchor protein or starch. "
             "Reuse herbs and seasonings from the shared basket rather than introducing single-use herbs. "
             "Make USDA food identities specific: use wild caught Atlantic cod raw, russet potatoes raw with skin, "
-            "and firm tofu prepared with calcium sulfate when choosing those foods; name that product in the ingredients. "
-            "protein and preparation, allowing a few additional protein products for dinner variety. "
+            "and firm tofu prepared with calcium sulfate when choosing those foods; name that product in the ingredients. For purchased hard-boiled eggs use USDA query Egg whole cooked hard boiled; for mozzarella specify whole milk; for drinking water use USDA query Water tap drinking. "
+            "Allow a few additional protein products for meal variety. "
             "Keep lunches distinct from dinner and simple to assemble. Prefer substantial sandwiches, wraps or canned-bean "
             "salads for lunches. Do not use dry rice, dry pasta or other long-cooking starches for breakfast, lunch or snacks. "
             "If using ready-cooked grains, explicitly name a purchased ready-to-eat product; do not assume prior meal prep. "
             "The preference for dry grain weights above applies to dinners only in Easy week. "
-            "All dietary and safety constraints still apply. "
+            "Use tuna only for the single lunch whose shopping_context.allow_tuna is true; no tuna at breakfast, dinner or snacks. Do not replace tuna with another fish in every lunch: alternate legumes, eggs, tofu and cheese when permitted. Follow the assigned snack format, and keep the two snack occasions distinct. All dietary and safety constraints still apply. "
         )
     payload = {
         "primary_diet": primary_diet,
@@ -4297,6 +4336,7 @@ def _batch_week_recommendations(
 
     targets = {(day["date"], meal["slot"]): meal["target_macros"] for day in days for meal in day.get("meals", [])}
     valid_dates = {day["date"] for day in days}
+    shopping_contexts = {day["date"]: day.get("shopping_context", {}) for day in days}
     output: dict[str, dict[str, SlotRecommendation]] = {}
     week_titles: set[str] = {_meal_similarity_key(title) for title in (forbidden_titles or []) if title}
     rejected = 0
@@ -4331,11 +4371,11 @@ def _batch_week_recommendations(
             if isinstance(ingredient, dict)
             and str(ingredient.get("name") or "").strip().lower()
             != str(ingredient.get("usda_search_query") or ingredient.get("name") or "").strip().lower()
-            and isinstance(
+            and not isinstance(
                 resolved_usda.get(
                     str(ingredient.get("usda_search_query") or ingredient.get("name") or "").strip().lower()
                 ),
-                USDANutritionError,
+                FDCMatch,
             )
         ]
         fallback_usda = resolve_foods(
@@ -4448,6 +4488,10 @@ def _batch_week_recommendations(
             if easy_week:
                 budget = 45 if slot == "dinner" else 10 if slot == "breakfast" else 15 if slot == "lunch" else 5
                 invalid = invalid or total_time_min > budget or _requires_prepared_meal(quality_candidate)
+                if _contains_tuna(quality_candidate):
+                    invalid = (
+                        invalid or slot != "lunch" or not shopping_contexts.get(date_iso, {}).get("allow_tuna", False)
+                    )
             if not easy_week and slot in _DAY_UNIQUE_SLOTS:
                 invalid = invalid or not protein or not carb or protein in day_proteins or carb in day_carbs
             if invalid:
@@ -4599,6 +4643,8 @@ def _parallel_week_recommendations(
         )
 
     if any(day.get("planning_style") == "easy" for day in days):
+        for index, day in enumerate(days):
+            day["shopping_context"] = {**day.get("shopping_context", {}), **_easy_day_directions(index, primary_diet)}
         # Establish a real basket with one bounded day, then let the remaining
         # daily calls share it. A 35-recipe response exceeds the request timeout.
         lookup_budget = max(0, int(os.environ.get("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "12")))
@@ -4650,12 +4696,8 @@ def _parallel_week_recommendations(
                 **day,
                 "shopping_context": {
                     **context,
+                    **day["shopping_context"],
                     "dinner_direction": dinner_directions[(index - 1) % len(dinner_directions)],
-                    "lunch_direction": (
-                        "Fresh sandwich or wrap."
-                        if index % 2 == 0
-                        else "Fresh substantial bean or protein salad with bread; no saved meal portions."
-                    ),
                     "breakfast_direction": (
                         "An alternate quick breakfast using the same basket."
                         if index % 2
@@ -5073,12 +5115,25 @@ def recommend_weekly_apply(
 
         for scaled in adjusted_meals:
             slot = _normalize_slot(scaled.slot)
+            day_context = next((day.get("shopping_context", {}) for day in batch_days if day["date"] == date_iso), {})
+            tuna_allowed = slot == "lunch" and day_context.get("allow_tuna", False)
+            eligible_recovery_items = batch_items
+            if payload.planning_style == "easy" and not tuna_allowed:
+                eligible_recovery_items = {
+                    source_date: {
+                        source_slot: source
+                        for source_slot, source in slots.items()
+                        if not _contains_tuna(source.ai_idea or {})
+                    }
+                    for source_date, slots in batch_items.items()
+                }
             rec = batch_items.get(date_iso, {}).get(slot)
             if payload.planning_style == "easy" and (slot == "breakfast" or slot.startswith("snack")):
-                sources = finalized_days if len(finalized_days) >= 2 else {}
-                if len(finalized_days) >= 2:
-                    template_dates = list(finalized_days)[:2]
-                    template_date = template_dates[len(finalized_days) % 2]
+                routine_count = 2 if slot == "breakfast" else 3
+                sources = finalized_days if len(finalized_days) >= routine_count else {}
+                if len(finalized_days) >= routine_count:
+                    template_dates = list(finalized_days)[:routine_count]
+                    template_date = template_dates[len(finalized_days) % routine_count]
                     sources = {template_date: finalized_days[template_date]}
                 max_minutes = 10 if slot == "breakfast" else 15 if slot == "lunch" else 5
                 repeated = _reuse_verified_week_meal(
@@ -5138,6 +5193,11 @@ def recommend_weekly_apply(
                     prefer_fast_catalog=True,
                     athlete_feedback=athlete_feedback,
                 )
+                if payload.planning_style == "easy" and not tuna_allowed:
+                    catalog_candidate = rec.ai_idea or {"ingredients": getattr(rec.recipe, "ingredients", [])}
+                    if _contains_tuna(catalog_candidate):
+                        rec.recipe = None
+                        rec.ai_idea = None
                 if rec.recipe or rec.ai_idea:
                     rec.meta = {
                         **(rec.meta or {}),
@@ -5153,7 +5213,7 @@ def recommend_weekly_apply(
                     # must not discard six otherwise-safe days.
                     rec = (
                         _reuse_verified_week_meal(
-                            batch_items,
+                            eligible_recovery_items,
                             target_date=date_iso,
                             target=scaled,
                             primary_diet=primary_diet,
@@ -5302,6 +5362,20 @@ def recommend_weekly_apply(
                     "ingredients": getattr(item.recipe, "ingredients", []),
                     "instructions": getattr(item.recipe, "instructions", ""),
                 }
+                day_context = next(
+                    (day.get("shopping_context", {}) for day in batch_days if day["date"] == date_iso), {}
+                )
+                if _contains_tuna(fresh_candidate) and (slot != "lunch" or not day_context.get("allow_tuna", False)):
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=422,
+                        detail={
+                            "message": "Easy week tuna rotation limit exceeded",
+                            "date": date_iso,
+                            "slot": slot,
+                            "reason": "tuna_rotation_limit",
+                        },
+                    )
                 if _requires_prepared_meal(fresh_candidate):
                     db.rollback()
                     raise HTTPException(

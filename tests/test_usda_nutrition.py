@@ -564,3 +564,36 @@ def test_uncooked_grain_density_is_not_mistaken_for_cooked():
     assert not usda_nutrition._plausible_nutrient_density("couscous dry uncooked", cooked)
     assert usda_nutrition._plausible_nutrient_density("couscous cooked", cooked)
     assert not usda_nutrition._plausible_nutrient_density("couscous cooked", dry)
+
+
+def test_boiled_food_is_not_mistaken_for_oil():
+    egg = {"kcal": 155, "protein_g": 12.6, "carbs_g": 1.1, "fat_g": 10.6}
+    assert usda_nutrition._plausible_nutrient_density("egg whole cooked hard boiled", egg)
+    assert not usda_nutrition._plausible_nutrient_density("olive oil", egg)
+    ingredients = [
+        {
+            "name": "purchased hard-boiled eggs",
+            "usda_search_query": "egg whole cooked hard boiled",
+            "amount": 150,
+            "amount_g": 150,
+            "unit": "g",
+            "nutrition": {k: v * 1.5 for k, v in egg.items()},
+        }
+    ]
+    fitted = fit_portions_to_targets(ingredients, ingredients[0]["nutrition"])
+    assert fitted[0]["amount_g"] >= 140
+
+
+def test_cached_concise_food_identity_can_verify_when_live_lookup_budget_is_zero():
+    match = FDCMatch(
+        fdc_id=1,
+        description="Spinach, baby",
+        data_type="Foundation",
+        nutrients_per_100g={"kcal": 23, "protein_g": 2.9, "carbs_g": 3.6, "fat_g": 0.4},
+    )
+    verified = verify_ingredients(
+        [{"name": "spinach", "usda_search_query": "spinach raw", "amount": 40, "amount_g": 40, "unit": "g"}],
+        resolved_foods={"spinach": match},
+    )
+    assert verified[0]["food_ref_id"] == "1"
+    assert verified[0]["nutrition"]["kcal"] == 9.2

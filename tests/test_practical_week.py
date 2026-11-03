@@ -15,6 +15,9 @@ from app.routers import llm_recommend, plans
     "alias,canonical",
     [
         ("Whole egg", "egg"),
+        ("eggs whole raw", "egg"),
+        ("russet potato with skin", "russet potatoes raw with skin"),
+        ("mozzarella cheese whole milk", "whole milk mozzarella"),
         ("dry couscous", "couscous dry"),
         ("couscous", "couscous dry"),
         ("canned tuna in water, drained", "canned tuna in water"),
@@ -150,6 +153,12 @@ def test_easy_week_plans_separate_simple_lunches_and_repeats_fresh_breakfasts(mo
     }
     if routine_collision:
         generated[days[2]]["snack"].ai_idea["title"] = generated[days[0]]["breakfast"].ai_idea["title"]
+        # Catalog recovery must not reintroduce tuna into a missing snack.
+        tuna_candidate = _recommendation("snack", "Canned Tuna Snack")
+        tuna_candidate.ai_idea["ingredients"][0]["name"] = "canned tuna in water"
+        monkeypatch.setattr(
+            llm_recommend, "_recommend_for_single_meal", lambda **_kwargs: tuna_candidate.model_copy(deep=True)
+        )
     monkeypatch.setattr(llm_recommend, "_parallel_week_recommendations", lambda *_a, **_k: (generated, {}))
     monkeypatch.setattr(llm_recommend, "_get_openai_client", lambda: None)
     monkeypatch.setattr(llm_recommend._RATE, "check_and_add", lambda *_args: None)
@@ -178,6 +187,12 @@ def test_easy_week_plans_separate_simple_lunches_and_repeats_fresh_breakfasts(mo
         }
         assert breakfasts[days[2]]["ai_idea"]["title"] == breakfasts[days[0]]["ai_idea"]["title"]
         assert breakfasts[days[3]]["ai_idea"]["title"] == breakfasts[days[1]]["ai_idea"]["title"]
+        if not routine_collision:
+            snacks = {
+                row["date"]: next(item for item in row["items"] if item["slot"] == "snack") for row in result["days"]
+            }
+            assert snacks[days[3]]["ai_idea"]["title"] == snacks[days[0]]["ai_idea"]["title"]
+            assert snacks[days[2]]["ai_idea"]["title"] != snacks[days[0]]["ai_idea"]["title"]
         for i, day in enumerate(days):
             plan = db.query(Plan).filter(Plan.user_id == user.id, Plan.date == date.fromisoformat(day)).one()
             assert plans._aggregate_totals(plan.meals)["kcal"] == pytest.approx(426 * 4, abs=1)
@@ -269,7 +284,7 @@ def test_easy_generation_uses_bounded_calls_with_actual_shared_basket(monkeypatc
     assert set(result) == {day["date"] for day in days}
     assert meta["mode"] == "shared_basket_days"
     assert len(calls) == 3
-    assert "shopping_context" not in calls[0]["days"][0]
+    assert calls[0]["days"][0]["shopping_context"]["allow_tuna"] is False
     for call in calls[1:]:
         context = call["days"][0]["shopping_context"]
         assert context["preferred_ingredients"] == ["cooked brown rice", "firm tofu"]
@@ -278,3 +293,31 @@ def test_easy_generation_uses_bounded_calls_with_actual_shared_basket(monkeypatc
     assert "tofu" in days[1]["shopping_context"]["dinner_direction"]
     assert "cod" in days[2]["shopping_context"]["dinner_direction"]
     assert days[1]["shopping_context"] == calls[1]["days"][0]["shopping_context"]
+
+
+def test_easy_week_assigns_one_tuna_lunch_and_six_snack_formats():
+    days = [llm_recommend._easy_day_directions(i, "pescatarian") for i in range(7)]
+    assert sum(day["allow_tuna"] for day in days) == 1
+    assert len({day["lunch_direction"] for day in days}) == 7
+    assert len({day[key] for day in days for key in ("snack_direction", "snack_2_direction")}) == 6
+    assert all("no seafood" in day[key] for day in days for key in ("snack_direction", "snack_2_direction"))
+    assert not any(llm_recommend._easy_day_directions(i, "vegan")["allow_tuna"] for i in range(7))
+    assert llm_recommend._contains_tuna({"ingredients": [{"name": "canned tuna in water"}]})
+    assert not llm_recommend._contains_tuna({"ingredients": [{"name": "white beans"}]})
+
+
+def test_ready_to_eat_eggs_keep_their_own_count_and_product_identity():
+    key = plans._grocery_name("hard-boiled eggs")[0]
+    assert key != plans._grocery_name("raw eggs")[0]
+    assert plans._format_grocery_measurements(key, {"mass_g": 150}, "US")["quantity"] == 3
+    assert (
+        plans._grocery_name("purchased ready-to-eat firm tofu")[0] == plans._grocery_name("ready-to-eat firm tofu")[0]
+    )
+    assert plans._grocery_name("ready-to-eat firm tofu")[0] != plans._grocery_name("firm tofu")[0]
+
+
+@pytest.mark.parametrize("name", ["russet potato with skin", "tofu firm prepared with calcium sulfate ready to eat"])
+def test_food_labels_preserve_their_identity_and_aisle(name):
+    key, label = plans._grocery_name(name)
+    assert plans._grocery_name(label)[0] == key
+    assert plans._grocery_category(label) != "Other"

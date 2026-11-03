@@ -1464,6 +1464,21 @@ _GROCERY_CATEGORY_KEYWORDS = {
 }
 
 _GROCERY_NAME_ALIASES = {
+    "firm tofu ready to eat calcium set": "ready to eat firm tofu prepared with calcium sulfate",
+    "russet potatoes with skin": "russet potatoes raw with skin",
+    "russet potato with skin": "russet potatoes raw with skin",
+    "eggs whole raw": "egg",
+    "eggs whole": "egg",
+    "mozzarella cheese whole milk": "whole milk mozzarella",
+    "tofu firm prepared with calcium sulfate ready to eat": "ready to eat firm tofu prepared with calcium sulfate",
+    "egg whole cooked hard boiled": "hard boiled egg",
+    "greek yogurt plain nonfat": "plain nonfat greek yogurt",
+    "cottage cheese low fat 2 milkfat": "cottage cheese 2 milkfat",
+    "tuna canned in water drained": "canned tuna in water",
+    "firm tofu prepared with calcium sulfate ready to eat": "ready to eat firm tofu prepared with calcium sulfate",
+    "purchased ready to eat firm tofu": "ready to eat firm tofu",
+    "russet potatoes": "russet potatoes raw with skin",
+    "hard boiled eggs": "hard boiled egg",
     "small potatoes": "potato",
     "dry couscous": "couscous dry",
     "couscous": "couscous dry",
@@ -1496,6 +1511,10 @@ _GROCERY_NAME_ALIASES = {
 }
 
 _GROCERY_DISPLAY_NAMES = {
+    "whole milk mozzarella": "Whole-milk mozzarella",
+    "russet potatoes raw with skin": "Russet potatoes (with skin)",
+    "ready to eat firm tofu prepared with calcium sulfate": "Firm tofu (ready to eat, calcium-set)",
+    "hard boiled egg": "Hard-boiled eggs (ready to eat)",
     "egg": "Eggs",
     "mixed berries": "Mixed berries",
     "milk 2 milkfat": "Milk (2% fat)",
@@ -1649,8 +1668,8 @@ def _round_grocery(value: float) -> float:
 def _format_grocery_measurements(name_key: str, measurements: dict[str, float], units: str | None) -> dict[str, Any]:
     values = dict(measurements)
     # Eggs are bought by count even when every recipe uses edible gram weights.
-    if name_key == "egg" and "mass_g" in values:
-        values["count"] = values.get("count", 0) + values.pop("mass_g") / _PIECE_GRAMS[name_key]
+    if name_key in {"egg", "hard boiled egg"} and "mass_g" in values:
+        values["count"] = values.get("count", 0) + values.pop("mass_g") / _PIECE_GRAMS["egg"]
     if "mass_g" in values and "count" in values and name_key in _PIECE_GRAMS:
         values["count"] += values.pop("mass_g") / _PIECE_GRAMS[name_key]
     if "mass_g" in values and "volume_tbsp" in values and name_key in _CUP_GRAMS:
@@ -1718,6 +1737,13 @@ def _grocery_category(name: str, meta: dict[str, Any] | None = None) -> str:
         "dried oregano": "Pantry",
         "extra firm tofu": "Plant Proteins",
         "hummus": "Plant Proteins",
+        "ready to eat firm tofu": "Plant Proteins",
+        "ready to eat firm tofu prepared with calcium sulfate": "Plant Proteins",
+        "white beans canned drained": "Plant Proteins",
+        "fresh mozzarella": "Dairy & Eggs",
+        "whole milk mozzarella": "Dairy & Eggs",
+        "tahini": "Pantry",
+        "whole grain crackers": "Grains & Bakery",
         "walnuts": "Pantry",
         "chickpeas canned drained": "Plant Proteins",
         "firm tofu prepared with calcium sulfate": "Plant Proteins",
