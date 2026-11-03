@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-PROMPT_VERSION = "meal-planner-2026-11-02-v12-easy-week"
+PROMPT_VERSION = "meal-planner-2026-11-02-v13-fresh-easy-week"
 QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-16-v20-practical-portions"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")

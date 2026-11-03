@@ -24,7 +24,6 @@ from app.db import get_db
 from app.models import GroceryApproval, GroceryPreference, Plan, PlanItem, PlanMeal, Recipe, User
 from app.routers.plan_models import EnergyTarget, UserPreference
 from app.services.instacart import InstacartError, create_products_link
-from app.services.meal_preparation import preparation_for_meal
 from app.services.training_nutrition import athlete_profile_baseline, calculate_training_nutrition
 
 router = APIRouter()
@@ -247,7 +246,6 @@ def _plan_to_dict(plan: Plan, preference: UserPreference | None = None) -> dict[
                 "carbs_g": m.carbs_g,
                 "fat_g": m.fat_g,
                 "instructions": m.instructions,
-                "preparation": preparation_for_meal(m),
                 "tags": m.tags or [],
                 "order_index": m.order_index,
                 "recipe_id": getattr(m, "recipe_id", None),

@@ -9,7 +9,6 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base
 from app.models import Plan, PlanItem, PlanMeal, User
 from app.routers import llm_recommend, plans
-from app.services.meal_preparation import link_week_leftovers, preparation_for_meal
 
 
 @pytest.mark.parametrize(
@@ -105,31 +104,6 @@ def test_easy_week_allows_routine_while_varied_week_keeps_its_guard():
     assert llm_recommend.WeeklyRecommendRequest().planning_style == "easy"
 
 
-def test_leftover_portions_preserve_cooked_dish_ratios_and_exclusions():
-    source = _recommendation("dinner", "Tofu Rice Bowl", 30)
-    target = llm_recommend.MealTarget(slot="lunch", kcal=340, protein_g=20, carbs_g=44, fat_g=10)
-    kwargs = dict(
-        target_date="2026-11-03",
-        target=target,
-        primary_diet="vegan",
-        exclusions=[],
-        meal_key_counts={},
-        day_meal_keys=set(),
-        source_slot="dinner",
-        max_minutes=45,
-    )
-    repeated = llm_recommend._reuse_verified_week_meal({"2026-11-02": {"dinner": source}}, **kwargs)
-    assert repeated is not None
-    ratios = [
-        a["amount_g"] / b["amount_g"]
-        for a, b in zip(repeated.ai_idea["ingredients"], source.ai_idea["ingredients"], strict=True)
-    ]
-    assert ratios[0] == pytest.approx(ratios[1])
-    assert repeated.ai_idea["approx_macros"]["kcal"] == pytest.approx(340, abs=1)
-    kwargs["exclusions"] = ["soy"]
-    assert llm_recommend._reuse_verified_week_meal({"2026-11-02": {"dinner": source}}, **kwargs) is None
-
-
 def test_slow_breakfast_cannot_be_reused_as_an_easy_breakfast():
     source = _recommendation("breakfast", "Slow Breakfast", 30)
     assert (
@@ -147,51 +121,7 @@ def test_slow_breakfast_cannot_be_reused_as_an_easy_breakfast():
     )
 
 
-@pytest.mark.parametrize("changed", ["source", "consumer", "deleted_source"])
-def test_leftover_links_persist_count_groceries_once_and_invalidate_after_edits(changed):
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine)
-    with Session(engine) as db:
-        user = User(email="prep@example.com", password_hash="test")
-        db.add(user)
-        db.flush()
-        meals = []
-        for offset, slot, grams in [(0, "dinner", 200), (1, "lunch", 150)]:
-            plan = Plan(user_id=user.id, date=date(2026, 11, 2) + timedelta(days=offset), locked=False)
-            meal = PlanMeal(
-                plan=plan,
-                meal_type=slot,
-                title="Tofu bowl",
-                instructions="Cook tofu. Serve.",
-                items=[PlanItem(name="tofu", qty=grams, unit="g")],
-            )
-            db.add(plan)
-            meals.append(meal)
-        db.flush()
-        dinner, lunch = meals
-        finalized = {"2026-11-03": {"lunch": SimpleNamespace(meta={"leftover_source_date": "2026-11-02"})}}
-        link_week_leftovers(db, user.id, finalized, {"2026-11-02", "2026-11-03"})
-        db.commit()
-        db.expire_all()
-        assert preparation_for_meal(lunch)["kind"] == "leftovers"
-        batch = preparation_for_meal(dinner)
-        assert batch["batch_ingredients"] == [{"name": "tofu", "quantity": 350, "unit": "g"}]
-        assert "43%" in batch["storage"]
-        grocery = plans.grocery_list_week(start=date(2026, 11, 2), end=date(2026, 11, 3), db=db, user=user)
-        assert len(grocery["items"]) == 1
-        assert grocery["items"][0]["quantity"] == pytest.approx(350 / 28.3495, abs=0.1)
-        assert plans._plan_to_dict(lunch.plan)["meals"][0]["preparation"]["kind"] == "leftovers"
-        if changed == "source":
-            dinner.items[0].qty = 400
-        elif changed == "consumer":
-            lunch.instructions = "Changed meal"
-        else:
-            db.delete(dinner)
-            db.flush()
-        assert preparation_for_meal(lunch) is None
-
-
-def test_easy_week_orchestration_repeats_fast_templates_links_lunch_and_preserves_macros(monkeypatch):
+def test_easy_week_plans_separate_simple_lunches_and_repeats_fresh_breakfasts(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     days = [(date(2026, 11, 2) + timedelta(days=i)).isoformat() for i in range(4)]
@@ -240,10 +170,10 @@ def test_easy_week_orchestration_repeats_fast_templates_links_lunch_and_preserve
             plan = db.query(Plan).filter(Plan.user_id == user.id, Plan.date == date.fromisoformat(day)).one()
             assert plans._aggregate_totals(plan.meals)["kcal"] == pytest.approx(426 * 4, abs=1)
             lunch = next(meal for meal in plan.meals if meal.meal_type == "lunch")
-            if i:
-                assert preparation_for_meal(lunch)["source_date"] == days[i - 1]
-            else:
-                assert preparation_for_meal(lunch) is None
+            assert lunch.title == f"Day {i} tofu rice wrap"
+            assert "leftovers" not in (lunch.meta or {})
+            assert lunch.instructions == "Warm the cooked rice and tofu.\nCombine and serve."
+            assert (lunch.meta or {}).get("total_time_min") == 5
 
 
 def test_grocery_aggregation_preserves_legacy_preferences_after_alias_merge():
@@ -287,3 +217,17 @@ def test_grocery_aggregation_preserves_legacy_preferences_after_alias_merge():
         assert item["preference"]["in_pantry"] is True
         assert item["preference"]["preferred_brand"] == "Saved brand"
         assert item["package"]["source"] == "preferred"
+
+
+@pytest.mark.parametrize(
+    "meal,expected",
+    [
+        ({"title": "Leftover salmon bowl"}, True),
+        ({"instructions": ["Reheat yesterday's dinner."]}, True),
+        ({"instructions": ["Use the reserved dinner portion."]}, True),
+        ({"instructions": ["Toast bread. Assemble a fresh tuna sandwich."]}, False),
+        ({"instructions": ["Warm ready-cooked rice. Refrigerate any leftovers promptly."]}, False),
+    ],
+)
+def test_fresh_meals_reject_dependencies_without_rejecting_storage_advice(meal, expected):
+    assert llm_recommend._requires_prepared_meal(meal) is expected
