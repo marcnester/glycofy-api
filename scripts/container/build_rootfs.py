@@ -13,7 +13,7 @@ shutil.copytree("/usr/local", root / "usr/local", symlinks=True)
 stdlib = root / "usr/local/lib/python3.11"
 for name in ("sqlite3", "idlelib", "tkinter", "turtledemo", "ensurepip", "curses"):
     shutil.rmtree(stdlib / name, ignore_errors=True)
-for pattern in ("_sqlite3*", "_curses*", "readline*"):
+for pattern in ("_sqlite3*", "_curses*", "readline*", "_tkinter*"):
     for path in (stdlib / "lib-dynload").glob(pattern):
         path.unlink()
 
