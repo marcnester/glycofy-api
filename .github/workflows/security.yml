@@ -72,35 +72,68 @@ jobs:
 
   container:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: glycofy
+          POSTGRES_PASSWORD: glycofy_test
+          POSTGRES_DB: glycofy_runtime
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U glycofy -d glycofy_runtime"
+          --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build the production image
         id: image_build
         run: docker build --tag glycofy:${{ github.sha }} .
       - name: Verify the image runs as the unprivileged app user
-        run: test "$(docker image inspect glycofy:${{ github.sha }} --format '{{.Config.User}}')" = "glycofy"
+        run: test "$(docker image inspect glycofy:${{ github.sha }} --format '{{.Config.User}}')" = "65532:65532"
       - name: Verify private build inputs are absent from the runtime image
         run: docker run --rm --entrypoint python glycofy:${{ github.sha }} -c "from pathlib import Path; assert not any(Path(p).exists() for p in ['/app/.git', '/app/.env', '/app/node_modules', '/app/glycofy.db', '/app/app.db'])"
       - name: Smoke-test native libraries in the production image
+        env:
+          DATABASE_URL: postgresql+psycopg://unused:unused@127.0.0.1/unused
         run: |
-          docker run --rm -i --entrypoint python glycofy:${{ github.sha }} - <<'PYTHON'
+          docker run --rm -i -e DATABASE_URL --entrypoint python glycofy:${{ github.sha }} - <<'PYTHON'
           import ssl
-          import sqlite3
           import bcrypt
           import psycopg
           from cryptography.fernet import Fernet
+          import importlib.util
+          assert importlib.util.find_spec("_sqlite3") is None
           from app.main import app
           assert app is not None
           assert ssl.create_default_context().get_ca_certs()
           assert psycopg.pq.version() > 0
-          with sqlite3.connect(":memory:") as db:
-              assert db.execute("SELECT 36").fetchone() == (36,)
           key = Fernet.generate_key()
           cipher = Fernet(key)
           assert cipher.decrypt(cipher.encrypt(b"synthetic-smoke-test")) == b"synthetic-smoke-test"
           password = b"synthetic-smoke-test"
           assert bcrypt.checkpw(password, bcrypt.hashpw(password, bcrypt.gensalt()))
           print("Native library and application import smoke checks passed")
+          PYTHON
+      - name: Verify migrations and readiness against PostgreSQL in the runtime image
+        env:
+          DATABASE_URL: postgresql+psycopg://glycofy:glycofy_test@127.0.0.1:5432/glycofy_runtime
+        run: |
+          docker run --rm --network host -e DATABASE_URL --entrypoint /bin/sh glycofy:${{ github.sha }} -c 'alembic upgrade head'
+          docker run --detach --name runtime-smoke --network host -e DATABASE_URL -e PORT=10000 glycofy:${{ github.sha }}
+          trap 'docker logs runtime-smoke; docker rm -f runtime-smoke' EXIT
+          python - <<'PYTHON'
+          import time
+          import urllib.request
+          for attempt in range(30):
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:10000/ready", timeout=2) as response:
+                      assert response.status == 200
+                  break
+              except (OSError, AssertionError):
+                  time.sleep(1)
+          else:
+              raise RuntimeError("Runtime PostgreSQL readiness did not pass")
           PYTHON
       - name: Generate the production image SBOM
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
@@ -111,13 +144,13 @@ jobs:
           artifact-name: glycofy-${{ github.sha }}-sbom.spdx.json
           upload-artifact: true
           upload-artifact-retention: 30
-      - name: Scan the image and fail on fixable high or critical vulnerabilities
+      - name: Block all high or critical vulnerabilities, including unfixed findings
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: glycofy:${{ github.sha }}
           scanners: vuln,secret
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
+          ignore-unfixed: false
           exit-code: "1"
           format: table
 
