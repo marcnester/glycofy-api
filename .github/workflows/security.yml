@@ -99,6 +99,8 @@ jobs:
         run: |
           docker run --rm -i -e DATABASE_URL --entrypoint python glycofy:${{ github.sha }} - <<'PYTHON'
           import ssl
+          import uuid
+          assert uuid.uuid4().version == 4
           import bcrypt
           import psycopg
           from cryptography.fernet import Fernet

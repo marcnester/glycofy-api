@@ -13,7 +13,7 @@ shutil.copytree("/usr/local", root / "usr/local", symlinks=True)
 stdlib = root / "usr/local/lib/python3.11"
 for name in ("sqlite3", "idlelib", "tkinter", "turtledemo", "ensurepip", "curses"):
     shutil.rmtree(stdlib / name, ignore_errors=True)
-for pattern in ("_sqlite3*", "_curses*", "readline*", "_tkinter*"):
+for pattern in ("_sqlite3*", "_curses*", "readline*", "_tkinter*", "_uuid*"):
     for path in (stdlib / "lib-dynload").glob(pattern):
         path.unlink()
 
@@ -71,7 +71,7 @@ for path in sorted(copied):
     for candidate in candidates:
         result = subprocess.run(["dpkg-query", "-S", candidate], capture_output=True, text=True)
         if result.returncode == 0:
-            owners.update(line.split(": ", 1)[0] for line in result.stdout.splitlines() if ": " in line)
+            owners.update(line.split(": ", 1)[0] for line in result.stdout.splitlines() if ": " in line and not line.startswith("diversion "))
             break
     else:
         raise RuntimeError(f"Missing package ownership for {path}")
