@@ -102,6 +102,8 @@ jobs:
           import bcrypt
           import psycopg
           from cryptography.fernet import Fernet
+          from zoneinfo import ZoneInfo
+          assert ZoneInfo("America/Los_Angeles") is not None
           import importlib.util
           assert importlib.util.find_spec("_sqlite3") is None
           from app.main import app
