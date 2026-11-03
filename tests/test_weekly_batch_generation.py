@@ -454,12 +454,13 @@ def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch)
         db.commit()
         db.refresh(user)
         payload = llm_recommend.WeeklyRecommendRequest(
+            planning_style="varied",
             days=[
                 llm_recommend.WeeklyDayRequest(
                     date=date_iso,
                     meals=[llm_recommend.MealTarget(slot=slot, **targets) for slot in llm_recommend.SLOTS],
                 )
-            ]
+            ],
         )
         request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
 
@@ -543,13 +544,14 @@ def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
         db.commit()
         db.refresh(user)
         payload = llm_recommend.WeeklyRecommendRequest(
+            planning_style="varied",
             days=[
                 llm_recommend.WeeklyDayRequest(
                     date=date,
                     meals=[llm_recommend.MealTarget(slot=slot, **targets) for slot in llm_recommend.SLOTS],
                 )
                 for date in dates
-            ]
+            ],
         )
         request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
 
@@ -783,12 +785,13 @@ def test_weekly_apply_uses_one_bounded_focused_repair_before_catalog(monkeypatch
         db.commit()
         db.refresh(user)
         payload = llm_recommend.WeeklyRecommendRequest(
+            planning_style="varied",
             days=[
                 llm_recommend.WeeklyDayRequest(
                     date=date_iso,
                     meals=[llm_recommend.MealTarget(slot=slot, **targets) for slot in llm_recommend.SLOTS],
                 )
-            ]
+            ],
         )
         result = llm_recommend.recommend_weekly_apply(
             SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")), payload, db, user
@@ -920,13 +923,14 @@ def test_weekly_apply_reuses_verified_week_meals_when_catalog_is_empty(monkeypat
         db.commit()
         db.refresh(user)
         payload = llm_recommend.WeeklyRecommendRequest(
+            planning_style="varied",
             days=[
                 llm_recommend.WeeklyDayRequest(
                     date=date,
                     meals=[llm_recommend.MealTarget(slot=slot, **targets) for slot in llm_recommend.SLOTS],
                 )
                 for date in dates
-            ]
+            ],
         )
         result = llm_recommend.recommend_weekly_apply(
             SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")), payload, db, user

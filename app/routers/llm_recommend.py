@@ -16,7 +16,7 @@ import uuid
 from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -214,6 +214,7 @@ class WeeklyDayRequest(BaseModel):
 
 
 class WeeklyRecommendRequest(BaseModel):
+    planning_style: Literal["easy", "varied"] = "easy"
     days: list[WeeklyDayRequest] = Field(default_factory=list, max_length=14)
 
 
@@ -2949,6 +2950,9 @@ def _deduplicate_week_batch(
     removed = 0
     for batch_day in batch_days:
         slots = batch_items.get(str(batch_day["date"]), {})
+        easy_day = batch_day.get("planning_style") == "easy"
+        if easy_day:
+            seen = set()  # repeat across days, but keep distinct eating occasions
         for slot, recommendation in list(slots.items()):
             normalized_slot = _normalize_slot(slot)
             title = str((recommendation.ai_idea or {}).get("title") or "").strip()
@@ -2956,9 +2960,9 @@ def _deduplicate_week_batch(
             carb = _recommendation_variety_key(recommendation, "carb_item")
             protein = _recommendation_variety_key(recommendation, "protein_item")
             component_keys = []
-            if carb:
+            if carb and not easy_day:
                 component_keys.append(f"{normalized_slot}:carb:{carb}")
-            if normalized_slot in _DAY_UNIQUE_SLOTS and protein:
+            if not easy_day and normalized_slot in _DAY_UNIQUE_SLOTS and protein:
                 component_keys.append(f"{normalized_slot}:protein:{protein}")
             if (title_key and title_key in seen) or any(component_counts[key] >= 2 for key in component_keys):
                 del slots[slot]
@@ -2981,27 +2985,32 @@ def _reuse_verified_week_meal(
     exclusions: list[str],
     meal_key_counts: dict[str, int],
     day_meal_keys: set[str],
+    source_slot: str | None = None,
+    repeat_limit: int = 2,
+    max_minutes: int | None = None,
 ) -> SlotRecommendation | None:
     """Recover one missing cell from another already-verified meal in the week.
 
     Weekly generation validates every accepted cell independently. If the model,
     repair request, and catalog all miss one slot, reusing an accepted cell is
     safer than either trusting the rejected meal or aborting six otherwise-valid
-    days. Reuse is deliberately restricted to the exact same slot and one repeat
-    per title. Breakfast is never allowed to become lunch or dinner.
+    days. Default recovery is restricted to the same slot and one repeat per title.
+    Easy week explicitly permits more repeats and previous-dinner lunches.
     """
     target_slot = _normalize_slot(target.slot)
     target_macros = {name: _safe_float(getattr(target, name, 0.0)) for name in _MACROS}
     for source_date, source_slots in batch_items.items():
         if source_date == target_date:
             continue
-        source = source_slots.get(target_slot)
+        source = source_slots.get(source_slot or target_slot)
         if source is None or not isinstance(source.ai_idea, dict):
             continue
         meal_key = _recommendation_meal_key(source)
-        if not meal_key or meal_key in day_meal_keys or meal_key_counts.get(meal_key, 0) >= 2:
+        if not meal_key or meal_key in day_meal_keys or meal_key_counts.get(meal_key, 0) >= repeat_limit:
             continue
         idea = source.model_copy(deep=True).ai_idea or {}
+        if max_minutes is not None and _safe_float(idea.get("total_time_min"), 999) > max_minutes:
+            continue
         raw_ingredients = idea.get("ingredients")
         if (
             not isinstance(raw_ingredients, list)
@@ -3015,8 +3024,26 @@ def _reuse_verified_week_meal(
             [dict(ingredient) for ingredient in original_ingredients],
             target_macros,
         )
+        if source_slot == "dinner" and target_slot == "lunch":
+            source_macros = ingredient_nutrition_totals({"ingredients": original_ingredients}) or {}
+            factor = target_macros["kcal"] / max(source_macros.get("kcal", 0), 1)
+            # A mixed cooked dish must retain its ingredient ratios. Fit the
+            # rest of the day around this lunch, rather than changing its recipe.
+            if not 0.5 <= factor <= 1.5 or any(
+                item.get("unit") != "g" or _safe_float(item.get("amount_g")) <= 0 for item in original_ingredients
+            ):
+                continue
+            fitted_ingredients = [
+                {
+                    **ingredient,
+                    "amount": float(ingredient["amount_g"]) * factor,
+                    "amount_g": float(ingredient["amount_g"]) * factor,
+                    "nutrition": {name: float(ingredient["nutrition"][name]) * factor for name in _MACROS},
+                }
+                for ingredient in original_ingredients
+            ]
         portion_strategies = [("target_fitted", fitted_ingredients)]
-        if fitted_ingredients != original_ingredients:
+        if source_slot != "dinner" and fitted_ingredients != original_ingredients:
             # Portion fitting is an optimization, not a safety
             # requirement. It can turn an already-valid meal into an
             # impractical serving when a slot has an unusual macro target.
@@ -3064,7 +3091,7 @@ def _reuse_verified_week_meal(
                 "ai_idea": recovered_idea,
                 "batch_recovery": "verified_week_reuse",
                 "reused_from_date": source_date,
-                "reused_from_slot": target_slot,
+                "reused_from_slot": source_slot or target_slot,
                 "portion_strategy": portion_strategy,
                 "quality": {"issues": quality_report.codes()},
             }
@@ -3434,6 +3461,10 @@ def _rebalance_verified_day(
     flattened: list[dict[str, Any]] = []
 
     for item in day_items:
+        if (item.meta or {}).get("leftover_source_date"):
+            for name, value in _recommendation_macros(item).items():
+                fixed_totals[name] += value
+            continue
         idea = item.ai_idea if isinstance(item.ai_idea, dict) else None
         ingredients = idea.get("ingredients") if idea else None
         evidence = ingredient_nutrition_totals({"ingredients": ingredients}) if idea else None
@@ -3486,6 +3517,10 @@ def _rebalance_complete_verified_day(
     flattened: list[dict[str, Any]] = []
 
     for item in day_items:
+        if (item.meta or {}).get("leftover_source_date"):
+            for name, value in _recommendation_macros(item).items():
+                fixed_totals[name] += value
+            continue
         is_catalog = item.ai_idea is None and item.recipe is not None
         if isinstance(item.ai_idea, dict):
             idea = dict(item.ai_idea)
@@ -4106,6 +4141,7 @@ def _batch_week_recommendations(
     if not client or not days or _circuit_open() or _BUDGET.spent_usd >= _daily_budget_usd():
         return {}, {"mode": "unavailable"}
 
+    easy_week = any(day.get("planning_style") == "easy" for day in (week_context or days))
     system = (
         f"PROMPT_VERSION={PROMPT_VERSION}. QUALITY_POLICY_VERSION={QUALITY_POLICY_VERSION}. "
         "You are Glycofy's elite sports-nutrition planner. Design the requested day within its weekly context. "
@@ -4168,6 +4204,25 @@ def _batch_week_recommendations(
         "rules. When preference learning materially influenced a meal, say so briefly in its reason. Do not infer "
         "medical conditions."
     )
+    if easy_week:
+        system = system.replace(
+            "Never repeat a meal title during the week. Within each day, do not "
+            "repeat a protein_item or carb_item across breakfast, lunch, and dinner. Across adjacent days, vary main "
+            "proteins. Use no protein_group more than twice for the same slot during the week when alternatives exist. ",
+            "Repeat familiar breakfasts and snacks across days. Ingredient reuse is encouraged. ",
+        )
+        system += (
+            " EASY WEEK POLICY: Build the whole week around a shared basket before choosing recipes. "
+            "Use at most two breakfast recipes and two recipes per snack slot, repeated with target-fitted portions. "
+            "Breakfast must take at most 10 minutes total; fresh lunches at most 15 minutes; snacks at most 5 minutes. "
+            "Favor yogurt, ready-to-eat foods, toast, sandwiches, and assembly meals for these slots. "
+            "Never disguise soaking, chilling or cooking as zero time. Reserve substantial cooking for dinner, "
+            "with up to 45 minutes total. Reuse the same produce, grain products and sauces throughout the week, "
+            "prefer a pantry item already used to a one-off condiment, and target 30–40 non-pantry shopping products. "
+            "Use compatible dinner dishes for next-day lunches; return full fresh-cooking instructions and individual "
+            "edible portions for every meal. The server links validated leftovers and provides batch preparation guidance. "
+            "Do not invent already-cooked leftovers on the first day. All dietary and safety constraints still apply. "
+        )
     payload = {
         "primary_diet": primary_diet,
         "diet_tags": diet_tags,
@@ -4366,7 +4421,7 @@ def _batch_week_recommendations(
                 or slot in slots
                 or not target
                 or not title_key
-                or title_key in week_titles
+                or (not easy_week and title_key in week_titles)
                 or not _ingredients_have_quantities(ingredients)
                 or not isinstance(instructions, list)
                 or len(instructions) < 2
@@ -4377,7 +4432,10 @@ def _batch_week_recommendations(
                 or usda_error is not None
                 or not quality_report.safe
             )
-            if slot in _DAY_UNIQUE_SLOTS:
+            if easy_week:
+                budget = 45 if slot == "dinner" else 10 if slot == "breakfast" else 15 if slot == "lunch" else 5
+                invalid = invalid or total_time_min > budget
+            if not easy_week and slot in _DAY_UNIQUE_SLOTS:
                 invalid = invalid or not protein or not carb or protein in day_proteins or carb in day_carbs
             if invalid:
                 rejection_reasons: list[str] = quality_report.codes()
@@ -4516,7 +4574,7 @@ def _parallel_week_recommendations(
     athlete_feedback: dict[str, Any] | None = None,
 ) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
     """Generate bounded daily payloads concurrently while retaining full-week context."""
-    if len(days) <= 1:
+    if len(days) <= 1 or any(day.get("planning_style") == "easy" for day in days):
         return _batch_week_recommendations(
             client,
             days=days,
@@ -4647,6 +4705,7 @@ def recommend_weekly_apply(
         batch_days.append(
             {
                 "date": requested_day.date,
+                "planning_style": payload.planning_style,
                 "training": requested_nutrition.to_dict()["training"],
                 "diet_tags": requested_day.diet_tags or [],
                 "meals": [
@@ -4704,8 +4763,10 @@ def recommend_weekly_apply(
             athlete_feedback=athlete_feedback,
             week_context=batch_days,
             flexible_meal_count=True,
-            forbidden_titles=kept_titles,
-            forbidden_variety_keys=_saturated_week_variety_keys(batch_items),
+            forbidden_titles=kept_titles if payload.planning_style == "varied" else [],
+            forbidden_variety_keys=(
+                _saturated_week_variety_keys(batch_items) if payload.planning_style == "varied" else []
+            ),
         )
         for repair_date, slots in repaired_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
@@ -4750,8 +4811,10 @@ def recommend_weekly_apply(
             athlete_feedback=athlete_feedback,
             week_context=batch_days,
             flexible_meal_count=True,
-            forbidden_titles=kept_titles,
-            forbidden_variety_keys=_saturated_week_variety_keys(batch_items),
+            forbidden_titles=kept_titles if payload.planning_style == "varied" else [],
+            forbidden_variety_keys=(
+                _saturated_week_variety_keys(batch_items) if payload.planning_style == "varied" else []
+            ),
         )
         for repair_date, slots in final_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
@@ -4798,8 +4861,10 @@ def recommend_weekly_apply(
             athlete_feedback=athlete_feedback,
             week_context=batch_days,
             flexible_meal_count=True,
-            forbidden_titles=kept_titles,
-            forbidden_variety_keys=_saturated_week_variety_keys(batch_items),
+            forbidden_titles=kept_titles if payload.planning_style == "varied" else [],
+            forbidden_variety_keys=(
+                _saturated_week_variety_keys(batch_items) if payload.planning_style == "varied" else []
+            ),
             synchronous_lookup_limit=0,
         )
         focused_recommendation = focused_items.get(repair_date, {}).get(repair_slot)
@@ -4836,7 +4901,8 @@ def recommend_weekly_apply(
                 used_meal_keys.add(meal_key)
                 week_meal_key_counts[meal_key] = week_meal_key_counts.get(meal_key, 0) + 1
 
-    for day in payload.days:
+    finalized_days: dict[str, dict[str, SlotRecommendation]] = {}
+    for day in sorted(payload.days, key=lambda item: item.date):
         date_iso = day.date
         if not day.meals:
             out_days.append(
@@ -4889,6 +4955,54 @@ def recommend_weekly_apply(
         for scaled in adjusted_meals:
             slot = _normalize_slot(scaled.slot)
             rec = batch_items.get(date_iso, {}).get(slot)
+            if payload.planning_style == "easy" and slot != "dinner":
+                sources = finalized_days if len(finalized_days) >= 2 else {}
+                if len(finalized_days) >= 2 and slot != "lunch":
+                    template_dates = list(finalized_days)[:2]
+                    template_date = template_dates[len(finalized_days) % 2]
+                    sources = {template_date: finalized_days[template_date]}
+                source_slot = slot
+                max_minutes = 10 if slot == "breakfast" else 15 if slot == "lunch" else 5
+                if slot == "lunch":
+                    previous_date = (_parse_iso_date(date_iso) - timedelta(days=1)).isoformat()
+                    sources = {previous_date: finalized_days.get(previous_date, {})}
+                    source_slot = "dinner"
+                    max_minutes = 45
+                repeated = _reuse_verified_week_meal(
+                    sources,
+                    target_date=date_iso,
+                    target=scaled,
+                    primary_diet=primary_diet,
+                    exclusions=_preference_exclusions(pref),
+                    meal_key_counts={},
+                    day_meal_keys=day_meal_keys,
+                    source_slot=source_slot,
+                    repeat_limit=14,
+                    max_minutes=max_minutes,
+                )
+                source_tags = (
+                    next(
+                        (
+                            item.diet_tags or []
+                            for item in payload.days
+                            if item.date == (repeated.meta or {}).get("reused_from_date")
+                        ),
+                        [],
+                    )
+                    if repeated
+                    else []
+                )
+                current_dinner = batch_items.get(date_iso, {}).get("dinner")
+                conflicts_with_dinner = (
+                    slot == "lunch"
+                    and repeated is not None
+                    and (_recommendation_meal_key(repeated) == _recommendation_meal_key(current_dinner))
+                )
+                if repeated is not None and set(source_tags) == set(req_tags) and not conflicts_with_dinner:
+                    repeated.meta = {**(repeated.meta or {}), "planned_repetition": True}
+                    if slot == "lunch":
+                        repeated.meta["leftover_source_date"] = previous_date
+                    rec = repeated
             recovered_slot = rec is None
             if rec is None:
                 # The compact repair request is the entire AI retry budget.
@@ -4983,7 +5097,7 @@ def recommend_weekly_apply(
                 if recovered_slot:
                     week_meal_key_counts[meal_key] = week_meal_key_counts.get(meal_key, 0) + 1
                     used_meal_keys.add(meal_key)
-                if week_meal_key_counts.get(meal_key, 0) > 2:
+                if payload.planning_style != "easy" and week_meal_key_counts.get(meal_key, 0) > 2:
                     db.rollback()
                     raise HTTPException(
                         status_code=422,
@@ -5068,6 +5182,26 @@ def recommend_weekly_apply(
                 },
             )
 
+        if payload.planning_style == "easy":
+            for item in day_items:
+                idea = item.ai_idea or {}
+                minutes = idea.get("total_time_min") if idea else getattr(item.recipe, "total_time_min", None)
+                slot = _normalize_slot(item.slot)
+                budget = 45 if slot == "dinner" else 10 if slot == "breakfast" else 15 if slot == "lunch" else 5
+                if not (item.meta or {}).get("leftover_source_date") and (
+                    minutes is None or _safe_float(minutes) > budget
+                ):
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=422,
+                        detail={
+                            "message": "Unable to complete an easy week within cooking-time limits. Try again or choose More variety.",
+                            "date": date_iso,
+                            "slot": slot,
+                            "reason": "cooking_time_budget",
+                        },
+                    )
+
         day_target_totals = _rebalance_verified_day(day_items, adjusted_meals)
         target_misses = _day_target_misses(day_items, day_target_totals)
         if target_misses:
@@ -5126,6 +5260,16 @@ def recommend_weekly_apply(
                 primary_diet=primary_diet,
             )
         )
+
+        if persist_summaries[-1].get("applied") and not persist_summaries[-1].get("skipped"):
+            finalized_days[date_iso] = {item.slot: item.model_copy(deep=True) for item in day_items}
+
+    if payload.planning_style == "easy":
+        from app.services.meal_preparation import link_week_leftovers
+
+        applied_dates = {row["date"] for row in persist_summaries if not row.get("skipped") and row.get("applied")}
+        link_week_leftovers(db, user.id, finalized_days, applied_dates)
+    batch_meta["planning_style"] = payload.planning_style
 
     # ✅ Commit once at the end so changes persist
     try:

@@ -5,7 +5,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
 from app.main import app
-from app.models import GroceryApproval, PlanItem
+from app.models import GroceryApproval, GroceryPreference, PlanItem
 from app.routers.plans import (
     _format_grocery_measurements,
     _grocery_category,
@@ -53,14 +53,16 @@ def test_piece_weight_bridge_collapses_avocado_grams_and_counts():
 
 
 def test_package_suggestion_rounds_up_to_purchasable_amounts():
-    package = _package_suggestion("salmon", "Meat & Seafood", 18, "oz")
+    package = _package_suggestion(
+        "salmon", "Meat & Seafood", 18, "oz", GroceryPreference(package_quantity=16, package_unit="oz")
+    )
     assert package == {
         "package_size": 16,
         "package_unit": "oz",
         "package_count": 2,
         "purchase_quantity": 32,
         "remainder": 14,
-        "source": "estimated",
+        "source": "preferred",
     }
     assert _package_suggestion("olive oil", "Pantry", 2, "tbsp") is None
 
@@ -171,8 +173,7 @@ def test_weekly_grocery_approval_is_persisted_and_detects_plan_changes():
             grocery = client.get("/v1/plan/grocery-list/week?start=2026-09-03&end=2026-09-04")
             salmon = grocery.json()["items"][0]
             assert salmon["quantity"] == 12
-            assert salmon["package"]["package_count"] == 1
-            assert salmon["package"]["remainder"] == 4
+            assert salmon["package"] is None
 
             preference = client.put(
                 "/v1/plan/grocery-list/preferences",

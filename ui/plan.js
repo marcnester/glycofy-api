@@ -117,7 +117,7 @@
   const WEEKLY_PROGRESS_STAGES = [
     [0, 'Reviewing your goals and training…'],
     [5, 'Designing your meals and snacks as one balanced week…'],
-    [14, 'Balancing macros and weekly variety…'],
+    [14, 'Balancing nutrition and a practical shopping week…'],
     [24, 'Checking diet and ingredient exclusions…'],
     [34, 'Adding quantities and cooking instructions…'],
     [45, 'Saving your personalized week…'],
@@ -1199,6 +1199,33 @@
         // ingredients + instructions
         if (bodyEl) {
           bodyEl.innerHTML = '';
+          const preparation = !ff ? base?.preparation : null;
+          if (preparation) {
+            const prepNote = document.createElement('p');
+            prepNote.className = 'muted'; prepNote.textContent = preparation.note;
+            bodyEl.appendChild(prepNote);
+            if (preparation.batch_ingredients) {
+              const batch = document.createElement('details');
+              const summary = document.createElement('summary'); summary.textContent = "Cook together · dinner + tomorrow's lunch";
+              batch.appendChild(summary);
+              const quantities = document.createElement('ul');
+              preparation.batch_ingredients.forEach(item => {
+                const li = document.createElement('li'); li.textContent = `${item.name}: ${fmt(item.quantity)} ${item.unit}`;
+                quantities.appendChild(li);
+              });
+              batch.appendChild(quantities);
+              const reserveTitle = document.createElement('p'); reserveTitle.textContent = 'Lunch share of ingredients (before cooking):';
+              batch.appendChild(reserveTitle);
+              const reserve = document.createElement('ul');
+              preparation.reserve_ingredients.forEach(item => {
+                const li = document.createElement('li'); li.textContent = `${item.name}: ${fmt(item.quantity)} ${item.unit}`;
+                reserve.appendChild(li);
+              });
+              batch.appendChild(reserve);
+              const storage = document.createElement('p'); storage.textContent = preparation.storage;
+              batch.appendChild(storage); bodyEl.appendChild(batch);
+            }
+          }
 
           const srcIng =
           (ff &&
@@ -1259,7 +1286,7 @@
           }
 
           // Instructions block (from AI or base)
-          const instrSrc =
+          const instrSrc = preparation?.kind === 'leftovers' ? preparation.instructions :
             (ff && ff.instructions && ff.instructions.length && ff.instructions) ||
             (base && base.instructions) ||
             (base && base.meta && base.meta.ai_idea && base.meta.ai_idea.instructions) ||
@@ -1277,7 +1304,7 @@
               (base && base.meta && base.meta.ai_idea && base.meta.ai_idea.total_time_min) ||
               0
             );
-            const timing = timingLabel((ff && ff) || (base && base.meta) || {});
+            const timing = timingLabel(preparation?.kind === 'leftovers' ? preparation : ((ff && ff) || (base && base.meta) || {}));
             summary.textContent = `How to make it${timing ? ` · ${timing}` : (totalTime > 0 ? ` · ${Math.round(totalTime)} min total` : '')}`;
             details.appendChild(summary);
 
@@ -1535,7 +1562,7 @@
 
         // 2) Start a resumable background job and poll lightweight status.
         const data = await startWeeklyJob(
-          { days: weeklyDaysPayload },
+          { days: weeklyDaysPayload, planning_style: $('planning-style')?.value || 'easy' },
           { startIso: start, prettyStart, prettyEnd }
         );
         console.log('LLM weekly response', data);
