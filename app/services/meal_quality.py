@@ -5,8 +5,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-PROMPT_VERSION = "meal-planner-2026-11-02-v13-fresh-easy-week"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-16-v20-practical-portions"
+PROMPT_VERSION = "meal-planner-2026-11-02-v15-varied-dinners"
+QUALITY_POLICY_VERSION = "nutrition-safety-2026-11-02-v21-food-sources"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 SUPPORTED_DIETS = ("omnivore", "pescatarian", "vegetarian", "vegan")
@@ -172,6 +172,8 @@ DONENESS_MARKERS = {
 }
 NONFOOD_HAZARDS = {"bleach", "borax", "detergent", "dish soap", "rubbing alcohol"}
 PROTEIN_SOURCE_MARKERS = {
+    "bean",
+    "chickpea",
     "beef",
     "chicken",
     "cod",
@@ -190,10 +192,12 @@ PROTEIN_SOURCE_MARKERS = {
     "tempeh",
     "tofu",
     "tuna",
+    "trout",
     "turkey",
     "whey",
 }
 CARB_SOURCE_MARKERS = {
+    "apple",
     "bagel",
     "banana",
     "barley",
@@ -219,6 +223,9 @@ CARB_SOURCE_MARKERS = {
     "wrap",
 }
 FAT_SOURCE_MARKERS = {
+    "hummus",
+    "tofu",
+    "yogurt",
     "almond",
     "avocado",
     "butter",

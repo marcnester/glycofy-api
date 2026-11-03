@@ -4213,6 +4213,9 @@ def _batch_week_recommendations(
             "Breakfast must take at most 10 minutes total; fresh lunches at most 15 minutes; snacks at most 5 minutes. "
             "Favor yogurt, ready-to-eat foods, toast, sandwiches, and assembly meals for these slots. "
             "Never disguise soaking, chilling or cooking as zero time. Reserve substantial cooking for dinner, "
+            "For breakfast prefer toast or ready-to-eat yogurt and fruit; do not require overnight oats or chilling. "
+            "For dinner choose starches that cook within the full 45-minute budget, including preparation: "
+            "white rice, couscous, pasta or small diced potatoes rather than long-cooking brown rice. "
             "with up to 45 minutes total. Reuse the same produce, grain products and sauces throughout the week, "
             "prefer a pantry item already used to a one-off condiment, and target 30–40 non-pantry shopping products. "
             "Plan every breakfast, lunch, dinner and snack as its own freshly prepared meal with complete instructions "
@@ -4221,6 +4224,10 @@ def _batch_week_recommendations(
             "A repeated breakfast or snack recipe must be prepared separately each time. "
             "When shopping_context is supplied, preferentially reuse its actual ingredients and fresh routine recipes. "
             "Follow its meal-specific directions. Shared ingredients do not mean identical dinners: vary the primary "
+            "The assigned dinner_direction takes priority over reusing the anchor protein or starch. "
+            "Reuse herbs and seasonings from the shared basket rather than introducing single-use herbs. "
+            "Make USDA food identities specific: use wild caught Atlantic cod raw, russet potatoes raw with skin, "
+            "and firm tofu prepared with calcium sulfate when choosing those foods; name that product in the ingredients. "
             "protein and preparation, allowing a few additional protein products for dinner variety. "
             "Keep lunches distinct from dinner and simple to assemble. Prefer substantial sandwiches, wraps or canned-bean "
             "salads for lunches. Do not use dry rice, dry pasta or other long-cooking starches for breakfast, lunch or snacks. "
@@ -4622,17 +4629,28 @@ def _parallel_week_recommendations(
         ]
         context = {"preferred_ingredients": basket, "fresh_routine_recipes": routines}
         dinner_directions = (
-            "Use the anchor protein with a different dinner preparation.",
-            "Prefer a permitted plant protein (such as tofu or legumes) instead of the anchor dinner protein.",
-            "Prefer a permitted different fish or protein from the anchor dinner; reuse the vegetables and starches.",
-            "Prefer a permitted bean, lentil or egg dinner; reuse vegetables and pantry staples.",
+            "Make a tofu and vegetable skillet with rice; use tofu as the main protein if permitted.",
+            "Make a bean or chickpea tomato stew with bread; use canned legumes as the main protein if permitted.",
+            "Make a lentil and vegetable pasta; use canned lentils as the main protein if permitted.",
+            "Make a crispy tofu wrap with fresh vegetables; use tofu as the main protein if permitted.",
+            "Make a white bean vegetable skillet with bread; use beans as the main protein if permitted.",
+            "Make a chickpea and vegetable couscous bowl; use chickpeas as the main protein if permitted.",
         )
+        if primary_diet == "pescatarian":
+            dinner_directions = (
+                dinner_directions[0],
+                "Make baked cod with small diced potatoes and vegetables; use cod as the main protein if permitted.",
+                dinner_directions[1],
+                "Make an egg and potato vegetable skillet; use eggs as the main protein if permitted.",
+                "Make salmon pasta with tomato and vegetables; use salmon as the main protein if permitted.",
+                dinner_directions[3],
+            )
         remaining = [
             {
                 **day,
                 "shopping_context": {
                     **context,
-                    "dinner_direction": dinner_directions[index % len(dinner_directions)],
+                    "dinner_direction": dinner_directions[(index - 1) % len(dinner_directions)],
                     "lunch_direction": (
                         "Fresh sandwich or wrap."
                         if index % 2 == 0
@@ -4647,6 +4665,10 @@ def _parallel_week_recommendations(
             }
             for index, day in enumerate(days[1:], start=1)
         ]
+        # Repairs need the same shopping and dinner direction as the initial
+        # daily request; otherwise they drift back to the anchor dinner.
+        for original_day, contextual_day in zip(days[1:], remaining, strict=True):
+            original_day["shopping_context"] = contextual_day["shopping_context"]
         weekly_limit = lookup_budget - anchor_lookups
         per_day, extra_days = divmod(weekly_limit, len(remaining))
 
@@ -5085,6 +5107,11 @@ def recommend_weekly_apply(
                 if repeated is not None and set(source_tags) == set(req_tags):
                     repeated.meta = {**(repeated.meta or {}), "planned_repetition": True}
                     rec = repeated
+            # Repeating an earlier breakfast/snack can collide with another
+            # original slot later in this day. Recover that cell using the
+            # same verified, distinct-meal path instead of aborting the week.
+            if rec is not None and _recommendation_meal_key(rec) in day_meal_keys:
+                rec = None
             recovered_slot = rec is None
             if rec is None:
                 # The compact repair request is the entire AI retry budget.

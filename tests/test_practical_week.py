@@ -15,6 +15,10 @@ from app.routers import llm_recommend, plans
     "alias,canonical",
     [
         ("Whole egg", "egg"),
+        ("dry couscous", "couscous dry"),
+        ("couscous", "couscous dry"),
+        ("canned tuna in water, drained", "canned tuna in water"),
+        ("nonfat Greek yogurt", "plain nonfat greek yogurt"),
         ("Egg whole", "egg"),
         ("eggs", "egg"),
         ("cod fillet, raw", "cod fillet"),
@@ -32,6 +36,8 @@ def test_observed_grocery_duplicates_share_product_identity(alias, canonical):
 def test_nutritionally_distinct_products_are_not_blindly_merged():
     for a, b in [
         ("brown rice dry", "cooked brown rice"),
+        ("dry couscous", "cooked couscous"),
+        ("canned tuna in water", "canned tuna in oil"),
         ("plain nonfat Greek yogurt", "Greek yogurt plain 2% milkfat"),
         ("almond butter", "peanut butter"),
     ]:
@@ -42,6 +48,9 @@ def test_nutritionally_distinct_products_are_not_blindly_merged():
     "name,category",
     [
         ("black pepper", "Pantry"),
+        ("chickpeas canned drained", "Plant Proteins"),
+        ("firm tofu prepared with calcium sulfate", "Plant Proteins"),
+        ("russet potatoes raw with skin", "Produce"),
         ("corn tortillas", "Grains & Bakery"),
         ("green beans", "Produce"),
         ("potato", "Produce"),
@@ -121,7 +130,8 @@ def test_slow_breakfast_cannot_be_reused_as_an_easy_breakfast():
     )
 
 
-def test_easy_week_plans_separate_simple_lunches_and_repeats_fresh_breakfasts(monkeypatch):
+@pytest.mark.parametrize("routine_collision", [False, True])
+def test_easy_week_plans_separate_simple_lunches_and_repeats_fresh_breakfasts(monkeypatch, routine_collision):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     days = [(date(2026, 11, 2) + timedelta(days=i)).isoformat() for i in range(4)]
@@ -138,6 +148,8 @@ def test_easy_week_plans_separate_simple_lunches_and_repeats_fresh_breakfasts(mo
         }
         for i, day in enumerate(days)
     }
+    if routine_collision:
+        generated[days[2]]["snack"].ai_idea["title"] = generated[days[0]]["breakfast"].ai_idea["title"]
     monkeypatch.setattr(llm_recommend, "_parallel_week_recommendations", lambda *_a, **_k: (generated, {}))
     monkeypatch.setattr(llm_recommend, "_get_openai_client", lambda: None)
     monkeypatch.setattr(llm_recommend._RATE, "check_and_add", lambda *_args: None)
@@ -169,6 +181,7 @@ def test_easy_week_plans_separate_simple_lunches_and_repeats_fresh_breakfasts(mo
         for i, day in enumerate(days):
             plan = db.query(Plan).filter(Plan.user_id == user.id, Plan.date == date.fromisoformat(day)).one()
             assert plans._aggregate_totals(plan.meals)["kcal"] == pytest.approx(426 * 4, abs=1)
+            assert len({meal.title for meal in plan.meals}) == len(plan.meals)
             lunch = next(meal for meal in plan.meals if meal.meal_type == "lunch")
             assert lunch.title == f"Day {i} tofu rice wrap"
             assert "leftovers" not in (lunch.meta or {})
@@ -261,3 +274,7 @@ def test_easy_generation_uses_bounded_calls_with_actual_shared_basket(monkeypatc
         context = call["days"][0]["shopping_context"]
         assert context["preferred_ingredients"] == ["cooked brown rice", "firm tofu"]
         assert context["fresh_routine_recipes"][0]["recipe"]["title"] == "Fresh Tofu Rice Toast"
+
+    assert "tofu" in days[1]["shopping_context"]["dinner_direction"]
+    assert "cod" in days[2]["shopping_context"]["dinner_direction"]
+    assert days[1]["shopping_context"] == calls[1]["days"][0]["shopping_context"]

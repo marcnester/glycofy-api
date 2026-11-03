@@ -82,6 +82,8 @@ def _catalog_match(query: str) -> FDCMatch | None:
         row = db.query(NutritionCatalogEntry).filter(NutritionCatalogEntry.query_key == key).first()
         if row is None:
             return None
+        if _match_score(query, {"description": row.description, "dataType": row.data_type}) is None:
+            return None
         nutrients = {name: float(row.nutrients_per_100g[name]) for name in ("kcal", "protein_g", "carbs_g", "fat_g")}
         return FDCMatch(
             fdc_id=row.fdc_id,
@@ -259,6 +261,8 @@ def _match_score(query: str, food: dict[str, Any]) -> float | None:
             return None
     lowered_query = query.lower()
     lowered_description = description.lower()
+    if "peanut butter" in lowered_query and "reduced fat" in lowered_description and "reduced fat" not in lowered_query:
+        return None
     for term in _DISQUALIFIERS:
         if term in lowered_description and term not in lowered_query:
             return None
@@ -314,7 +318,7 @@ def _plausible_nutrient_density(query: str, nutrients: dict[str, float]) -> bool
     if "bread" in text or "pita" in text or "tortilla" in text:
         return 140 <= kcal <= 450 and 20 <= carbs <= 85
     if any(grain in text for grain in ("rice", "pasta", "couscous", "quinoa", "oat")):
-        if "cooked" in text or "prepared" in text:
+        if re.search(r"\b(?:cooked|prepared)\b", text):
             return 55 <= kcal <= 230 and 10 <= carbs <= 50
         return 250 <= kcal <= 470 and 45 <= carbs <= 90
     if "chicken breast" in text or "turkey breast" in text:
@@ -677,10 +681,10 @@ def fit_portions_to_targets(
             cap_g = 40.0
         elif any(token in identity for token in ("nut", "seed", "peanut butter", "almond butter")):
             cap_g = 60.0
-        elif "oat" in identity and "cooked" not in identity:
+        elif "oat" in identity and not re.search(r"\bcooked\b", identity):
             cap_g = 120.0
         elif any(token in identity for token in ("rice", "couscous", "pasta", "quinoa", "barley", "bulgur")):
-            cap_g = 350.0 if "cooked" in identity else 200.0
+            cap_g = 350.0 if re.search(r"\bcooked\b", identity) else 200.0
         elif any(
             token in identity
             for token in ("chicken", "turkey", "beef", "pork", "fish", "salmon", "cod", "tuna", "tofu")

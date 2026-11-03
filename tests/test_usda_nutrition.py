@@ -548,3 +548,19 @@ def test_verify_ingredients_rejects_missing_or_invalid_weight(monkeypatch, amoun
     monkeypatch.setattr(usda_nutrition, "lookup_food", lambda query: pytest.fail("lookup should not run"))
     with pytest.raises(USDANutritionError):
         verify_ingredients([{"name": "banana", "amount_g": amount_g}])
+
+
+def test_generic_peanut_butter_does_not_select_reduced_fat_formulation():
+    reduced = _food(21, "Peanut butter, smooth, reduced fat")
+    regular = _food(22, "Peanut butter, smooth, without salt")
+    assert select_match("peanut butter smooth", [reduced, regular]).fdc_id == 22
+    assert select_match("peanut butter smooth reduced fat", [reduced, regular]).fdc_id == 21
+
+
+def test_uncooked_grain_density_is_not_mistaken_for_cooked():
+    dry = {"kcal": 376, "protein_g": 12.8, "carbs_g": 77.4, "fat_g": 0.6}
+    cooked = {"kcal": 112, "protein_g": 3.8, "carbs_g": 23.2, "fat_g": 0.2}
+    assert usda_nutrition._plausible_nutrient_density("couscous dry uncooked", dry)
+    assert not usda_nutrition._plausible_nutrient_density("couscous dry uncooked", cooked)
+    assert usda_nutrition._plausible_nutrient_density("couscous cooked", cooked)
+    assert not usda_nutrition._plausible_nutrient_density("couscous cooked", dry)
