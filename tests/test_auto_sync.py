@@ -146,7 +146,7 @@ def test_scheduled_pass_uses_real_importer_with_date_cursor(monkeypatch):
         user = User(email="cursor@example.invalid", password_hash="!disabled-test")
         db.add(user)
         db.flush()
-        db.add(OAuthAccount(user_id=user.id, provider="strava", access_token="test-token", expires_at=4000000000))
+        db.add(OAuthAccount(user_id=user.id, provider="strava", access_token="test-token", expires_at=2147483647))
         db.commit()
     cursors = []
 

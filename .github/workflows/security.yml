@@ -199,7 +199,7 @@ jobs:
               db.add(athlete)
               db.flush()
               athlete_id = athlete.id
-              db.add(OAuthAccount(user_id=athlete_id, provider="strava", access_token="synthetic-token", expires_at=4000000000))
+              db.add(OAuthAccount(user_id=athlete_id, provider="strava", access_token="synthetic-token", expires_at=2147483647))
               db.commit()
           imports_strava._pull_page = lambda *args, **kwargs: [
               {"id": 123, "type": "Ride", "start_date": "2026-11-01T12:00:00Z", "elapsed_time": 600}
