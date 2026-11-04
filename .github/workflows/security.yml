@@ -172,6 +172,27 @@ jobs:
           request(first, "/users/me")
           print("Runtime signup, login, PostgreSQL sessions and revocation passed")
           PYTHON
+          docker run --rm -i --network host -e DATABASE_URL --entrypoint python glycofy:${{ github.sha }} - <<'PYTHON'
+          from datetime import date
+          from app.db import SessionLocal
+          from app.models import EnergyTarget, User, UserPreference
+          from app.routers.llm_recommend import _get_or_create_plan
+          with SessionLocal() as db:
+              user = User(email="planning-runtime@example.invalid", password_hash="!disabled-smoke-test")
+              db.add(user)
+              db.flush()
+              preference = UserPreference(user_id=user.id, daily_snack_count=2)
+              energy = EnergyTarget(user_id=user.id, date=date(2026, 11, 9), target_kcal=2000)
+              db.add_all([preference, energy])
+              db.flush()
+              plan = _get_or_create_plan(db, user.id, date(2026, 11, 9))
+              for row in (preference, energy, plan):
+                  db.refresh(row)
+                  assert row.created_at is not None and row.updated_at is not None
+              assert _get_or_create_plan(db, user.id, plan.date).id == plan.id
+              db.rollback()
+          print("Migrated PostgreSQL planning, preference and energy-target inserts passed")
+          PYTHON
       - name: Generate the production image SBOM
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:

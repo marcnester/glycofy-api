@@ -337,8 +337,8 @@ class Plan(Base):
     totals: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     source: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
-    created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
     user: Mapped[User] = relationship("User", back_populates="plans")
     meals: Mapped[list[PlanMeal]] = relationship(
@@ -708,8 +708,8 @@ class UserPreference(Base):
     allergies: Mapped[dict | None] = mapped_column(JSON, default=list)
     settings: Mapped[dict | None] = mapped_column(JSON, default=dict)
 
-    created_at: Mapped[datetime | None] = mapped_column(DateTime)
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
     # Newer explicit preference columns (present in your SQLite schema)
     ingredient_exclusions: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -740,8 +740,8 @@ class EnergyTarget(Base):
     fat_g: Mapped[float | None] = mapped_column(Float)
     meta: Mapped[dict | None] = mapped_column(JSON, default=dict)
 
-    created_at: Mapped[datetime | None] = mapped_column(DateTime)
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
 
 # -------------------------
