@@ -213,6 +213,8 @@ jobs:
                   assert activity.created_at is not None and activity.duration_s == 600
           finally:
               with SessionLocal() as db:
+                  db.query(Activity).filter(Activity.user_id == athlete_id).delete(synchronize_session=False)
+                  db.query(OAuthAccount).filter(OAuthAccount.user_id == athlete_id).delete(synchronize_session=False)
                   db.delete(db.get(User, athlete_id))
                   db.commit()
           print("Migrated PostgreSQL scheduled Strava import and idempotence passed")
