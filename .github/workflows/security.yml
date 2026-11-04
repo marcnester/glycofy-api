@@ -192,6 +192,30 @@ jobs:
               assert _get_or_create_plan(db, user.id, plan.date).id == plan.id
               db.rollback()
           print("Migrated PostgreSQL planning, preference and energy-target inserts passed")
+          from app.models import Activity, OAuthAccount
+          from app.services import auto_sync, imports_strava
+          with SessionLocal() as db:
+              athlete = User(email="strava-runtime@example.invalid", password_hash="!disabled-smoke-test")
+              db.add(athlete)
+              db.flush()
+              athlete_id = athlete.id
+              db.add(OAuthAccount(user_id=athlete_id, provider="strava", access_token="synthetic-token", expires_at=4000000000))
+              db.commit()
+          imports_strava._pull_page = lambda *args, **kwargs: [
+              {"id": 123, "type": "Ride", "start_date": "2026-11-01T12:00:00Z", "elapsed_time": 600}
+          ]
+          try:
+              auto_sync._sync_accounts()
+              auto_sync._sync_accounts()
+              with SessionLocal() as db:
+                  activity = db.query(Activity).filter(Activity.user_id == athlete_id).one()
+                  assert activity.provider == "strava" and activity.source_id == "123"
+                  assert activity.created_at is not None and activity.duration_s == 600
+          finally:
+              with SessionLocal() as db:
+                  db.delete(db.get(User, athlete_id))
+                  db.commit()
+          print("Migrated PostgreSQL scheduled Strava import and idempotence passed")
           PYTHON
       - name: Generate the production image SBOM
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2

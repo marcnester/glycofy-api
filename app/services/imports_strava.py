@@ -11,7 +11,7 @@ Pulls activities from Strava into our activities table.
 from __future__ import annotations
 
 import time
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import requests
@@ -120,8 +120,10 @@ def _upsert_activity(
     if act is None:
         act = Activity(
             user_id=user_id,
+            provider=provider,
             source_provider=provider,
             source_id=source_id,
+            created_at=datetime.now(UTC),
             **fields,
         )
         db.add(act)
@@ -170,7 +172,7 @@ def sync_strava(
 
     after_epoch = None
     if since:
-        after_dt = datetime(since.year, since.month, since.day)
+        after_dt = datetime(since.year, since.month, since.day, tzinfo=UTC)
         after_epoch = int(after_dt.timestamp())
 
     created = updated = skipped = 0
@@ -215,7 +217,8 @@ def sync_strava(
                 else:
                     skipped += 1
             except Exception:
-                skipped += 1
+                db.rollback()
+                raise
 
         if len(items) < per_page:
             break

@@ -55,7 +55,7 @@ def _sync_accounts() -> None:
                     user = db.get(User, account.user_id)
                     if user is None:
                         continue
-                    result = sync_strava(db, user, _month_start_utc_iso())
+                    result = sync_strava(db, user, dt.date.fromisoformat(_month_start_utc_iso()))
                     if result.get("error") or not result.get("linked"):
                         _LOG.warning("strava_auto_sync", extra={"status": "provider_unavailable"})
                     else:
