@@ -1,11 +1,11 @@
 services:
   - type: web
     name: glycofy-api
-    runtime: docker
+    runtime: image
+    image:
+      url: ghcr.io/marcnester/glycofy-api@sha256:71a9f9f369bf76a61e70c2df1cc72a0b96cc4c15e80ec4b60e5c607d1831db71
     plan: 1c-2g
     region: oregon
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
     preDeployCommand: alembic upgrade head
     healthCheckPath: /ready
     domains:
@@ -14,7 +14,7 @@ services:
     # service's default public hostname. Render health checks use a verified
     # custom domain as Host when one is configured.
     renderSubdomainPolicy: disabled
-    autoDeployTrigger: checksPass
+    autoDeployTrigger: "off"
     maxShutdownDelaySeconds: 30
     envVars:
       - key: ENV
