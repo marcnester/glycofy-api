@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     STRAVA_WEBHOOK_SUBSCRIPTION_ID: int | None = None
 
     # ─── Grocery checkout (optional) ─────────────────────────────────────────
+    KROGER_ENABLED: bool = False
+    KROGER_CLIENT_ID: str | None = None
+    KROGER_CLIENT_SECRET: str | None = None
+
     INSTACART_API_KEY: str | None = None
     INSTACART_API_BASE: str = "https://connect.instacart.com"
     INSTACART_LINK_EXPIRES_DAYS: int = 30

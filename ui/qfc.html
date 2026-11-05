@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shop at QFC · Glycofy</title><link rel="stylesheet" href="/ui/styles.css"><link rel="stylesheet" href="/ui/qfc.css">
+<script src="/ui/app.js" defer></script><script src="/ui/qfc.js" defer></script></head>
+<body><main class="qfc-page"><a href="/ui/grocery.html">← Grocery list</a><h1>Shop your list at QFC</h1>
+<p>Your meals and portions stay as planned. Choose products and package counts here, then complete checkout on QFC.</p>
+<p id="status" role="status">Checking connection…</p>
+<section id="connection" hidden><h2>Connect your QFC account</h2><p>Kroger will ask permission to add products to your cart. Glycofy does not place orders or access payment details.</p>
+<form method="post" action="/v1/qfc/connect"><button type="submit">Continue to Kroger authorization</button></form></section>
+<section id="shopping" hidden><button id="disconnect" type="button">Disconnect local QFC connection</button>
+<h2>1. Choose your store</h2><form id="stores-form"><label>ZIP code <input id="zip" value="98133" pattern="[0-9]{5}" required></label><button>Find QFC stores</button></form>
+<label>Store <select id="store"><option value="">Choose a store</option></select></label>
+<label>Shopping method <select id="modality"><option value="PICKUP">Pickup</option><option value="DELIVERY">Delivery</option></select></label>
+<h2>2. Match your approved groceries</h2><form id="groceries-form"><label>Start <input type="date" id="start" required></label><label>End <input type="date" id="end" required></label><button>Load approved groceries</button></form>
+<p>Choose a product for each ingredient you want to send. Package counts are entered by you; recipe portions do not change. Unmatched ingredients will be left out.</p>
+<div id="ingredients"></div><button id="preview" type="button" disabled>Review selected products</button>
+<section id="review" hidden><h2>3. Confirm your cart additions</h2><div id="review-details"></div><p id="review-warning"></p>
+<p>These items will be added to your existing QFC cart. Prices may change. Confirm the same store and fulfillment method on QFC before checkout.</p>
+<button id="send" type="button">Add these products to my QFC cart</button></section>
+<p><a href="https://www.qfc.com/cart" target="_blank" rel="noopener noreferrer">Open QFC cart</a></p></section></main></body></html>

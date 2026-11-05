@@ -91,6 +91,12 @@ services:
         value: "900"
       - key: NUTRITION_VALIDATION_BATCH_SIZE
         value: "20"
+      - key: KROGER_ENABLED
+        value: "false"
+      - key: KROGER_CLIENT_ID
+        sync: false
+      - key: KROGER_CLIENT_SECRET
+        sync: false
       - key: INSTACART_API_KEY
         sync: false
       - key: INSTACART_API_BASE
