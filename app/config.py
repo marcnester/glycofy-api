@@ -122,6 +122,7 @@ class Settings(BaseSettings):
     STRAVA_WEBHOOK_SUBSCRIPTION_ID: int | None = None
 
     # ─── Grocery checkout (optional) ─────────────────────────────────────────
+    INSTACART_ENABLED: bool = False
     KROGER_ENABLED: bool = False
     KROGER_CLIENT_ID: str | None = None
     KROGER_CLIENT_SECRET: str | None = None

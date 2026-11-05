@@ -5,7 +5,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
 from app.main import app
-from app.models import GroceryApproval, PlanItem
+from app.models import GroceryApproval, GroceryPreference, PlanItem
 from app.routers.plans import (
     _format_grocery_measurements,
     _grocery_category,
@@ -53,14 +53,16 @@ def test_piece_weight_bridge_collapses_avocado_grams_and_counts():
 
 
 def test_package_suggestion_rounds_up_to_purchasable_amounts():
-    package = _package_suggestion("salmon", "Meat & Seafood", 18, "oz")
+    package = _package_suggestion(
+        "salmon", "Meat & Seafood", 18, "oz", GroceryPreference(package_quantity=16, package_unit="oz")
+    )
     assert package == {
         "package_size": 16,
         "package_unit": "oz",
         "package_count": 2,
         "purchase_quantity": 32,
         "remainder": 14,
-        "source": "estimated",
+        "source": "preferred",
     }
     assert _package_suggestion("olive oil", "Pantry", 2, "tbsp") is None
 
@@ -171,8 +173,7 @@ def test_weekly_grocery_approval_is_persisted_and_detects_plan_changes():
             grocery = client.get("/v1/plan/grocery-list/week?start=2026-09-03&end=2026-09-04")
             salmon = grocery.json()["items"][0]
             assert salmon["quantity"] == 12
-            assert salmon["package"]["package_count"] == 1
-            assert salmon["package"]["remainder"] == 4
+            assert salmon["package"] is None
 
             preference = client.put(
                 "/v1/plan/grocery-list/preferences",
@@ -218,6 +219,27 @@ def test_weekly_grocery_approval_is_persisted_and_detects_plan_changes():
 
             status = client.get("/v1/plan/grocery-list/approval?start=2026-09-03&end=2026-09-04")
             assert status.json()["approval"]["stale"] is False
+
+            # Changing pantry ownership must expire shopping snapshots server-side,
+            # including QFC access from another tab, without modifying the plan.
+            changed_preference = client.put(
+                "/v1/plan/grocery-list/preferences",
+                json={"ingredient_key": "salmon", "in_pantry": True},
+            )
+            assert changed_preference.status_code == 200
+            status = client.get("/v1/plan/grocery-list/approval?start=2026-09-03&end=2026-09-04")
+            assert status.json()["approval"]["stale"] is True
+            assert (
+                client.post(
+                    "/v1/plan/grocery-list/approval?start=2026-09-03&end=2026-09-04",
+                    json={"servings": 1, "items": [{"id": "salmon", "quantity": 12, "unit": "oz", "pantry": True}]},
+                ).status_code
+                == 200
+            )
+            assert (
+                client.get("/v1/plan/grocery-list/approval?start=2026-09-03&end=2026-09-04").json()["approval"]["stale"]
+                is False
+            )
 
             changed_meal = {**meal, "title": "Updated salmon bowl"}
             client.post("/v1/plan/2026-09-04", json={"meals": [changed_meal], "source": "llm"})

@@ -10,7 +10,7 @@ import re
 from datetime import date as date_cls
 from datetime import datetime, timedelta
 from fractions import Fraction
-from math import ceil
+from math import ceil, isfinite
 from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
@@ -1464,6 +1464,38 @@ _GROCERY_CATEGORY_KEYWORDS = {
 }
 
 _GROCERY_NAME_ALIASES = {
+    "raw eggs": "egg",
+    "hard boiled eggs ready to eat": "hard boiled egg",
+    "milk 2 fat": "milk 2 milkfat",
+    "cottage cheese 2 fat": "cottage cheese 2 milkfat",
+    "plain greek yogurt 2 fat": "greek yogurt plain 2 milkfat",
+    "firm tofu ready to eat calcium set": "ready to eat firm tofu prepared with calcium sulfate",
+    "russet potatoes with skin": "russet potatoes raw with skin",
+    "russet potato with skin": "russet potatoes raw with skin",
+    "eggs whole raw": "egg",
+    "eggs whole": "egg",
+    "mozzarella cheese whole milk": "whole milk mozzarella",
+    "tofu firm prepared with calcium sulfate ready to eat": "ready to eat firm tofu prepared with calcium sulfate",
+    "egg whole cooked hard boiled": "hard boiled egg",
+    "greek yogurt plain nonfat": "plain nonfat greek yogurt",
+    "cottage cheese low fat 2 milkfat": "cottage cheese 2 milkfat",
+    "tuna canned in water drained": "canned tuna in water",
+    "firm tofu prepared with calcium sulfate ready to eat": "ready to eat firm tofu prepared with calcium sulfate",
+    "purchased ready to eat firm tofu": "ready to eat firm tofu",
+    "hard boiled eggs": "hard boiled egg",
+    "small potatoes": "potato",
+    "dry couscous": "couscous dry",
+    "canned tuna in water drained": "canned tuna in water",
+    "2 milk": "milk 2 milkfat",
+    "egg whole": "egg",
+    "whole egg": "egg",
+    "whole eggs": "egg",
+    "raw cod fillet": "cod fillet raw",
+    "corn tortillas": "corn tortilla",
+    "rice cakes": "rice cake",
+    "ginger root": "ginger",
+    "skyr plain nonfat": "plain nonfat skyr",
+    "plain greek yogurt 2 milkfat": "greek yogurt plain 2 milkfat",
     "berries": "mixed berries",
     "berry": "mixed berries",
     "carrot sticks": "carrot",
@@ -1479,8 +1511,18 @@ _GROCERY_NAME_ALIASES = {
 }
 
 _GROCERY_DISPLAY_NAMES = {
+    "cod fillet raw": "Raw cod fillet",
+    "whole milk mozzarella": "Whole-milk mozzarella",
+    "russet potatoes raw with skin": "Russet potatoes (with skin)",
+    "ready to eat firm tofu prepared with calcium sulfate": "Firm tofu (ready to eat, calcium-set)",
+    "hard boiled egg": "Hard-boiled eggs (ready to eat)",
     "egg": "Eggs",
     "mixed berries": "Mixed berries",
+    "milk 2 milkfat": "Milk (2% fat)",
+    "cottage cheese 2 milkfat": "Cottage cheese (2% fat)",
+    "greek yogurt plain 2 milkfat": "Plain Greek yogurt (2% fat)",
+    "plain nonfat greek yogurt": "Plain nonfat Greek yogurt",
+    "plain nonfat skyr": "Plain nonfat skyr",
 }
 
 _MASS_TO_GRAMS = {"g": 1.0, "kg": 1000.0, "oz": 28.3495, "lb": 453.592}
@@ -1499,6 +1541,7 @@ _COUNT_UNITS = {
     "serving",
 }
 _PIECE_GRAMS = {
+    "egg": 50,
     "apple": 180,
     "avocado": 150,
     "banana": 120,
@@ -1625,6 +1668,9 @@ def _round_grocery(value: float) -> float:
 
 def _format_grocery_measurements(name_key: str, measurements: dict[str, float], units: str | None) -> dict[str, Any]:
     values = dict(measurements)
+    # Eggs are bought by count even when every recipe uses edible gram weights.
+    if name_key in {"egg", "hard boiled egg"} and "mass_g" in values:
+        values["count"] = values.get("count", 0) + values.pop("mass_g") / _PIECE_GRAMS["egg"]
     if "mass_g" in values and "count" in values and name_key in _PIECE_GRAMS:
         values["count"] += values.pop("mass_g") / _PIECE_GRAMS[name_key]
     if "mass_g" in values and "volume_tbsp" in values and name_key in _CUP_GRAMS:
@@ -1661,6 +1707,56 @@ def _format_grocery_measurements(name_key: str, measurements: dict[str, float], 
 
 
 def _grocery_category(name: str, meta: dict[str, Any] | None = None) -> str:
+    key = _grocery_name(name)[0]
+    overrides = {
+        "black pepper": "Pantry",
+        "baking powder": "Pantry",
+        "cocoa powder": "Pantry",
+        "garam masala": "Pantry",
+        "dijon mustard": "Pantry",
+        "miso paste": "Pantry",
+        "rice vinegar": "Pantry",
+        "maple syrup": "Pantry",
+        "vegetable broth": "Pantry",
+        "green beans": "Produce",
+        "potato": "Produce",
+        "zucchini": "Produce",
+        "blueberries": "Produce",
+        "strawberries": "Produce",
+        "mango": "Produce",
+        "peach": "Produce",
+        "pear": "Produce",
+        "orange": "Produce",
+        "corn tortilla": "Grains & Bakery",
+        "buckwheat soba noodles": "Grains & Bakery",
+        "soba noodles dry": "Grains & Bakery",
+        "couscous dry": "Grains & Bakery",
+        "whole wheat pita": "Grains & Bakery",
+        "smoked trout": "Meat & Seafood",
+        "canned chickpeas drained": "Plant Proteins",
+        "dill": "Produce",
+        "dried oregano": "Pantry",
+        "extra firm tofu": "Plant Proteins",
+        "hummus": "Plant Proteins",
+        "ready to eat firm tofu": "Plant Proteins",
+        "ready to eat firm tofu prepared with calcium sulfate": "Plant Proteins",
+        "white beans canned drained": "Plant Proteins",
+        "fresh mozzarella": "Dairy & Eggs",
+        "whole milk mozzarella": "Dairy & Eggs",
+        "tahini": "Pantry",
+        "whole grain crackers": "Grains & Bakery",
+        "walnuts": "Pantry",
+        "chickpeas canned drained": "Plant Proteins",
+        "firm tofu prepared with calcium sulfate": "Plant Proteins",
+        "russet potatoes raw with skin": "Produce",
+        "plain nonfat skyr": "Dairy & Eggs",
+        "trout fillet raw": "Meat & Seafood",
+        "tofu": "Plant Proteins",
+        "edamame": "Plant Proteins",
+        "edamame frozen shelled": "Plant Proteins",
+    }
+    if key in overrides:
+        return overrides[key]
     explicit = str((meta or {}).get("category") or "").strip()
     if explicit and explicit.lower() != "other":
         return explicit
@@ -1682,7 +1778,7 @@ def _package_suggestion(
     preference: GroceryPreference | None = None,
 ) -> dict[str, Any] | None:
     """Suggest a realistic purchasable multiple in the list's display unit."""
-    if quantity is None or quantity <= 0 or not unit or name_key in _DEFAULT_PANTRY:
+    if quantity is None or quantity <= 0 or not unit:
         return None
 
     package_size: float | None = None
@@ -1693,20 +1789,8 @@ def _package_suggestion(
         source = "preferred"
     elif unit == "item":
         package_size = 12.0 if name_key == "egg" else 1.0
-    elif unit == "cup":
-        package_size = _PACKAGE_CUPS.get(name_key, 2.0 if category == "Produce" else 4.0)
-    elif unit == "tbsp":
-        package_size = 16.0
-    elif unit == "tsp":
-        package_size = 12.0
-    elif unit == "oz":
-        package_size = 16.0 if category == "Meat & Seafood" else 8.0
-    elif unit == "lb":
-        package_size = 1.0
-    elif unit == "g":
-        package_size = 500.0 if category == "Meat & Seafood" else 250.0
-    elif unit == "kg":
-        package_size = 0.5
+    # Unknown packages stay unknown. A recipe's display unit says nothing
+    # about the retail package; never invent 8 oz tubs, fruit, or spice jars.
 
     if not package_size or package_size <= 0:
         return None
@@ -1758,7 +1842,7 @@ def _grocery_preference_to_dict(preference: GroceryPreference) -> dict[str, Any]
 
 
 def _grocery_plan_fingerprint(plans: list[Plan]) -> list[dict[str, Any]]:
-    return [{"grocery_schema": 2}] + [
+    return [{"grocery_schema": 3}] + [
         {
             "id": plan.id,
             "date": plan.date.isoformat(),
@@ -1790,7 +1874,6 @@ _INSTACART_UNITS = {
     "lb": "pound",
     "g": "gram",
     "kg": "kilogram",
-    "can": "can",
 }
 
 
@@ -1805,12 +1888,20 @@ def _instacart_items(approval: GroceryApproval) -> list[dict[str, Any]]:
         }
         quantity = item.get("quantity")
         unit = _INSTACART_UNITS.get(_grocery_unit(item.get("unit")))
-        if quantity is not None and unit:
+        if quantity is not None and unit and isfinite(float(quantity)) and float(quantity) > 0:
             line["line_item_measurements"] = [{"quantity": float(quantity), "unit": unit}]
         if item.get("preferred_brand"):
             line["filters"] = {"brand_filters": [item["preferred_brand"]]}
         result.append(line)
     return result
+
+
+def _shopping_link_is_current(approval: GroceryApproval) -> bool:
+    return bool(
+        approval.shopping_url
+        and approval.shopping_created_at
+        and approval.shopping_created_at + timedelta(days=settings.INSTACART_LINK_EXPIRES_DAYS) > datetime.utcnow()
+    )
 
 
 def _shopping_approval(
@@ -1843,9 +1934,17 @@ def grocery_shopping_status(
     approval, fingerprint = _shopping_approval(start, final_day, db, user)
     fresh = bool(approval and approval.plan_fingerprint == fingerprint)
     return {
-        "configured": bool(settings.INSTACART_API_KEY),
+        "configured": bool(settings.INSTACART_ENABLED and settings.INSTACART_API_KEY),
         "approved": fresh,
-        "cached_url": approval.shopping_url if fresh and approval else None,
+        "cached_url": (
+            approval.shopping_url
+            if settings.INSTACART_ENABLED
+            and settings.INSTACART_API_KEY
+            and fresh
+            and approval
+            and _shopping_link_is_current(approval)
+            else None
+        ),
     }
 
 
@@ -1856,6 +1955,8 @@ def create_grocery_shopping_link(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    if not settings.INSTACART_ENABLED:
+        raise HTTPException(status_code=404, detail="Grocery delivery is not enabled")
     if not settings.INSTACART_API_KEY:
         raise HTTPException(status_code=503, detail="Grocery delivery is not configured yet")
     final_day = end or (start + timedelta(days=6))
@@ -1866,7 +1967,7 @@ def create_grocery_shopping_link(
     if not items:
         raise HTTPException(status_code=400, detail="No ingredients need to be purchased")
     fingerprint = hashlib.sha256(json.dumps(items, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    if approval.shopping_url and approval.shopping_fingerprint == fingerprint:
+    if _shopping_link_is_current(approval) and approval.shopping_fingerprint == fingerprint:
         return {"url": approval.shopping_url}
     payload = {
         "title": f"Glycofy meals · {start.isoformat()} to {final_day.isoformat()}",
@@ -1911,10 +2012,12 @@ def grocery_list_week(
         .order_by(Plan.date.asc())
         .all()
     )
-    preferences = {
-        row.ingredient_key: row
-        for row in db.query(GroceryPreference).filter(GroceryPreference.user_id == user.id).all()
-    }
+    preferences = {}
+    for row in sorted(
+        db.query(GroceryPreference).filter(GroceryPreference.user_id == user.id).all(),
+        key=lambda row: row.updated_at or datetime.min,
+    ):
+        preferences[_grocery_name(row.ingredient_key)[0]] = row
     grouped: dict[str, dict[str, Any]] = {}
     for plan in plans:
         for meal, item in _iter_items(plan):
@@ -2015,6 +2118,12 @@ def save_grocery_preference(
     row.package_quantity = payload.package_quantity
     row.package_unit = _grocery_unit(payload.package_unit) or None
     row.updated_at = now
+    # A saved pantry/package change must also invalidate server-side shopping
+    # snapshots; browser-only staleness cannot protect a QFC handoff in another tab.
+    approvals = db.query(GroceryApproval).filter(GroceryApproval.user_id == user.id).all()
+    for approval in approvals:
+        if any(_grocery_name(item.get("id"))[0] == ingredient_key for item in approval.items):
+            approval.plan_fingerprint = []
     db.commit()
     db.refresh(row)
     return {"preference": _grocery_preference_to_dict(row)}
