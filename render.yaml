@@ -92,7 +92,7 @@ services:
       - key: NUTRITION_VALIDATION_BATCH_SIZE
         value: "20"
       - key: KROGER_ENABLED
-        value: "false"
+        value: "true"
       - key: KROGER_CLIENT_ID
         sync: false
       - key: KROGER_CLIENT_SECRET
