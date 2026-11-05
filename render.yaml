@@ -91,6 +91,8 @@ services:
         value: "900"
       - key: NUTRITION_VALIDATION_BATCH_SIZE
         value: "20"
+      - key: INSTACART_ENABLED
+        value: "false"
       - key: INSTACART_API_KEY
         sync: false
       - key: INSTACART_API_BASE

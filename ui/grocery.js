@@ -2,7 +2,7 @@
   const glyco = window.__glyco || {};
   if (!glyco.fetchJSON) return;
   const $ = (id) => document.getElementById(id);
-  const CATEGORIES = ["Produce", "Meat & Seafood", "Dairy & Eggs", "Grains & Bakery", "Other", "Pantry"];
+  const CATEGORIES = ["Produce", "Meat & Seafood", "Plant Proteins", "Dairy & Eggs", "Grains & Bakery", "Other", "Pantry"];
   let data = null;
   let edits = {};
   let approval = null;
@@ -15,7 +15,7 @@
       const button = $("instacart_btn");
       button.hidden = !shopping.configured;
       button.disabled = !shopping.approved;
-      button.title = shopping.approved ? "Send this approved list to Instacart" : "Approve the current list first";
+      button.title = shopping.approved ? "Share this approved grocery list with Instacart to review products and checkout" : "Approve the current list first";
     } catch { $("instacart_btn").hidden = true; }
   }
 
@@ -23,7 +23,12 @@
   function monday(date) { const copy = new Date(date); copy.setDate(copy.getDate() - ((copy.getDay() + 6) % 7)); return copy; }
   function addDays(iso, count) { const date = new Date(`${iso}T12:00:00`); date.setDate(date.getDate() + count); return localISO(date); }
   function storageKey() { return `glyco_grocery:${$("start_date").value}:${$("end_date").value}`; }
-  function loadEdits() { try { edits = JSON.parse(localStorage.getItem(storageKey()) || "{}"); } catch { edits = {}; } }
+  function loadEdits() {
+    try { edits = JSON.parse(localStorage.getItem(storageKey()) || "{}"); } catch { edits = {}; }
+    // Package choices are persisted on the account. Drop cached estimates
+    // from older list versions without losing collected checks or quantities.
+    Object.values(edits).forEach(state => { delete state.packageQuantity; delete state.packageUnit; });
+  }
   function saveEdits(trackChange = true) { localStorage.setItem(storageKey(), JSON.stringify(edits)); if (trackChange) markChanged(); }
   function rangeQuery() { return `start=${encodeURIComponent($("start_date").value)}&end=${encodeURIComponent($("end_date").value)}`; }
   function approvalDate(value) { return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
@@ -56,7 +61,7 @@
   function stateFor(item) {
     const preference = item.preference || {};
     const existing = edits[item.id] || {};
-    edits[item.id] = {
+    edits[item.id] = Object.assign(existing, {
       done: false,
       pantry: Boolean(preference.in_pantry),
       quantity: item.quantity,
@@ -65,7 +70,7 @@
       packageQuantity: preference.package_quantity || item.package?.package_size || null,
       packageUnit: preference.package_unit || item.package?.package_unit || item.unit || "",
       ...existing,
-    };
+    });
     if (existing.packageQuantity === undefined) edits[item.id].packageQuantity = preference.package_quantity || item.package?.package_size || null;
     if (existing.packageUnit === undefined) edits[item.id].packageUnit = preference.package_unit || item.package?.package_unit || item.unit || "";
     if (existing.preferredBrand === undefined) edits[item.id].preferredBrand = preference.preferred_brand || "";
@@ -91,10 +96,11 @@
   function packageText(item) {
     const state = stateFor(item);
     const plan = packagePlan(item);
-    if (!plan) return "Set a package size for purchase guidance";
+    if (!plan) return "Buy the amount needed · package size varies";
     const brand = state.preferredBrand ? `${state.preferredBrand} · ` : "";
     const leftover = plan.remainder > 0 ? ` · about ${plan.remainder} ${unitText(plan.remainder, plan.unit)} left` : " · exact amount";
-    return `${brand}Buy ${plan.count} × ${plan.size} ${unitText(plan.size, plan.unit)}${leftover}`;
+    const estimate = item.package?.source === "estimated" && !state.preferredBrand ? "Estimated · " : "";
+    return `${estimate}${brand}Buy ${plan.count} × ${plan.size} ${unitText(plan.size, plan.unit)}${leftover}`;
   }
   function escapeCsv(value) { return `"${String(value ?? "").replace(/"/g, '""')}"`; }
   function visibleItems() { return (data?.items || []).filter((item) => !stateFor(item).pantry); }
@@ -150,7 +156,21 @@
     options.addEventListener("click", async () => {
       if (pantryView) { state.pantry = false; await persistPreference(item); saveEdits(); render(); } else openOptions(item);
     });
+    const onHand = document.createElement("button");
+    onHand.type = "button"; onHand.className = "pantry-btn"; onHand.textContent = "Already have";
+    onHand.setAttribute("aria-label", `Already have ${item.name}`);
+    onHand.addEventListener("click", async () => {
+      try {
+        await glyco.fetchJSON("/v1/plan/grocery-list/preferences", {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ingredient_key: item.id, in_pantry: true,
+            preferred_brand: state.preferredBrand || null, package_quantity: state.packageQuantity || null,
+            package_unit: state.packageUnit || null }),
+        });
+        state.pantry = true; saveEdits(); render();
+      } catch { onHand.textContent = "Could not save · retry"; }
+    });
     row.append(check, name, qty, unit, options);
+    if (!pantryView) name.append(onHand);
     return row;
   }
   function render() {

@@ -10,6 +10,8 @@ class InstacartError(RuntimeError):
 
 
 def create_products_link(*, api_base: str, api_key: str, payload: dict) -> str:
+    if api_base.rstrip("/") not in {"https://connect.instacart.com", "https://connect.dev.instacart.tools"}:
+        raise InstacartError("Instacart endpoint is not supported")
     try:
         response = httpx.post(
             f"{api_base.rstrip('/')}/idp/v1/products/products_link",
@@ -19,7 +21,7 @@ def create_products_link(*, api_base: str, api_key: str, payload: dict) -> str:
         )
         response.raise_for_status()
         url = str(response.json().get("products_link_url") or "")
-    except (httpx.HTTPError, ValueError, TypeError) as exc:
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
         raise InstacartError("Instacart could not create the shopping link") from exc
     host = (urlsplit(url).hostname or "").lower()
     if urlsplit(url).scheme != "https" or not (host == "instacart.com" or host.endswith(".instacart.com")):
