@@ -9,6 +9,7 @@ class Element {
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   setAttribute() {}
+  scrollIntoView() { this.scrolled = true; }
   add(option) { this.children.push(option); }
   fire(name) { return this.events[name]({ preventDefault() {} }); }
 }
@@ -48,6 +49,7 @@ test('real QFC UI builds JSON preview from selected product and writes cart only
   select.value = '0001111079769'; select.fire('change');
   node('preview').fire('click'); await settle();
   assert.equal(node('review').hidden, false);
+  assert.equal(node('review').scrolled, true);
   assert.match(node('store-confirmation-label').textContent, /11100 Roosevelt Way NE/);
   assert.match(node('store-confirmation-label').textContent, /Pickup/);
   assert.equal(requests.some(r => r.url.endsWith('/send')), false);

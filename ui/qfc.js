@@ -67,7 +67,7 @@
       $('review-details').append(el('p', addressText));
       $('store-confirmation-label').textContent = `I selected ${result.store}${addressText ? ` — ${addressText}` : ''} for ${result.modality === 'PICKUP' ? 'Pickup' : 'Delivery'} on QFC.`;
       $('store-confirmed').checked = false; $('send').disabled = true;
-      $('review').hidden = false; say('Set this store and shopping method on QFC, then confirm below before adding products.');
+      $('review').hidden = false; $('review').scrollIntoView({behavior:'smooth',block:'start'}); say('Set this store and shopping method on QFC, then confirm below before adding products.');
     } finally { $('preview').disabled = false; }
   }));
   $('store-confirmed').addEventListener('change', () => { $('send').disabled = !reviewId || !$('store-confirmed').checked; });
