@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84
+FROM python:3.11-slim-trixie@sha256:db20d8506e2f15b6db39b40b6015ca46bae855dec6dd326d462cfe79ae972893 AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -11,9 +11,6 @@ RUN apt-get update \
     && apt-get upgrade --yes \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd --system glycofy \
-    && useradd --system --gid glycofy --home-dir /app glycofy
-
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --upgrade \
         pip==26.2.1 \
@@ -23,6 +20,17 @@ RUN pip install --no-cache-dir --upgrade \
     && pip uninstall --yes pip setuptools wheel \
     && python -c "import fastapi, sqlalchemy, uvicorn"
 
+COPY scripts/container/build_rootfs.py /build_rootfs.py
+RUN python /build_rootfs.py
+
+FROM scratch AS runtime
+COPY --from=builder /runtime/ /
+ENV PATH=/usr/local/bin:/bin \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+WORKDIR /app
+
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY app ./app
@@ -30,9 +38,8 @@ COPY ui ./ui
 COPY assets ./assets
 COPY scripts ./scripts
 
-RUN chown -R glycofy:glycofy /app
-USER glycofy
+USER 65532:65532
 
 EXPOSE 10000
 
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --no-proxy-headers"]
+CMD ["/usr/local/bin/python", "/app/scripts/container/start.py"]

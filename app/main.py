@@ -1,6 +1,7 @@
 # app/main.py
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import time
@@ -180,6 +181,21 @@ def recover_interrupted_weekly_plans() -> None:
                 extra={"status": "unavailable", "provider": "usda_fdc"},
             )
         start_nutrition_validation_worker()
+
+
+@app.on_event("startup")
+async def start_provider_sync() -> None:
+    if settings.is_production and settings.AUTO_SYNC_ENABLED:
+        from app.services.auto_sync import start_auto_sync_loop
+
+        start_auto_sync_loop(asyncio.get_running_loop())
+
+
+@app.on_event("shutdown")
+async def stop_provider_sync() -> None:
+    from app.services.auto_sync import stop_auto_sync_loop
+
+    await stop_auto_sync_loop()
 
 
 # -----------------------------

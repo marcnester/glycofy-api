@@ -136,7 +136,16 @@ def test_production_cookie_name_and_server_proxy_boundary(monkeypatch):
     assert settings.session_cookie_name == "__Host-access_token"
 
     dockerfile = Path("Dockerfile").read_text()
-    assert "--no-proxy-headers" in dockerfile
+    import runpy
+
+    calls = []
+    monkeypatch.setattr("os.execv", lambda executable, args: calls.append((executable, args)))
+    monkeypatch.setenv("PORT", "12345")
+    runpy.run_path("scripts/container/start.py")
+    assert calls[0][0] == "/usr/local/bin/python"
+    assert "--no-proxy-headers" in calls[0][1]
+    assert calls[0][1][calls[0][1].index("--port") + 1] == "12345"
+    assert "scripts/container/start.py" in dockerfile
     assert "--forwarded-allow-ips" not in dockerfile
 
 

@@ -1,133 +1,104 @@
-# app/services/auto_sync.py
-"""
-Background auto-sync for Strava using asyncio (no new deps).
-
-- Scans linked Strava accounts once per interval (default 24h)
-- For each linked user, calls imports_strava.sync_strava(...)
-- Uses month-start as the 'since' cursor (safe & idempotent)
-- Guard against overlapping runs
-- Controlled by env:
-    AUTO_SYNC_ENABLED=true|false   (default true)
-    AUTO_SYNC_INTERVAL_HOURS=24    (int)
-    AUTO_SYNC_JITTER_SECS=120      (small random delay to stagger)
-"""
+"""Periodic read-only Strava imports, with database/provider work off the event loop."""
 
 from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import logging
 import os
 import random
+import threading
 
 from app.db import SessionLocal
 from app.models import OAuthAccount, User
 from app.services.imports_strava import sync_strava
 
-_RUNNING = False
+_LOG = logging.getLogger("glycofy.auto_sync")
+_SYNC_LOCK = threading.Lock()
 _STOP_EVENT: asyncio.Event | None = None
 _TASK: asyncio.Task | None = None
 
 
 def _bool_env(name: str, default: bool) -> bool:
     raw = os.getenv(name, "").strip().lower()
-    if not raw:
-        return default
-    return raw in ("1", "true", "yes", "y", "on")
+    return raw in ("1", "true", "yes", "y", "on") if raw else default
 
 
 def _int_env(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, "").strip() or default)
-    except Exception:
+    except ValueError:
         return default
 
 
 def _month_start_utc_iso(today_utc: dt.date | None = None) -> str:
-    if today_utc is None:
-        today_utc = dt.datetime.utcnow().date()
-    first = today_utc.replace(day=1)
-    return first.isoformat()
+    today_utc = today_utc or dt.datetime.now(dt.UTC).date()
+    return today_utc.replace(day=1).isoformat()
 
 
-async def _sync_once() -> None:
-    """One full sync pass over all linked Strava accounts."""
-    global _RUNNING
-    if _RUNNING:
+def _sync_accounts() -> None:
+    # The lock lives in the worker, so cancellation of its async waiter cannot
+    # allow another pass to overlap a still-running provider request.
+    if not _SYNC_LOCK.acquire(blocking=False):
         return
-
-    _RUNNING = True
     try:
-        jitter = _int_env("AUTO_SYNC_JITTER_SECS", 120)
-        if jitter > 0:
-            await asyncio.sleep(random.uniform(0, float(jitter)))
-
-        since_iso = _month_start_utc_iso()
-        db = SessionLocal()
-        try:
-            linked: list[OAuthAccount] = (
-                db.query(OAuthAccount).filter(OAuthAccount.provider == "strava", OAuthAccount.linked == True).all()
-            )
-
-            print(f"🌀 [auto-sync] linked={len(linked)} since={since_iso}")
-
-            for oa in linked:
-                try:
-                    user: User | None = db.query(User).filter(User.id == oa.user_id).first()
-                    if not user:
-                        print(f"⚠️  [auto-sync] skip oa_id={oa.id}: user not found")
-                        continue
-
-                    res = sync_strava(db, user, since_iso)
-                    created = res.get("created", 0)
-                    updated = res.get("updated", 0)
-                    skipped = res.get("skipped", 0)
-                    print(f"✅ [auto-sync] user={user.id} created={created} updated={updated} skipped={skipped}")
-                except Exception as e:
-                    print(f"❌ [auto-sync] user_id={oa.user_id}: {e}")
-                    try:
-                        db.rollback()
-                    except Exception:
-                        pass
-        finally:
+        with SessionLocal() as db:
+            account_ids = [row.id for row in db.query(OAuthAccount.id).filter(OAuthAccount.provider == "strava").all()]
+        for account_id in account_ids:
+            # Each account has its own transaction/session; provider or DB errors
+            # cannot leave the next account's transaction in a failed state.
             try:
-                db.close()
+                with SessionLocal() as db:
+                    account = db.get(OAuthAccount, account_id)
+                    if account is None or not (account.access_token or "").strip():
+                        continue
+                    user = db.get(User, account.user_id)
+                    if user is None:
+                        continue
+                    result = sync_strava(db, user, dt.date.fromisoformat(_month_start_utc_iso()))
+                    if result.get("error") or not result.get("linked"):
+                        _LOG.warning("strava_auto_sync", extra={"status": "provider_unavailable"})
+                    else:
+                        _LOG.info("strava_auto_sync", extra={"status": "completed"})
             except Exception:
-                pass
+                # Provider exceptions may include URLs or credentials. Never log
+                # exception text, token values, or activity/profile data here.
+                _LOG.error("strava_auto_sync", extra={"status": "failed"})
     finally:
-        _RUNNING = False
+        _SYNC_LOCK.release()
+
+
+async def _sync_once(stop_event: asyncio.Event | None = None) -> None:
+    jitter = max(_int_env("AUTO_SYNC_JITTER_SECS", 120), 0)
+    if jitter:
+        delay = random.uniform(0, float(jitter))
+        if stop_event is None:
+            await asyncio.sleep(delay)
+        elif await _wait_for_stop(stop_event, delay):
+            return
+    await asyncio.to_thread(_sync_accounts)
+
+
+async def _wait_for_stop(stop_event: asyncio.Event, seconds: float) -> bool:
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=seconds)
+        return True
+    except TimeoutError:
+        return False
 
 
 async def _loop(stop_event: asyncio.Event) -> None:
-    interval_hrs = _int_env("AUTO_SYNC_INTERVAL_HOURS", 24)
-    interval_hrs = max(interval_hrs, 1)
-    interval = interval_hrs * 3600
-
-    print(f"⏱️  [auto-sync] loop started (interval={interval_hrs}h, enabled={_bool_env('AUTO_SYNC_ENABLED', True)})")
-
-    try:
-        await asyncio.sleep(5)
-        if not stop_event.is_set() and _bool_env("AUTO_SYNC_ENABLED", True):
-            await _sync_once()
-    except Exception as e:
-        print(f"❌ [auto-sync] initial pass failed: {e}")
-
+    interval = max(_int_env("AUTO_SYNC_INTERVAL_HOURS", 24), 1) * 3600
+    if await _wait_for_stop(stop_event, 5):
+        return
     while not stop_event.is_set():
-        slept = 0
-        while slept < interval and not stop_event.is_set():
-            step = min(30, interval - slept)
-            await asyncio.sleep(step)
-            slept += step
-
-        if stop_event.is_set():
-            break
-
         if _bool_env("AUTO_SYNC_ENABLED", True):
             try:
-                await _sync_once()
-            except Exception as e:
-                print(f"❌ [auto-sync] pass failed: {e}")
-
-    print("🛑 [auto-sync] loop stopped")
+                await _sync_once(stop_event)
+            except Exception:
+                _LOG.error("strava_auto_sync", extra={"status": "pass_failed"})
+        if await _wait_for_stop(stop_event, interval):
+            return
 
 
 def start_auto_sync_loop(loop: asyncio.AbstractEventLoop) -> None:
@@ -144,8 +115,11 @@ async def stop_auto_sync_loop() -> None:
         _STOP_EVENT.set()
     if _TASK is not None:
         try:
-            await asyncio.wait_for(_TASK, timeout=10)
-        except Exception:
-            pass
+            # Keep the task/lock alive if a bounded provider request is still
+            # finishing. Cancelling a to_thread waiter does not stop its thread.
+            await asyncio.wait_for(asyncio.shield(_TASK), timeout=10)
+        except TimeoutError:
+            _LOG.warning("strava_auto_sync", extra={"status": "shutdown_pending"})
+            return
         _TASK = None
         _STOP_EVENT = None

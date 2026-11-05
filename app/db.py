@@ -1,7 +1,6 @@
 # app/db.py
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 
@@ -16,7 +15,9 @@ from app.config import settings
 # PostgreSQL (where even a caught syntax error aborts the transaction).
 @event.listens_for(Engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, connection_record):  # type: ignore[no-untyped-def]
-    if not isinstance(dbapi_connection, sqlite3.Connection):
+    # SQLite is available in development, but deliberately absent from the
+    # PostgreSQL-only production image. Import it only for SQLite connections.
+    if type(dbapi_connection).__module__ != "sqlite3":
         return
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
