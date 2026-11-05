@@ -188,8 +188,8 @@ def test_cart_once_and_cross_user(setup, monkeypatch):
     assert result.status_code == 200, result.text
     review = result.json()["review_id"]
     assert result.json()["omitted_ingredients"] == 0
-    assert client.post(f"/v1/qfc/cart/{review}/send").status_code == 200
-    assert client.post(f"/v1/qfc/cart/{review}/send").status_code == 200
+    assert client.post(f"/v1/qfc/cart/{review}/send", json={"retailer_store_confirmed": True}).status_code == 200
+    assert client.post(f"/v1/qfc/cart/{review}/send", json={"retailer_store_confirmed": True}).status_code == 200
     write.assert_called_once_with(
         "PUT",
         "/cart/add",
@@ -204,7 +204,7 @@ def test_cart_once_and_cross_user(setup, monkeypatch):
     )
     db.commit()
     app.dependency_overrides[get_current_user] = lambda: db.get(User, 2)
-    assert client.post(f"/v1/qfc/cart/{review}/send").status_code == 404
+    assert client.post(f"/v1/qfc/cart/{review}/send", json={"retailer_store_confirmed": True}).status_code == 404
     assert write.call_count == 1
 
 
@@ -214,9 +214,9 @@ def test_uncertain_no_retry(setup, monkeypatch):
     write = Mock(side_effect=kroger.KrogerError())
     monkeypatch.setattr(kroger, "request", write)
     review = client.post("/v1/qfc/cart/preview", json=body()).json()["review_id"]
-    assert client.post(f"/v1/qfc/cart/{review}/send").status_code == 502
+    assert client.post(f"/v1/qfc/cart/{review}/send", json={"retailer_store_confirmed": True}).status_code == 502
     assert db.get(KrogerCartReview, review).status == "unknown"
-    assert client.post(f"/v1/qfc/cart/{review}/send").status_code == 409
+    assert client.post(f"/v1/qfc/cart/{review}/send", json={"retailer_store_confirmed": True}).status_code == 409
     assert client.post("/v1/qfc/cart/preview", json=body()).status_code == 409
     assert write.call_count == 1
 
@@ -229,11 +229,11 @@ def test_stale_approval_expired_and_pantry(setup, monkeypatch):
     assert client.post("/v1/qfc/cart/preview", json=invalid).status_code == 422
     review = client.post("/v1/qfc/cart/preview", json=body()).json()["review_id"]
     approval.items = [{"id": "changed"}]
-    assert client.post(f"/v1/qfc/cart/{review}/send").status_code == 409
+    assert client.post(f"/v1/qfc/cart/{review}/send", json={"retailer_store_confirmed": True}).status_code == 409
     approval.items = [{"id": "eggs", "name": "Eggs", "pantry": False}, {"id": "oil", "pantry": True}]
     db.get(KrogerCartReview, review).expires_at = 1
     db.commit()
-    assert client.post(f"/v1/qfc/cart/{review}/send").status_code == 409
+    assert client.post(f"/v1/qfc/cart/{review}/send", json={"retailer_store_confirmed": True}).status_code == 409
 
 
 @pytest.mark.parametrize("quantity", [0, -1, 1.5, True, 100, "2"])
@@ -330,7 +330,7 @@ def test_reconnect_invalidates_pending_cart_review(setup, monkeypatch):
     review = client.post("/v1/qfc/cart/preview", json=body()).json()["review_id"]
     db.get(KrogerConnection, 1).connection_id = "new-customer-authorization"
     db.commit()
-    assert client.post(f"/v1/qfc/cart/{review}/send").status_code == 409
+    assert client.post(f"/v1/qfc/cart/{review}/send", json={"retailer_store_confirmed": True}).status_code == 409
     write.assert_not_called()
 
 
@@ -340,3 +340,16 @@ def test_reconnect_invalidates_pending_cart_review(setup, monkeypatch):
 def test_provider_path_injection_rejected(path):
     with pytest.raises(kroger.KrogerError):
         kroger.request("GET", path, token="synthetic")
+
+
+@pytest.mark.parametrize("confirmation", [None, False])
+def test_cart_requires_explicit_retailer_store_confirmation(setup, monkeypatch, confirmation):
+    client, db = setup
+    seed_cart(db, monkeypatch)
+    write = Mock(return_value={})
+    monkeypatch.setattr(kroger, "request", write)
+    review = client.post("/v1/qfc/cart/preview", json=body()).json()["review_id"]
+    payload = {} if confirmation is None else {"retailer_store_confirmed": confirmation}
+    assert client.post(f"/v1/qfc/cart/{review}/send", json=payload).status_code == 422
+    write.assert_not_called()
+    assert db.get(KrogerCartReview, review).status == "preview"

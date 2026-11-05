@@ -8,7 +8,7 @@
   let reviewId = null;
   let generation = 0;
   function say(message) { $('status').textContent = message; }
-  function invalidate() { generation++; reviewId = null; $('review').hidden = true; }
+  function invalidate() { generation++; reviewId = null; $('review').hidden = true; $('store-confirmed').checked = false; $('send').disabled = true; }
   function reset() { invalidate(); selections = new Map(); $('ingredients').replaceChildren(); $('preview').disabled = true; }
   function el(tag, text) { const node = document.createElement(tag); if (text) node.textContent = text; return node; }
   async function act(fn) { try { await fn(); } catch (err) { say(err.message && !err.message.includes('[object Object]') ? err.message : 'Unable to complete request. Check your product selection and try again.'); } }
@@ -62,12 +62,18 @@
       reviewId = result.review_id; $('review-details').replaceChildren(el('h3', `${result.store} · ${result.modality}`));
       for (const item of result.items) $('review-details').append(el('p', `${item.quantity} package(s) × ${item.description} (${item.size || 'size unknown'})`));
       $('review-warning').textContent = `${result.omitted_ingredients} ingredient(s) left out. ${result.notice}`;
-      $('review').hidden = false; $('send').disabled = false; say('Review the products below before adding them.');
+      const address = result.store_address || {};
+      const addressText = [address.addressLine1, address.city, address.state, address.zipCode].filter(Boolean).join(', ');
+      $('review-details').append(el('p', addressText));
+      $('store-confirmation-label').textContent = `I selected ${result.store}${addressText ? ` — ${addressText}` : ''} for ${result.modality === 'PICKUP' ? 'Pickup' : 'Delivery'} on QFC.`;
+      $('store-confirmed').checked = false; $('send').disabled = true;
+      $('review').hidden = false; say('Set this store and shopping method on QFC, then confirm below before adding products.');
     } finally { $('preview').disabled = false; }
   }));
+  $('store-confirmed').addEventListener('change', () => { $('send').disabled = !reviewId || !$('store-confirmed').checked; });
   $('send').addEventListener('click', () => act(async () => {
-    if (!reviewId) return; const id = reviewId; $('send').disabled = true;
-    try { await api(`/v1/qfc/cart/${encodeURIComponent(id)}/send`, {method:'POST'}); say('Products added. Open QFC to check your cart, store, and checkout.'); }
+    if (!reviewId || !$('store-confirmed').checked) return; const id = reviewId; $('send').disabled = true;
+    try { await api(`/v1/qfc/cart/${encodeURIComponent(id)}/send`, {method:'POST',body:JSON.stringify({retailer_store_confirmed:true})}); say('Products added. Open QFC to check your cart, store, and checkout.'); }
     catch (err) { say(`${err.message || 'Result uncertain.'} Check your QFC cart before trying again.`); }
     finally { reviewId = null; }
   }));

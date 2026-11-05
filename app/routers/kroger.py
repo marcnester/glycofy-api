@@ -275,6 +275,7 @@ def preview(body: CartPreview, db: Session = Depends(get_db), user: User = Depen
         "end": str(body.end),
         "location_id": body.location_id,
         "store": store.get("name"),
+        "store_address": store.get("address", {}),
         "modality": body.modality,
         "items": selected,
         "approval": approved,
@@ -317,6 +318,7 @@ def preview(body: CartPreview, db: Session = Depends(get_db), user: User = Depen
     return {
         "review_id": row.id,
         "store": snapshot["store"],
+        "store_address": snapshot["store_address"],
         "items": selected,
         "modality": body.modality,
         "expires_at": row.expires_at,
@@ -325,8 +327,12 @@ def preview(body: CartPreview, db: Session = Depends(get_db), user: User = Depen
     }
 
 
+class CartSend(BaseModel):
+    retailer_store_confirmed: Literal[True]
+
+
 @router.post("/v1/qfc/cart/{review_id}/send", dependencies=[Depends(enabled)])
-def send(review_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def send(review_id: str, body: CartSend, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     token = connection(db, user)
     row = db.query(KrogerCartReview).filter_by(id=review_id, user_id=user.id).first()
     if not row:

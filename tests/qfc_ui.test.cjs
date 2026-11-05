@@ -26,9 +26,9 @@ test('real QFC UI builds JSON preview from selected product and writes cart only
     if (url.endsWith('/preview')) {
       assert.equal(options.headers['Content-Type'], 'application/json');
       assert.deepEqual(JSON.parse(options.body).items, [{ ingredient_id: 'egg', upc: '0001111079769', quantity: 1 }]);
-      return { review_id: 'test-review', store: 'Northgate', modality: 'PICKUP', omitted_ingredients: 0, notice: 'Review', items: [{ quantity: 1, description: 'Eggs', size: '12 ct' }] };
+      return { review_id: 'test-review', store: 'Northgate', store_address: {addressLine1:'11100 Roosevelt Way NE',city:'Seattle',state:'WA',zipCode:'98125'}, modality: 'PICKUP', omitted_ingredients: 0, notice: 'Review', items: [{ quantity: 1, description: 'Eggs', size: '12 ct' }] };
     }
-    if (url.endsWith('/send')) return { status: 'sent' };
+    if (url.endsWith('/send')) { assert.equal(options.headers['Content-Type'], 'application/json'); assert.equal(JSON.parse(options.body).retailer_store_confirmed, true); return { status: 'sent' }; }
     throw new Error(`Unexpected test request: ${url}`);
   };
   const context = vm.createContext({
@@ -48,7 +48,14 @@ test('real QFC UI builds JSON preview from selected product and writes cart only
   select.value = '0001111079769'; select.fire('change');
   node('preview').fire('click'); await settle();
   assert.equal(node('review').hidden, false);
+  assert.match(node('store-confirmation-label').textContent, /11100 Roosevelt Way NE/);
+  assert.match(node('store-confirmation-label').textContent, /Pickup/);
   assert.equal(requests.some(r => r.url.endsWith('/send')), false);
+  assert.equal(node('send').disabled, true);
+  node('send').fire('click'); await settle();
+  assert.equal(requests.filter(r => r.url.endsWith('/send')).length, 0);
+  node('store-confirmed').checked = true; node('store-confirmed').fire('change');
+  assert.equal(node('send').disabled, false);
   node('send').fire('click'); await settle();
   node('send').fire('click'); await settle();
   assert.equal(requests.filter(r => r.url.endsWith('/send')).length, 1);
