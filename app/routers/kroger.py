@@ -12,7 +12,7 @@ from typing import Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -116,7 +116,7 @@ def connect(db: Session = Depends(get_db), user: User = Depends(get_current_user
         )
     )
     db.commit()
-    response = RedirectResponse(
+    authorize_url = (
         kroger.API
         + "/connect/oauth2/authorize?"
         + urlencode(
@@ -127,9 +127,9 @@ def connect(db: Session = Depends(get_db), user: User = Depends(get_current_user
                 "scope": kroger.SCOPE,
                 "state": state,
             }
-        ),
-        status_code=303,
+        )
     )
+    response = JSONResponse({"authorize_url": authorize_url})
     response.set_cookie(
         COOKIE, state, max_age=600, httponly=True, secure=settings.is_production, samesite="lax", path="/"
     )

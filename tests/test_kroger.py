@@ -57,8 +57,8 @@ def test_disabled_no_provider_access(setup, monkeypatch):
 
 def oauth_start(client):
     response = client.post("/v1/qfc/connect", follow_redirects=False)
-    assert response.status_code == 303
-    params = parse_qs(urlsplit(response.headers["location"]).query)
+    assert response.status_code == 200
+    params = parse_qs(urlsplit(response.json()["authorize_url"]).query)
     assert params["scope"] == ["cart.basic:write"]
     assert params["redirect_uri"][0].endswith("/oauth/kroger/callback")
     assert "HttpOnly" in response.headers["set-cookie"]
@@ -332,3 +332,11 @@ def test_reconnect_invalidates_pending_cart_review(setup, monkeypatch):
     db.commit()
     assert client.post(f"/v1/qfc/cart/{review}/send").status_code == 409
     write.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "path", ["/products/https://evil.invalid", "//evil.invalid", "/products/../cart/add", "/locations/70500858?x=1"]
+)
+def test_provider_path_injection_rejected(path):
+    with pytest.raises(kroger.KrogerError):
+        kroger.request("GET", path, token="synthetic")

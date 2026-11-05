@@ -6,7 +6,7 @@
 <p>Your meals and portions stay as planned. Choose products and package counts here, then complete checkout on QFC.</p>
 <p id="status" role="status">Checking connection…</p>
 <section id="connection" hidden><h2>Connect your QFC account</h2><p>Kroger will ask permission to add products to your cart. Glycofy does not place orders or access payment details.</p>
-<form method="post" action="/v1/qfc/connect"><button type="submit">Continue to Kroger authorization</button></form></section>
+<form id="connect-form"><button type="submit">Continue to Kroger authorization</button></form></section>
 <section id="shopping" hidden><button id="disconnect" type="button">Disconnect local QFC connection</button>
 <h2>1. Choose your store</h2><form id="stores-form"><label>ZIP code <input id="zip" value="98133" pattern="[0-9]{5}" required></label><button>Find QFC stores</button></form>
 <label>Store <select id="store"><option value="">Choose a store</option></select></label>

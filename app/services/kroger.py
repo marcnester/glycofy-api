@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 
@@ -21,14 +20,23 @@ class KrogerError(RuntimeError):
 
 
 def request(method: str, path: str, *, token: str | None = None, **kwargs) -> dict[str, Any]:
-    if path not in {"/connect/oauth2/token", "/cart/add", "/locations", "/products"} and not re.fullmatch(
-        r"/(?:locations/[0-9]{8}|products/[0-9]{8,14})", path
-    ):
+    fixed_urls = {
+        endpoint: API + endpoint for endpoint in ("/connect/oauth2/token", "/cart/add", "/locations", "/products")
+    }
+    if path in fixed_urls:
+        url = fixed_urls[path]
+    elif re.fullmatch(r"/locations/[0-9]{8}", path):
+        # Numeric conversion makes the URL component data, never URL syntax.
+        url = API + "/locations/" + str(int(path.rsplit("/", 1)[1])).zfill(8)
+    elif re.fullmatch(r"/products/[0-9]{8,14}", path):
+        raw_id = path.rsplit("/", 1)[1]
+        url = API + "/products/" + str(int(raw_id)).zfill(len(raw_id))
+    else:
         raise KrogerError()
     try:
         with httpx.Client(timeout=20, follow_redirects=False, trust_env=False) as client:
             headers = {"Authorization": f"Bearer {token}"} if token else {}
-            response = client.request(method, API + quote(path, safe="/"), headers=headers, **kwargs)
+            response = client.request(method, url, headers=headers, **kwargs)
         if response.status_code not in (200, 201, 204):
             raise KrogerError(unauthorized=response.status_code in (401, 403))
         if response.status_code == 204:

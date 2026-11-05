@@ -68,6 +68,12 @@
     catch (err) { say(`${err.message || 'Result uncertain.'} Check your QFC cart before trying again.`); }
     finally { reviewId = null; }
   }));
+  $('connect-form').addEventListener('submit', e => { e.preventDefault(); act(async () => {
+    const result = await api('/v1/qfc/connect', {method:'POST'});
+    const target = new URL(result.authorize_url);
+    if (target.origin !== 'https://api.kroger.com' || target.pathname !== '/v1/connect/oauth2/authorize') throw new Error('Invalid authorization destination.');
+    location.assign(target.href);
+  }); });
   $('disconnect').addEventListener('click', () => act(async () => { await api('/v1/qfc/connection', {method:'DELETE'}); location.reload(); }));
   await act(async () => {
     const status = await api('/v1/qfc/status');
