@@ -1,6 +1,9 @@
 (async () => {
   const $ = id => document.getElementById(id);
-  const api = window.__glyco.fetchJSON;
+  const api = (url, options = {}) => window.__glyco.fetchJSON(url, {
+    ...options,
+    headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) },
+  });
   let selections = new Map();
   let reviewId = null;
   let generation = 0;
@@ -8,7 +11,7 @@
   function invalidate() { generation++; reviewId = null; $('review').hidden = true; }
   function reset() { invalidate(); selections = new Map(); $('ingredients').replaceChildren(); $('preview').disabled = true; }
   function el(tag, text) { const node = document.createElement(tag); if (text) node.textContent = text; return node; }
-  async function act(fn) { try { await fn(); } catch (err) { say(err.message || 'Unable to complete request.'); } }
+  async function act(fn) { try { await fn(); } catch (err) { say(err.message && !err.message.includes('[object Object]') ? err.message : 'Unable to complete request. Check your product selection and try again.'); } }
   const today = new Date();
   today.setDate(today.getDate() - ((today.getDay() + 6) % 7));
   const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
