@@ -3,7 +3,7 @@ services:
     name: glycofy-api
     runtime: image
     image:
-      url: ghcr.io/marcnester/glycofy-api@sha256:71a9f9f369bf76a61e70c2df1cc72a0b96cc4c15e80ec4b60e5c607d1831db71
+      url: ghcr.io/marcnester/glycofy-api@sha256:45f029c1f27901d9d2a8918661fec60607a3aeeea11ca35f3c3cd264ab7437be
     plan: 1c-2g
     region: oregon
     preDeployCommand: alembic upgrade head
@@ -91,6 +91,12 @@ services:
         value: "900"
       - key: NUTRITION_VALIDATION_BATCH_SIZE
         value: "20"
+      - key: KROGER_ENABLED
+        value: "false"
+      - key: KROGER_CLIENT_ID
+        sync: false
+      - key: KROGER_CLIENT_SECRET
+        sync: false
       - key: INSTACART_API_KEY
         sync: false
       - key: INSTACART_API_BASE
