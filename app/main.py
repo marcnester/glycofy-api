@@ -54,6 +54,7 @@ from app.routers import (
 from app.routers import (
     imports as imports_router,
 )
+from app.routers import kroger as kroger_router
 from app.routers import (
     llm_recommend as llm_recommend_router,
 )
@@ -306,6 +307,7 @@ async def security_controls(request: Request, call_next):
 # -----------------------------
 # API Routers
 # -----------------------------
+app.include_router(kroger_router.router)
 app.include_router(health_router.router, prefix="", tags=["health"])
 app.include_router(auth_router.router, prefix="/auth", tags=["auth"])
 app.include_router(sessions_router.router, prefix="/auth/sessions", tags=["sessions"])

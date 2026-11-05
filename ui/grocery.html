@@ -11,6 +11,7 @@
   <script src="/ui/app.js" defer></script>
   <script src="/ui/grocery.js?v=2026-11-02-practical-shopping" defer></script>
   <script src="/ui/beta.js?v=2026-10-26-account-tour" defer></script>
+  <script src="/ui/qfc-entry.js?v=2026-11-05-shopping-design" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -63,6 +64,7 @@
       <button id="instacart_btn" class="btn btn-primary" type="button" hidden>Shop on Instacart</button>
     </section>
 
+    <section id="qfc-entry" class="approval-card" hidden aria-label="Shop at QFC"><div class="approval-icon" aria-hidden="true">QFC</div><div class="approval-copy"><p class="eyebrow">Make it a shopping trip</p><h2>Your list, ready for QFC</h2><p id="qfc-entry-copy" class="muted">Choose your products and package sizes before adding them to your cart.</p></div><a id="qfc-shop-link" class="btn btn-primary" href="/ui/qfc.html">Shop at QFC →</a></section>
     <div id="notice" class="notice" role="status" hidden></div>
     <div class="grocery-progress">
       <strong id="progress_text">0 of 0 collected</strong>

@@ -756,3 +756,31 @@ class PlanLock(Base):
     user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     date: Mapped[date] = mapped_column(Date, primary_key=True)
     locked: Mapped[int] = mapped_column(Integer)  # stored as INTEGER in DB
+
+
+class KrogerConnection(Base):
+    __tablename__ = "kroger_connections"
+    connection_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    access_token: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
+    refresh_token: Mapped[str | None] = mapped_column(EncryptedText())
+    expires_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    scope: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class KrogerAuthorization(Base):
+    __tablename__ = "kroger_authorizations"
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    expires_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    consumed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class KrogerCartReview(Base):
+    __tablename__ = "kroger_cart_reviews"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="preview")
+    expires_at: Mapped[int] = mapped_column(Integer, nullable=False)
