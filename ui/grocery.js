@@ -22,9 +22,10 @@
   function localISO(date) { return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
   function monday(date) { const copy = new Date(date); copy.setDate(copy.getDate() - ((copy.getDay() + 6) % 7)); return copy; }
   function addDays(iso, count) { const date = new Date(`${iso}T12:00:00`); date.setDate(date.getDate() + count); return localISO(date); }
-  function storageKey() { return `glyco_grocery:${$("start_date").value}:${$("end_date").value}`; }
+  function storageKey() { return `glyco_grocery:v3:${$("start_date").value}:${$("end_date").value}`; }
   function loadEdits() {
     try { edits = JSON.parse(localStorage.getItem(storageKey()) || "{}"); } catch { edits = {}; }
+    // The v3 cache excludes older quantities whose ingredient IDs or units changed.
     // Package choices are persisted on the account. Drop cached estimates
     // from older list versions without losing collected checks or quantities.
     Object.values(edits).forEach(state => { delete state.packageQuantity; delete state.packageUnit; });
@@ -45,7 +46,7 @@
       button.disabled = true;
     } else if (approval?.stale) {
       button.disabled = false;
-      status.textContent = "Your meal plan changed after approval. Review the updated ingredients and approve again.";
+      status.textContent = "Your grocery list needs a fresh review. Check quantities and approve again.";
       button.textContent = "Review and reapprove";
     } else if (approval) {
       button.disabled = false;

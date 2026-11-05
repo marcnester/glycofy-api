@@ -1464,6 +1464,11 @@ _GROCERY_CATEGORY_KEYWORDS = {
 }
 
 _GROCERY_NAME_ALIASES = {
+    "raw eggs": "egg",
+    "hard boiled eggs ready to eat": "hard boiled egg",
+    "milk 2 fat": "milk 2 milkfat",
+    "cottage cheese 2 fat": "cottage cheese 2 milkfat",
+    "plain greek yogurt 2 fat": "greek yogurt plain 2 milkfat",
     "firm tofu ready to eat calcium set": "ready to eat firm tofu prepared with calcium sulfate",
     "russet potatoes with skin": "russet potatoes raw with skin",
     "russet potato with skin": "russet potatoes raw with skin",
@@ -1477,24 +1482,20 @@ _GROCERY_NAME_ALIASES = {
     "tuna canned in water drained": "canned tuna in water",
     "firm tofu prepared with calcium sulfate ready to eat": "ready to eat firm tofu prepared with calcium sulfate",
     "purchased ready to eat firm tofu": "ready to eat firm tofu",
-    "russet potatoes": "russet potatoes raw with skin",
     "hard boiled eggs": "hard boiled egg",
     "small potatoes": "potato",
     "dry couscous": "couscous dry",
     "canned tuna in water drained": "canned tuna in water",
-    "nonfat greek yogurt": "plain nonfat greek yogurt",
     "2 milk": "milk 2 milkfat",
     "egg whole": "egg",
     "whole egg": "egg",
     "whole eggs": "egg",
-    "cod fillet raw": "cod fillet",
-    "raw cod fillet": "cod fillet",
+    "raw cod fillet": "cod fillet raw",
     "corn tortillas": "corn tortilla",
     "rice cakes": "rice cake",
     "ginger root": "ginger",
     "skyr plain nonfat": "plain nonfat skyr",
     "plain greek yogurt 2 milkfat": "greek yogurt plain 2 milkfat",
-    "corn kernels": "corn",
     "berries": "mixed berries",
     "berry": "mixed berries",
     "carrot sticks": "carrot",
@@ -1510,6 +1511,7 @@ _GROCERY_NAME_ALIASES = {
 }
 
 _GROCERY_DISPLAY_NAMES = {
+    "cod fillet raw": "Raw cod fillet",
     "whole milk mozzarella": "Whole-milk mozzarella",
     "russet potatoes raw with skin": "Russet potatoes (with skin)",
     "ready to eat firm tofu prepared with calcium sulfate": "Firm tofu (ready to eat, calcium-set)",

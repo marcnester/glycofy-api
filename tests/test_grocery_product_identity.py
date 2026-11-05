@@ -19,10 +19,10 @@ from app.routers import plans
         ("mozzarella cheese whole milk", "whole milk mozzarella"),
         ("dry couscous", "couscous dry"),
         ("canned tuna in water, drained", "canned tuna in water"),
-        ("nonfat Greek yogurt", "plain nonfat greek yogurt"),
+        ("Greek yogurt plain nonfat", "plain nonfat greek yogurt"),
         ("Egg whole", "egg"),
         ("eggs", "egg"),
-        ("cod fillet, raw", "cod fillet"),
+        ("raw cod fillet", "cod fillet raw"),
         ("corn tortillas", "corn tortilla"),
         ("rice cakes", "rice cake"),
         ("ginger root", "ginger"),
@@ -41,6 +41,10 @@ def test_nutritionally_distinct_products_are_not_blindly_merged():
         ("canned tuna in water", "canned tuna in oil"),
         ("plain nonfat Greek yogurt", "Greek yogurt plain 2% milkfat"),
         ("almond butter", "peanut butter"),
+        ("nonfat Greek yogurt", "plain nonfat Greek yogurt"),
+        ("russet potatoes", "russet potatoes raw with skin"),
+        ("cod fillet", "raw cod fillet"),
+        ("corn kernels", "corn"),
     ]:
         assert plans._grocery_name(a)[0] != plans._grocery_name(b)[0]
 
@@ -103,6 +107,7 @@ def test_grocery_aggregation_preserves_legacy_preferences_after_alias_merge():
             )
         )
         db.commit()
+        before = [(i.id, i.name, i.qty, i.unit, i.meta) for i in plan.meals[0].items]
         result = plans.grocery_list_week(start=plan.date, end=plan.date, db=db, user=user)
         assert len(result["items"]) == 1
         item = result["items"][0]
@@ -111,6 +116,8 @@ def test_grocery_aggregation_preserves_legacy_preferences_after_alias_merge():
         assert item["preference"]["in_pantry"] is True
         assert item["preference"]["preferred_brand"] == "Saved brand"
         assert item["package"]["source"] == "preferred"
+        db.expire_all()
+        assert [(i.id, i.name, i.qty, i.unit, i.meta) for i in plan.meals[0].items] == before
 
 
 def test_ready_to_eat_eggs_keep_their_own_count_and_product_identity():
@@ -128,3 +135,8 @@ def test_food_labels_preserve_their_identity_and_aisle(name):
     key, label = plans._grocery_name(name)
     assert plans._grocery_name(label)[0] == key
     assert plans._grocery_category(label) != "Other"
+
+
+def test_all_new_display_labels_preserve_identity():
+    for key, label in plans._GROCERY_DISPLAY_NAMES.items():
+        assert plans._grocery_name(label)[0] == key
