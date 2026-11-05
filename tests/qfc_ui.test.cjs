@@ -89,3 +89,24 @@ test('grocery QFC entry carries the current approved date range without changing
   assert.equal(node('qfc-shop-link').href, '/ui/qfc.html?start=2026-11-04&end=2026-11-05');
   assert.deepEqual(requests, ['/v1/qfc/status']);
 });
+
+test('QFC suggests package counts from store coverage and exposes a manual shortfall',async()=>{
+  const nodes=new Map(); const node=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
+  const coverage={status:'short',required_quantity:18,unit:'oz',quantity_per_package:12,suggested_packages:2};
+  const api=async(url,options={})=>{
+    if(url.endsWith('/status'))return {configured:true,connected:true};
+    if(url.includes('/groceries?'))return {items:[{id:'cod fillet',name:'Cod fillets',quantity:18,unit:'oz'}]};
+    if(url.includes('/products?')) {assert.match(url,/ingredient_id=cod%20fillet/);return {products:[{upc:'0001111079769',description:'Cod fillets',coverage,items:[{soldBy:'UNIT',size:'12 oz',fulfillment:{curbside:true}}]}]};}
+    throw Error('Unexpected request: '+url);
+  };
+  const context=vm.createContext({window:{__glyco:{fetchJSON:api}},document:{getElementById:node,createElement:tag=>new Element(tag)},Date,Map,Number,String,URL,URLSearchParams,encodeURIComponent,Intl,localStorage:{getItem(){return null},setItem(){}},location:{search:'',pathname:'/ui/qfc.html'},history:{replaceState(){}},Option:class extends Element{constructor(label,value){super('option');this.value=value;}}});
+  await vm.runInContext(fs.readFileSync('ui/qfc.js','utf8'),context);
+  node('store').value='70500866';node('modality').value='PICKUP';
+  await node('groceries-form').fire('submit');
+  const body=node('ingredients').children[0].children[1]; await body.children[0].fire('submit');
+  const radio=body.children[1].children[0].children[0];radio.checked=true;radio.fire('change');
+  const controls=body.children[2],qty=controls.children[0].children[0];
+  assert.equal(qty.value,'2');assert.match(controls.children[2].textContent,/selected 24 oz.*covers/);
+  qty.value='1';qty.fire('input');assert.match(controls.children[2].textContent,/6 oz short/);
+  assert.equal(node('send').disabled,true);
+});

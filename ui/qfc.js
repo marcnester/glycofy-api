@@ -4,6 +4,13 @@
     ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) },
   });
   const money = value => new Intl.NumberFormat(undefined, {style:'currency',currency:'USD'}).format(value);
+  const amountText = value => Number(value.toFixed(2)).toString();
+  function coverageText(coverage, packages=1) {
+    if (!coverage || coverage.status === 'unknown') return 'Amount check unavailable. Confirm the package weight or count.';
+    const selected=coverage.quantity_per_package*packages, needed=coverage.required_quantity;
+    const delta=selected-needed;
+    return `Need ${amountText(needed)} ${coverage.unit} · selected ${amountText(selected)} ${coverage.unit}${delta < -0.000001 ? ` · ${amountText(-delta)} ${coverage.unit} short` : ` · covers the approved amount`}.`;
+  }
   const preferenceKey = 'glyco_qfc_store_v1';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(preferenceKey) || '{}') || {}; } catch { /* Storage is optional. */ }
@@ -88,10 +95,10 @@
       const results = el('div',null,'product-results'); results.append(el('p','Search QFC to compare products, package sizes, and prices.','product-empty'));
       const controls = el('div',null,'package-controls'); const label = el('label','Packages to buy');
       const qty = el('input'); qty.type='number'; qty.min='1'; qty.max='99'; qty.step='1'; qty.value='1'; qty.setAttribute('aria-label',`Number of packages for ${item.name || item.id}`); label.append(qty);
-      const clear = el('button','Leave this ingredient out','link-button'); clear.type='button'; controls.hidden=true; controls.append(label,clear);
+      const clear = el('button','Leave this ingredient out','link-button'); clear.type='button'; controls.hidden=true; const coverageHint=el('p',null,'package-coverage'); controls.append(label,clear,coverageHint);
       const update = () => {
         invalidate(); const selected = selections.get(item.id);
-        if (selected) { selected.quantity=Number(qty.value); state.textContent='Selected'; check.textContent='✓'; needed.textContent=`${qty.value} × ${selected.description} · ${selected.size}`; }
+        if (selected) { selected.quantity=Number(qty.value); state.textContent='Selected'; check.textContent='✓'; needed.textContent=`Need ${item.quantity ?? 'review amount'} ${item.unit || ''} · ${qty.value} × ${selected.description} · ${selected.size}`; coverageHint.textContent=coverageText(selected.coverage,Number(qty.value)); coverageHint.classList.toggle('is-short',!!selected.coverage?.quantity_per_package && selected.coverage.quantity_per_package*Number(qty.value)<selected.coverage.required_quantity); }
         else { state.textContent='To choose'; check.textContent='+'; needed.textContent=`Needed: ${item.quantity ?? 'review amount'} ${item.unit || ''}`; }
         card.classList.toggle('is-selected',!!selected); controls.hidden=!selected; updateSummary();
       };
@@ -101,7 +108,7 @@
         search.disabled=true; search.textContent='Searching…';
         try {
           const store=$('store').value; const currentList=listGeneration;
-          const result=await api(`/v1/qfc/products?location_id=${store}&term=${encodeURIComponent(query.value)}`);
+          const result=await api(`/v1/qfc/products?location_id=${store}&term=${encodeURIComponent(query.value)}&start=${$('start').value}&end=${$('end').value}&ingredient_id=${encodeURIComponent(item.id)}`);
           if (!card.isConnected || store !== $('store').value || currentList !== listGeneration) return;
           selections.delete(item.id); results.replaceChildren(); update();
           const available=result.products.filter(p => p.upc && p.items?.length===1 && p.items[0].soldBy==='UNIT' && p.items[0].fulfillment?.[$('modality').value==='PICKUP'?'curbside':'delivery']);
@@ -111,15 +118,16 @@
             radio.setAttribute('aria-label',`${product.description}, ${pack.size || 'size unknown'}${Number.isFinite(price)?`, ${money(price)}`:''}`);
             const copy=el('span'); if(product.brand) copy.append(el('span',product.brand,'product-brand'));
             copy.append(el('span',product.description,'product-title'),el('span',`${pack.size || 'Size not provided'} · ${method()} available`,'product-size'));
+            if (product.coverage?.suggested_packages) copy.append(el('span',`${product.coverage.suggested_packages} package${product.coverage.suggested_packages===1?'':'s'} suggested to cover ${amountText(product.coverage.required_quantity)} ${product.coverage.unit}`,'product-size')); else copy.append(el('span','Confirm package amount','product-size'));
             choice.append(radio,copy,el('span',Number.isFinite(price)?money(price):'See QFC','product-price'));
-            radio.addEventListener('change',() => { if(!radio.checked) return; selections.set(item.id,{ingredient_id:item.id,upc:product.upc,quantity:Number(qty.value),description:product.description,size:pack.size || 'Size not provided',price:Number.isFinite(price)?price:null}); update(); });
+            radio.addEventListener('change',() => { if(!radio.checked) return; qty.value=String(product.coverage?.suggested_packages || 1); selections.set(item.id,{ingredient_id:item.id,upc:product.upc,quantity:Number(qty.value),description:product.description,size:pack.size || 'Size not provided',price:Number.isFinite(price)?price:null,coverage:product.coverage}); update(); });
             results.append(choice);
           }
           if(!available.length) results.append(el('p',`No packaged products available for ${method().toLowerCase()} in these results. Try a different search or leave this ingredient out.`,'product-empty'));
         } catch(err) { results.replaceChildren(el('p',errorText(err),'product-empty')); throw err; }
         finally { search.disabled=false; search.textContent='Find products'; }
       }); });
-      body.append(searchForm,results,controls); card.append(summary,body); $('ingredients').append(card);
+      if(item.shopping_note) body.append(el('p',item.shopping_note,'fine-print muted')); body.append(searchForm,results,controls); card.append(summary,body); $('ingredients').append(card);
     }
     $('list-count').textContent=`${totalIngredients} ingredients`; $('list-tools').hidden=!totalIngredients;
     $('store-settings').open=false; step('products'); updateSummary();
@@ -136,7 +144,7 @@
       const store=el('div',null,'review-store'); const storeCopy=el('div'); storeCopy.append(el('h3',result.store),el('p',addressText(result.store_address),'review-address')); store.append(storeCopy,el('span',result.modality==='PICKUP'?'Pickup':'Delivery','method-badge')); root.append(store);
       let total=0; let unpriced=0;
       for(const [index,item] of result.items.entries()) {
-        const row=el('div',null,'review-product'); const copy=el('div'); copy.append(el('strong',item.description),el('p',`${item.quantity} package${item.quantity===1?'':'s'} · ${item.size || 'Size not provided'}`));
+        const row=el('div',null,'review-product'); const copy=el('div'); copy.append(el('strong',item.description),el('p',`${item.quantity} package${item.quantity===1?'':'s'} · ${item.size || 'Size not provided'}`),el('p',coverageText(item.coverage,item.quantity),item.coverage?.status==='short'?'is-short':''));
         const price=item.price?.promo ?? item.price?.regular; const priced=Number.isFinite(price);
         if(priced) total+=price*item.quantity; else unpriced++;
         row.append(el('span',String(index+1),'review-number'),copy,el('span',priced?money(price*item.quantity):'See QFC','product-price')); root.append(row);

@@ -353,3 +353,41 @@ def test_cart_requires_explicit_retailer_store_confirmation(setup, monkeypatch, 
     assert client.post(f"/v1/qfc/cart/{review}/send", json=payload).status_code == 422
     write.assert_not_called()
     assert db.get(KrogerCartReview, review).status == "preview"
+
+
+def test_product_coverage_uses_approved_amount_and_preview_rechecks_package_count(setup, monkeypatch):
+    client, db = setup
+    approval = seed_cart(db, monkeypatch)
+    approval.items[0].update(quantity=18, unit="oz")
+    product = {
+        "upc": "0001111079769",
+        "description": "Plain cod fillets",
+        "items": [{"soldBy": "UNIT", "size": "12 oz", "fulfillment": {"curbside": True}}],
+    }
+
+    def catalog(path, params=None):
+        if path.startswith("/locations/"):
+            return {"data": {"name": "Northgate", "chain": "QFC"}}
+        return {"data": [product] if path == "/products" else product}
+
+    monkeypatch.setattr(routes, "catalog", catalog)
+    query = {
+        "location_id": "70500858",
+        "term": "cod",
+        "start": "2026-11-02",
+        "end": "2026-11-08",
+        "ingredient_id": "eggs",
+    }
+    result = client.get("/v1/qfc/products", params=query)
+    assert result.status_code == 200
+    assert result.json()["products"][0]["coverage"]["suggested_packages"] == 2
+    selected = body()
+    selected["items"][0]["quantity"] = 1
+    result = client.post("/v1/qfc/cart/preview", json=selected)
+    assert result.status_code == 200
+    assert result.json()["items"][0]["coverage"]["status"] == "short"
+    assert result.json()["items"][0]["coverage"]["shortfall"] == 6
+    assert client.get("/v1/qfc/products", params={**query, "ingredient_id": "oil"}).status_code == 422
+    assert client.get("/v1/qfc/products", params={**query, "ingredient_id": "unknown"}).status_code == 422
+    approval.plan_fingerprint = []
+    assert client.get("/v1/qfc/products", params=query).status_code == 409

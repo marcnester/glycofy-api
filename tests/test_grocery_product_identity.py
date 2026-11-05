@@ -22,7 +22,7 @@ from app.routers import plans
         ("Greek yogurt plain nonfat", "plain nonfat greek yogurt"),
         ("Egg whole", "egg"),
         ("eggs", "egg"),
-        ("raw cod fillet", "cod fillet raw"),
+        ("raw cod fillet", "cod fillet"),
         ("corn tortillas", "corn tortilla"),
         ("rice cakes", "rice cake"),
         ("ginger root", "ginger"),
@@ -43,7 +43,7 @@ def test_nutritionally_distinct_products_are_not_blindly_merged():
         ("almond butter", "peanut butter"),
         ("nonfat Greek yogurt", "plain nonfat Greek yogurt"),
         ("russet potatoes", "russet potatoes raw with skin"),
-        ("cod fillet", "raw cod fillet"),
+        ("cooked cod fillet", "raw cod fillet"),
         ("corn kernels", "corn"),
     ]:
         assert plans._grocery_name(a)[0] != plans._grocery_name(b)[0]

@@ -19,7 +19,7 @@ test('grocery page ignores legacy units and preserves Already have/Need this edi
   const nodes=new Map();
   const node=id=>{if(!nodes.has(id)) nodes.set(id,new Element()); return nodes.get(id);};
   node('servings').value='1';
-  const stored=new Map([['glyco_grocery:2026-11-04:2026-11-04',JSON.stringify({egg:{quantity:250,unit:'oz',packageQuantity:8,packageUnit:'oz'}})]]);
+  const stored=new Map([['glyco_grocery:v3:2026-11-04:2026-11-04',JSON.stringify({egg:{quantity:250,unit:'oz',packageQuantity:8,packageUnit:'oz'}})]]);
   const requests=[]; let failPreference=true;
   const api=async(url,options={})=>{
     requests.push({url,options});
@@ -54,7 +54,7 @@ test('grocery page ignores legacy units and preserves Already have/Need this edi
   row=node('grocery_list').children[0].children[1];
   row.children[0].checked=true; row.children[0].fire('change');
   assert.match(node('progress_text').textContent,/1 of 1 collected/);
-  assert.equal(JSON.parse(stored.get('glyco_grocery:v3:2026-11-04:2026-11-04')).egg.done,true);
-  assert.equal(JSON.parse(stored.get('glyco_grocery:2026-11-04:2026-11-04')).egg.unit,'oz');
+  assert.equal(JSON.parse(stored.get('glyco_grocery:v4:2026-11-04:2026-11-04')).egg.done,true);
+  assert.equal(JSON.parse(stored.get('glyco_grocery:v3:2026-11-04:2026-11-04')).egg.unit,'oz');
   assert.equal(requests.some(r=>r.options.method && !r.url.endsWith('/preferences')),false);
 });

@@ -22,10 +22,10 @@
   function localISO(date) { return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
   function monday(date) { const copy = new Date(date); copy.setDate(copy.getDate() - ((copy.getDay() + 6) % 7)); return copy; }
   function addDays(iso, count) { const date = new Date(`${iso}T12:00:00`); date.setDate(date.getDate() + count); return localISO(date); }
-  function storageKey() { return `glyco_grocery:v3:${$("start_date").value}:${$("end_date").value}`; }
+  function storageKey() { return `glyco_grocery:v${data?.grocery_schema || 4}:${$("start_date").value}:${$("end_date").value}`; }
   function loadEdits() {
     try { edits = JSON.parse(localStorage.getItem(storageKey()) || "{}"); } catch { edits = {}; }
-    // The v3 cache excludes older quantities whose ingredient IDs or units changed.
+    // The versioned cache excludes older quantities whose ingredient IDs or units changed.
     // Package choices are persisted on the account. Drop cached estimates
     // from older list versions without losing collected checks or quantities.
     Object.values(edits).forEach(state => { delete state.packageQuantity; delete state.packageUnit; });
@@ -146,6 +146,7 @@
     const purchase = document.createElement("span");
     purchase.className = "purchase-guidance"; purchase.textContent = pantryView ? "Already in your pantry" : packageText(item);
     name.append(use, purchase);
+    if (item.shopping_note) { const note = document.createElement("span"); note.className="item-use"; note.textContent=item.shopping_note; name.append(note); }
     const qty = document.createElement("input");
     qty.className = "quantity"; qty.type = "number"; qty.min = "0"; qty.step = "any"; qty.value = scaledQuantity(item); qty.disabled = pantryView; qty.setAttribute("aria-label", `${item.name} needed quantity`);
     qty.addEventListener("change", () => { state.quantity = Number(qty.value) / Number($("servings").value || 1); saveEdits(); purchase.textContent = packageText(item); });
