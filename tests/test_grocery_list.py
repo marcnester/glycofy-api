@@ -220,6 +220,27 @@ def test_weekly_grocery_approval_is_persisted_and_detects_plan_changes():
             status = client.get("/v1/plan/grocery-list/approval?start=2026-09-03&end=2026-09-04")
             assert status.json()["approval"]["stale"] is False
 
+            # Changing pantry ownership must expire shopping snapshots server-side,
+            # including QFC access from another tab, without modifying the plan.
+            changed_preference = client.put(
+                "/v1/plan/grocery-list/preferences",
+                json={"ingredient_key": "salmon", "in_pantry": True},
+            )
+            assert changed_preference.status_code == 200
+            status = client.get("/v1/plan/grocery-list/approval?start=2026-09-03&end=2026-09-04")
+            assert status.json()["approval"]["stale"] is True
+            assert (
+                client.post(
+                    "/v1/plan/grocery-list/approval?start=2026-09-03&end=2026-09-04",
+                    json={"servings": 1, "items": [{"id": "salmon", "quantity": 12, "unit": "oz", "pantry": True}]},
+                ).status_code
+                == 200
+            )
+            assert (
+                client.get("/v1/plan/grocery-list/approval?start=2026-09-03&end=2026-09-04").json()["approval"]["stale"]
+                is False
+            )
+
             changed_meal = {**meal, "title": "Updated salmon bowl"}
             client.post("/v1/plan/2026-09-04", json={"meals": [changed_meal], "source": "llm"})
             stale = client.get("/v1/plan/grocery-list/approval?start=2026-09-03&end=2026-09-04")

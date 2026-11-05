@@ -2118,6 +2118,12 @@ def save_grocery_preference(
     row.package_quantity = payload.package_quantity
     row.package_unit = _grocery_unit(payload.package_unit) or None
     row.updated_at = now
+    # A saved pantry/package change must also invalidate server-side shopping
+    # snapshots; browser-only staleness cannot protect a QFC handoff in another tab.
+    approvals = db.query(GroceryApproval).filter(GroceryApproval.user_id == user.id).all()
+    for approval in approvals:
+        if any(_grocery_name(item.get("id"))[0] == ingredient_key for item in approval.items):
+            approval.plan_fingerprint = []
     db.commit()
     db.refresh(row)
     return {"preference": _grocery_preference_to_dict(row)}
