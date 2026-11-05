@@ -553,3 +553,54 @@ def test_questionable_ai_meal_fails_closed_without_verified_fallback(monkeypatch
     assert idea is None
     assert meta["fallback"] == "quality_validation"
     assert "incomplete_instructions" in meta["quality"]["issues"]
+
+
+def test_measured_apple_and_hummus_are_recognized_macro_sources():
+    candidate = meal(
+        title="Apple Hummus Tuna Plate",
+        ingredients=[
+            {
+                "name": "apple",
+                "amount": 200,
+                "unit": "g",
+                "nutrition": {"kcal": 104, "protein_g": 0.6, "carbs_g": 28, "fat_g": 0.4},
+            },
+            {
+                "name": "hummus",
+                "amount": 100,
+                "unit": "g",
+                "nutrition": {"kcal": 166, "protein_g": 8, "carbs_g": 14, "fat_g": 10},
+            },
+            {
+                "name": "canned tuna in water",
+                "amount": 200,
+                "unit": "g",
+                "nutrition": {"kcal": 180, "protein_g": 24, "carbs_g": 8, "fat_g": 5},
+            },
+        ],
+        instructions=["Slice the apple.", "Serve with hummus and canned tuna."],
+        prep_time_min=5,
+        cook_time_min=0,
+        total_time_min=5,
+        macros={"kcal": 450, "protein_g": 32.6, "carbs_g": 50, "fat_g": 15.4},
+    )
+    assert validate_meal(candidate, require_ingredient_nutrition=True).safe
+    # Recognition does not excuse fabricated macro totals.
+    candidate["macros"]["carbs_g"] = 100
+    assert "ingredient_macro_mismatch" in validate_meal(candidate, require_ingredient_nutrition=True).codes()
+
+
+@pytest.mark.parametrize(
+    "name,query,minimum",
+    [
+        ("peanut butter", "peanut butter smooth with salt", 8),
+        ("peanut butter with salt", "peanut butter smooth with salt", 8),
+        ("hummus", "hummus prepared chickpeas tahini", 30),
+        ("olive oil", "oil olive salad or cooking", 3),
+        ("salt", "salt table", 0.5),
+    ],
+)
+def test_food_portion_minimum_is_not_reduced_by_usda_qualifiers(name, query, minimum):
+    from app.services.meal_quality import practical_minimum_grams
+
+    assert practical_minimum_grams(name, query) == minimum

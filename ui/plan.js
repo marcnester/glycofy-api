@@ -117,7 +117,7 @@
   const WEEKLY_PROGRESS_STAGES = [
     [0, 'Reviewing your goals and training…'],
     [5, 'Designing your meals and snacks as one balanced week…'],
-    [14, 'Balancing macros and weekly variety…'],
+    [14, 'Balancing nutrition and a practical shopping week…'],
     [24, 'Checking diet and ingredient exclusions…'],
     [34, 'Adding quantities and cooking instructions…'],
     [45, 'Saving your personalized week…'],
@@ -1199,7 +1199,6 @@
         // ingredients + instructions
         if (bodyEl) {
           bodyEl.innerHTML = '';
-
           const srcIng =
           (ff &&
             Array.isArray(ff.ingredients) &&
@@ -1535,7 +1534,7 @@
 
         // 2) Start a resumable background job and poll lightweight status.
         const data = await startWeeklyJob(
-          { days: weeklyDaysPayload },
+          { days: weeklyDaysPayload, planning_style: $('planning-style')?.value || 'easy' },
           { startIso: start, prettyStart, prettyEnd }
         );
         console.log('LLM weekly response', data);

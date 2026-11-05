@@ -186,7 +186,7 @@ def test_daily_and_seven_day_workflows_complete_for_every_certification_profile(
             week_days = [_request_day(start + timedelta(days=offset)) for offset in range(7)]
             weekly = llm_recommend.recommend_weekly_apply(
                 request,
-                llm_recommend.WeeklyRecommendRequest(days=week_days),
+                llm_recommend.WeeklyRecommendRequest(days=week_days, planning_style="varied"),
                 db,
                 user,
             )

@@ -548,3 +548,52 @@ def test_verify_ingredients_rejects_missing_or_invalid_weight(monkeypatch, amoun
     monkeypatch.setattr(usda_nutrition, "lookup_food", lambda query: pytest.fail("lookup should not run"))
     with pytest.raises(USDANutritionError):
         verify_ingredients([{"name": "banana", "amount_g": amount_g}])
+
+
+def test_generic_peanut_butter_does_not_select_reduced_fat_formulation():
+    reduced = _food(21, "Peanut butter, smooth, reduced fat")
+    regular = _food(22, "Peanut butter, smooth, without salt")
+    assert select_match("peanut butter smooth", [reduced, regular]).fdc_id == 22
+    assert select_match("peanut butter smooth reduced fat", [reduced, regular]).fdc_id == 21
+
+
+def test_uncooked_grain_density_is_not_mistaken_for_cooked():
+    dry = {"kcal": 376, "protein_g": 12.8, "carbs_g": 77.4, "fat_g": 0.6}
+    cooked = {"kcal": 112, "protein_g": 3.8, "carbs_g": 23.2, "fat_g": 0.2}
+    assert usda_nutrition._plausible_nutrient_density("couscous dry uncooked", dry)
+    assert not usda_nutrition._plausible_nutrient_density("couscous dry uncooked", cooked)
+    assert usda_nutrition._plausible_nutrient_density("couscous cooked", cooked)
+    assert not usda_nutrition._plausible_nutrient_density("couscous cooked", dry)
+
+
+def test_boiled_food_is_not_mistaken_for_oil():
+    egg = {"kcal": 155, "protein_g": 12.6, "carbs_g": 1.1, "fat_g": 10.6}
+    assert usda_nutrition._plausible_nutrient_density("egg whole cooked hard boiled", egg)
+    assert not usda_nutrition._plausible_nutrient_density("olive oil", egg)
+    ingredients = [
+        {
+            "name": "purchased hard-boiled eggs",
+            "usda_search_query": "egg whole cooked hard boiled",
+            "amount": 150,
+            "amount_g": 150,
+            "unit": "g",
+            "nutrition": {k: v * 1.5 for k, v in egg.items()},
+        }
+    ]
+    fitted = fit_portions_to_targets(ingredients, ingredients[0]["nutrition"])
+    assert fitted[0]["amount_g"] >= 140
+
+
+def test_cached_concise_food_identity_can_verify_when_live_lookup_budget_is_zero():
+    match = FDCMatch(
+        fdc_id=1,
+        description="Spinach, baby",
+        data_type="Foundation",
+        nutrients_per_100g={"kcal": 23, "protein_g": 2.9, "carbs_g": 3.6, "fat_g": 0.4},
+    )
+    verified = verify_ingredients(
+        [{"name": "spinach", "usda_search_query": "spinach raw", "amount": 40, "amount_g": 40, "unit": "g"}],
+        resolved_foods={"spinach": match},
+    )
+    assert verified[0]["food_ref_id"] == "1"
+    assert verified[0]["nutrition"]["kcal"] == 9.2
