@@ -71,3 +71,21 @@ test('real QFC UI builds JSON preview from selected product and writes cart only
   await Promise.all([firstSend, secondSend]);
   assert.equal(requests.filter(r => r.url.endsWith('/send')).length, 1);
 });
+
+test('grocery QFC entry carries the current approved date range without changing groceries', async () => {
+  const nodes = new Map();
+  const node = id => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
+  node('start_date').value = '2026-11-04'; node('end_date').value = '2026-11-04';
+  const requests = [];
+  const context = vm.createContext({
+    window: { __glyco: { fetchJSON: async url => { requests.push(url); return { configured: true, connected: true }; } } },
+    document: { getElementById: node }, URLSearchParams,
+  });
+  await vm.runInContext(fs.readFileSync('ui/qfc-entry.js', 'utf8'), context);
+  assert.equal(node('qfc-entry').hidden, false);
+  assert.equal(node('qfc-shop-link').href, '/ui/qfc.html?start=2026-11-04&end=2026-11-04');
+  node('end_date').value = '2026-11-05';
+  node('qfc-shop-link').fire('click');
+  assert.equal(node('qfc-shop-link').href, '/ui/qfc.html?start=2026-11-04&end=2026-11-05');
+  assert.deepEqual(requests, ['/v1/qfc/status']);
+});
