@@ -155,7 +155,11 @@
     const options = document.createElement("button");
     options.className = "pantry-btn"; options.type = "button"; options.textContent = pantryView ? "Need this" : "Options";
     options.addEventListener("click", async () => {
-      if (pantryView) { state.pantry = false; await persistPreference(item); saveEdits(); render(); } else openOptions(item);
+      if (!pantryView) { openOptions(item); return; }
+      options.disabled = true;
+      try { state.pantry = false; await persistPreference(item); saveEdits(); render(); }
+      catch { state.pantry = true; options.textContent = "Could not save · retry"; }
+      finally { options.disabled = false; }
     });
     const onHand = document.createElement("button");
     onHand.type = "button"; onHand.className = "pantry-btn"; onHand.textContent = "Already have";

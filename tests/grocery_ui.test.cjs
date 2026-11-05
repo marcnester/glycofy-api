@@ -45,6 +45,10 @@ test('grocery page ignores legacy units and preserves Already have/Need this edi
   assert.equal(preference.in_pantry,true);
   const pantry=node('grocery_list').children[0];
   assert.match(pantry.children[0].textContent,/Already have/);
+  failPreference=true;
+  await pantry.children[1].children[4].fire('click');
+  assert.match(pantry.children[1].children[4].textContent,/Could not save/);
+  assert.match(node('progress_text').textContent,/1 already on hand/);
   await pantry.children[1].children[4].fire('click');
   assert.equal(JSON.parse(requests.filter(r=>r.url.endsWith('/preferences')).at(-1).options.body).in_pantry,false);
   row=node('grocery_list').children[0].children[1];
