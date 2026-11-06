@@ -26,6 +26,8 @@ def main():
     library.gzbuffer.argtypes = [ctypes.c_void_p, ctypes.c_uint]
     library.gzwrite.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint]
     library.gzwrite.restype = ctypes.c_int
+    library.gzprintf.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+    library.gzprintf.restype = ctypes.c_int
     library.gzclearerr.argtypes = [ctypes.c_void_p]
     library.gzclearerr.restype = None
     library.gzclose.argtypes = [ctypes.c_void_p]
@@ -40,6 +42,9 @@ def main():
             buffer = ctypes.create_string_buffer(payload)
             assert library.gzwrite(handle, buffer, len(payload)) == 0
             library.gzclearerr(handle)
+            # gzprintf enters gz_vacate, which must not reuse the failed
+            # gzwrite caller buffer (the upstream heap-overflow trigger).
+            assert library.gzprintf(handle, b"%s", ctypes.c_char_p(b"tail")) == 4
     finally:
         assert library.gzclose(handle) <= 0
     if "--vex" in sys.argv:
