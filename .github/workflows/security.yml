@@ -125,6 +125,8 @@ jobs:
           assert bcrypt.checkpw(password, bcrypt.hashpw(password, bcrypt.gensalt()))
           print("Native library and application import smoke checks passed")
           PYTHON
+      - name: Verify patched zlib and repeated failed writes
+        run: docker run --rm --entrypoint python glycofy:${{ github.sha }} scripts/container/check_zlib.py
       - name: Verify migrations and readiness against PostgreSQL in the runtime image
         env:
           DATABASE_URL: postgresql+psycopg://glycofy:glycofy_test@127.0.0.1:5432/glycofy_runtime

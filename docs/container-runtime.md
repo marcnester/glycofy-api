@@ -69,3 +69,21 @@ The production-mode WebAuthn configuration is bound to `PUBLIC_BASE_URL`:
 its HTTPS origin. This permits a protected staging hostname to run the same
 production security checks. Cloudflare origin authentication, secure cookies,
 PostgreSQL, and all other production requirements remain mandatory.
+
+## Temporary zlib security rebuild
+
+Debian 13 currently lacks the zlib fix for CVE-2026-76844 (also tracked as
+CVE-2026-85091). Rebuild Debian source version `1:1.3.dfsg+really1.3.2-4`
+against the existing trixie toolchain. The dedicated builder enables only a
+`deb-src` sid repository, verifies source archive SHA256 values, and runs Debian's
+package build/tests. No sid binary repository or operating-system upgrade is added.
+Only the rebuilt zlib1g package enters the application builder; compiler and source
+files do not enter the runtime. Preserve its actual Debian package metadata for
+SBOM and vulnerability scans. No CVE ignore or severity exception is used.
+
+CI verifies the installed package version, Python compression round trips and
+repeated failed `gzwrite` calls against `/dev/full`, including `gzclearerr`.
+Remove this temporary source rebuild once trixie provides the patched package;
+retest and rescan the resulting exact artifact. Authoritative status:
+https://security-tracker.debian.org/tracker/CVE-2026-76844
+Upstream fix: https://github.com/madler/zlib/commit/df84af25dc1942490e1d1c899a07619152a46148
