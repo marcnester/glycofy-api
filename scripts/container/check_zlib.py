@@ -2,7 +2,12 @@
 
 import ctypes
 import gzip
+import hashlib
+import json
+import platform
+import sys
 import zlib
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -37,7 +42,36 @@ def main():
             library.gzclearerr(handle)
     finally:
         assert library.gzclose(handle) <= 0
-    print("Patched zlib metadata, compression and failed-write checks passed")
+    if "--vex" in sys.argv:
+        # Emit only after version, actual native calls and error recovery pass.
+        # Exact version/architecture scope cannot match the old production zlib.
+        arch = {"x86_64": "amd64", "aarch64": "arm64"}[platform.machine()]
+        distro = Path("/etc/debian_version").read_text().strip()
+        library_path = next(Path("/usr/lib").glob("*/libz.so.1"), None)
+        if library_path is None:
+            library_path = next(Path("/lib").glob("*/libz.so.1"))
+        digest = hashlib.sha256(library_path.read_bytes()).hexdigest()
+        purl = f"pkg:deb/debian/zlib1g@1.3.dfsg%2Breally1.3.2-4?arch={arch}&distro=debian-{distro}&epoch=1"
+        document = {
+            "@context": "https://openvex.dev/ns/v0.2.0",
+            "@id": f"https://github.com/marcnester/glycofy-api/zlib-fixed/{digest}",
+            "author": "Glycofy CI: verified Debian source rebuild",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "version": 1,
+            "statements": [
+                {
+                    "vulnerability": {"name": cve},
+                    "products": [{"@id": purl}],
+                    "status": "fixed",
+                    "status_notes": "Debian source 1:1.3.dfsg+really1.3.2-4 includes upstream df84af25dc1942490e1d1c899a07619152a46148. Source archives are checksum-pinned in Dockerfile. Runtime version, compression and repeated failed-write checks passed. libz SHA256="
+                    + digest,
+                }
+                for cve in ("CVE-2026-76844", "CVE-2026-85091")
+            ],
+        }
+        print(json.dumps(document, indent=2))
+    else:
+        print("Patched zlib metadata, compression and failed-write checks passed")
 
 
 if __name__ == "__main__":

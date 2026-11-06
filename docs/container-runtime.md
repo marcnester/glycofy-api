@@ -87,3 +87,12 @@ Remove this temporary source rebuild once trixie provides the patched package;
 retest and rescan the resulting exact artifact. Authoritative status:
 https://security-tracker.debian.org/tracker/CVE-2026-76844
 Upstream fix: https://github.com/madler/zlib/commit/df84af25dc1942490e1d1c899a07619152a46148
+
+The stable-release scanner feed reports this source-rebuilt version as affected
+because trixie has no fixed-version entry. CI therefore generates an OpenVEX
+`fixed` statement only after the native regression checks pass. It is scoped to
+the exact zlib package version, epoch, architecture and distro, and records the
+actual library SHA256 and source patch. It does not match the old package. The
+strict gate consumes this fixed-status evidence; the raw all-severity inventory
+runs without VEX and is retained alongside the statement, so findings remain
+auditable. All other high/critical findings continue to block publication.
