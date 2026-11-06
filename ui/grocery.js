@@ -8,6 +8,18 @@
   let approval = null;
   let editingItem = null;
   let shopping = null;
+  let retailer = null;
+  let loadedRange = null;
+  let loadSequence = 0;
+  let loading = true;
+  let saving = false;
+
+  function rangeIsCurrent() { return loadedRange === rangeQuery(); }
+  function canReview() { return !loading && !saving && rangeIsCurrent() && data?.items?.length && !data?.missing_dates?.length; }
+  async function loadRetailer() {
+    try { retailer = await glyco.fetchJSON("/v1/qfc/status"); } catch { retailer = null; }
+    renderApproval();
+  }
 
   async function loadShopping() {
     try {
@@ -37,28 +49,36 @@
   function renderApproval() {
     const card = $("approval_title").closest(".approval-card");
     const status = $("approval_status");
-    const button = $("approve_btn");
     card.classList.toggle("is-approved", Boolean(approval && !approval.stale));
     card.classList.toggle("is-stale", Boolean(approval?.stale));
-    if (data?.missing_dates?.length) {
-      status.textContent = "Complete the missing meal-plan days before approving this shopping list.";
-      button.textContent = "Plan all days first";
-      button.disabled = true;
-    } else if (approval?.stale) {
-      button.disabled = false;
-      status.textContent = "Your grocery list needs a fresh review. Check quantities and approve again.";
-      button.textContent = "Review and reapprove";
-    } else if (approval) {
-      button.disabled = false;
-      status.textContent = `Approved ${approvalDate(approval.approved_at)} for ${approval.servings} serving${approval.servings === 1 ? "" : "s"}. Package choices and pantry status are saved in this snapshot.`;
-      button.textContent = "Approved ✓";
-    } else {
-      button.disabled = false;
-      status.textContent = "Confirm every day is planned, adjust servings, package choices, and what you already have.";
-      button.textContent = "Approve shopping list";
-    }
+    let label = retailer?.configured ? "Review list & shop at QFC →" : "Review shopping list →";
+    if (loading) { label = "Loading list…"; status.textContent = "Getting your groceries ready."; }
+    else if (!rangeIsCurrent()) { label = "Update list first"; status.textContent = "Your dates changed. Select Update list to load those groceries."; }
+    else if (data?.missing_dates?.length) { label = "Plan all days first"; status.textContent = "Complete the missing meal-plan days before reviewing this shopping list."; }
+    else if (!data?.items?.length) { label = "No groceries to review"; status.textContent = "Create a meal plan for these dates first."; }
+    else if (approval?.stale) { status.textContent = "Your grocery list needs a fresh review. Check what you already have, then continue below."; }
+    else if (approval) { status.textContent = `List saved ${approvalDate(approval.approved_at)}. You can review it again or continue to choose products.`; }
+    else { status.textContent = "Mark what you already have below. Then review the amounts and continue to choose products. No need to check off each item."; }
+    [$("approve_btn"), $("review_sticky_btn")].forEach(button => { button.textContent = label; button.disabled = !canReview(); });
+    $("shopping-summary").textContent = data?.items?.length ? `${visibleItems().length} items to buy · ${data.items.length - visibleItems().length} already have` : "Your next shopping step";
   }
-  function markChanged() { if (approval && !approval.stale) { approval = { ...approval, stale: true }; renderApproval(); } }
+  function openReview() {
+    if (!canReview()) return;
+    $("review-error").textContent = "";
+    $("review-summary").textContent = `${$("start_date").value} through ${$("end_date").value} · ${$("servings").value} household serving(s) · ${visibleItems().length} items to buy`;
+    const root = $("review-items"); root.replaceChildren();
+    (data.items || []).forEach(item => {
+      const state = stateFor(item);
+      const row = document.createElement("div"); row.className = "review-item";
+      const name = document.createElement("strong"); name.textContent = item.name;
+      const amount = document.createElement("span"); amount.textContent = state.pantry ? "Already have · excluded from shopping" : `${scaledQuantity(item) === "" ? "Check amount" : scaledQuantity(item)} ${state.unit || ""}`;
+      row.append(name, amount); root.appendChild(row);
+    });
+    $("review-continue").hidden = !retailer?.configured;
+    $("review-save").textContent = retailer?.configured ? "Save list only" : "Save shopping list";
+    $("grocery-review-dialog").showModal();
+  }
+  function markChanged() { if (approval && !approval.stale) approval = { ...approval, stale: true }; renderApproval(); }
   function stateFor(item) {
     const preference = item.preference || {};
     const existing = edits[item.id] || {};
@@ -204,31 +224,48 @@
     $("grocery-options-title").textContent = item.name; $("grocery-brand").value = state.preferredBrand || ""; $("grocery-package-quantity").value = state.packageQuantity || ""; $("grocery-package-unit").value = state.packageUnit || state.unit || ""; $("grocery-in-pantry").checked = Boolean(state.pantry); $("grocery-options-error").textContent = ""; $("grocery-options-dialog").showModal();
   }
   async function load() {
+    const sequence = ++loadSequence;
+    const requestedRange = rangeQuery();
+    loading = true; loadedRange = null; renderApproval();
     const notice = $("notice"); notice.hidden = true; $("grocery_list").innerHTML = '<p class="muted">Building your grocery list…</p>';
     try {
-      data = await glyco.fetchJSON(`/v1/plan/grocery-list/week?${rangeQuery()}`);
-      const approvalResponse = await glyco.fetchJSON(`/v1/plan/grocery-list/approval?${rangeQuery()}`); approval = approvalResponse.approval; loadEdits();
+      const nextData = await glyco.fetchJSON(`/v1/plan/grocery-list/week?${requestedRange}`);
+      const approvalResponse = await glyco.fetchJSON(`/v1/plan/grocery-list/approval?${requestedRange}`);
+      if (sequence !== loadSequence) return;
+      if (requestedRange !== rangeQuery()) { loading = false; renderApproval(); return; }
+      data = nextData; approval = approvalResponse.approval; loadEdits();
       if (approval && !approval.stale) {
         $("servings").value = approval.servings;
         approval.items.forEach((item) => { edits[item.id] = { done: false, pantry: Boolean(item.pantry), quantity: item.quantity == null ? null : Number(item.quantity) / approval.servings, unit: item.unit, preferredBrand: item.preferred_brand || item.preference?.preferred_brand || "", packageQuantity: item.package_quantity || item.package?.package_size || null, packageUnit: item.package_unit || item.package?.package_unit || item.unit || "" }; });
       }
       if (data.missing_dates.length) { notice.textContent = `${data.missing_dates.length} selected day${data.missing_dates.length === 1 ? " has" : "s have"} no meal plan yet. Only planned days are included.`; notice.hidden = false; }
-      render(); renderApproval(); await loadShopping();
-    } catch (error) { const root = $("grocery_list"); root.replaceChildren(); const message = document.createElement("div"); message.className = "empty"; message.textContent = error.message || "Could not load grocery list."; root.appendChild(message); }
+      loadedRange = requestedRange; loading = false; render(); renderApproval(); await loadShopping();
+    } catch (error) { if (sequence !== loadSequence) return; const root = $("grocery_list"); root.replaceChildren(); const message = document.createElement("div"); message.className = "empty"; message.textContent = error.message || "Could not load grocery list."; root.appendChild(message); loading = false; renderApproval(); }
   }
-  async function approve() {
-    const button = $("approve_btn"); button.disabled = true; button.textContent = "Approving…";
+  async function approve(continueToQfc = false) {
+    if (!canReview()) return;
+    saving = true; renderApproval();
+    ["review-save", "review-continue", "review-cancel"].forEach(id => { $(id).disabled = true; });
+    $("review-error").textContent = "";
     try {
       const items = (data?.items || []).map((item) => { const state = stateFor(item); const pack = packagePlan(item); return { id: item.id, quantity: scaledQuantity(item) === "" ? null : Number(scaledQuantity(item)), unit: state.unit || "", pantry: Boolean(state.pantry), preferred_brand: state.preferredBrand || null, package_quantity: state.packageQuantity ? Number(state.packageQuantity) : null, package_unit: state.packageUnit || null, purchase_count: pack?.count || null }; });
       const result = await glyco.fetchJSON(`/v1/plan/grocery-list/approval?${rangeQuery()}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ servings: Number($("servings").value || 1), items }) });
-      approval = result.approval; saveEdits(false); renderApproval(); await loadShopping();
-    } catch (error) { const notice = $("notice"); notice.textContent = error.message || "Could not approve this list."; notice.hidden = false; renderApproval(); }
-    finally { button.disabled = Boolean(data?.missing_dates?.length); }
+      approval = result.approval; saveEdits(false);
+      if (continueToQfc && retailer?.configured) { location.assign(`/ui/qfc.html?${rangeQuery()}`); }
+      else { $("grocery-review-dialog").close(); await loadShopping(); }
+    } catch (error) { $("review-error").textContent = error.message || "Could not save this list. Please try again."; }
+    finally { saving = false; renderApproval(); ["review-save", "review-continue", "review-cancel"].forEach(id => { $(id).disabled = false; }); }
   }
 
   document.addEventListener("DOMContentLoaded", () => {
     const query = new URLSearchParams(location.search); const start = query.get("start") || localISO(monday(new Date())); $("start_date").value = start; $("end_date").value = query.get("end") || addDays(start, 6);
-    $("load_btn").addEventListener("click", load); $("servings").addEventListener("change", () => { markChanged(); render(); }); $("approve_btn").addEventListener("click", approve);
+    $("load_btn").addEventListener("click", load); $("servings").addEventListener("change", () => { markChanged(); render(); }); $("approve_btn").addEventListener("click", openReview);
+    $("review_sticky_btn").addEventListener("click", openReview);
+    $("review-cancel").addEventListener("click", () => $("grocery-review-dialog").close());
+    $("review-save").addEventListener("click", () => approve(false));
+    $("review-continue").addEventListener("click", () => approve(true));
+    $("grocery-review-dialog").addEventListener("cancel", event => { if (saving) event.preventDefault(); });
+    ["start_date", "end_date"].forEach(id => $(id).addEventListener("change", renderApproval));
     $("instacart_btn").addEventListener("click", async () => {
       const button = $("instacart_btn"); button.disabled = true; button.textContent = "Opening Instacart…";
       try { const result = await glyco.fetchJSON(`/v1/plan/grocery-list/shopping?${rangeQuery()}`, { method: "POST" }); location.assign(result.url); }
@@ -243,6 +280,6 @@
       event.preventDefault(); if (!editingItem) return; const state = stateFor(editingItem); state.preferredBrand = $("grocery-brand").value.trim(); state.packageQuantity = $("grocery-package-quantity").value ? Number($("grocery-package-quantity").value) : null; state.packageUnit = $("grocery-package-unit").value.trim(); state.pantry = $("grocery-in-pantry").checked;
       try { await persistPreference(editingItem); saveEdits(); $("grocery-options-dialog").close(); render(); } catch (error) { $("grocery-options-error").textContent = error.message || "Could not save this preference."; }
     });
-    $("logout_btn").addEventListener("click", () => glyco.doLogout && glyco.doLogout()); load();
+    $("logout_btn").addEventListener("click", () => glyco.doLogout && glyco.doLogout()); load(); loadRetailer();
   });
 })();

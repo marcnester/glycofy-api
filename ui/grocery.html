@@ -6,12 +6,11 @@
   <title>Grocery List • Glycofy</title>
   <link rel="icon" href="/ui/favicon.svg" />
   <link rel="stylesheet" href="/ui/styles.css?v=2026-09-06-beta-ready" />
-  <link rel="stylesheet" href="/ui/grocery.css?v=2026-09-06-mobile2" />
+  <link rel="stylesheet" href="/ui/grocery.css?v=2026-11-05-guided-review" />
   <link rel="stylesheet" href="/ui/theme.css?v=2026-09-03-unified" />
   <script src="/ui/app.js" defer></script>
-  <script src="/ui/grocery.js?v=2026-11-05-purchase-catalog-v4" defer></script>
+  <script src="/ui/grocery.js?v=2026-11-05-guided-review" defer></script>
   <script src="/ui/beta.js?v=2026-10-26-account-tour" defer></script>
-  <script src="/ui/qfc-entry.js?v=2026-11-05-shopping-design" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -56,15 +55,14 @@
     <section class="approval-card" aria-labelledby="approval_title">
       <div class="approval-icon" aria-hidden="true">✓</div>
       <div class="approval-copy">
-        <p class="eyebrow">Ready to shop</p>
-        <h2 id="approval_title">Review and approve your week</h2>
-        <p id="approval_status" class="muted">Confirm every day is planned, adjust servings, and mark what you already have.</p>
+        <p class="eyebrow">1. Check your list · 2. Review · 3. Choose products</p>
+        <h2 id="approval_title">Your groceries, ready when you are</h2>
+        <p id="approval_status" class="muted">Mark what you already have below, then review your shopping list.</p>
       </div>
-      <button id="approve_btn" class="btn btn-primary" type="button">Approve shopping list</button>
+      <button id="approve_btn" class="btn btn-primary" type="button" disabled>Loading list…</button>
       <button id="instacart_btn" class="btn btn-primary" type="button" hidden>Shop on Instacart</button>
     </section>
 
-    <section id="qfc-entry" class="approval-card" hidden aria-label="Shop at QFC"><div class="approval-icon" aria-hidden="true">QFC</div><div class="approval-copy"><p class="eyebrow">Make it a shopping trip</p><h2>Your list, ready for QFC</h2><p id="qfc-entry-copy" class="muted">Choose your products and package sizes before adding them to your cart.</p></div><a id="qfc-shop-link" class="btn btn-primary" href="/ui/qfc.html">Shop at QFC →</a></section>
     <div id="notice" class="notice" role="status" hidden></div>
     <div class="grocery-progress">
       <strong id="progress_text">0 of 0 collected</strong>
@@ -74,7 +72,26 @@
     <section id="grocery_list" class="grocery-list" aria-live="polite">
       <p class="muted">Loading your grocery list…</p>
     </section>
+    <aside class="shopping-next" aria-label="Next shopping step">
+      <div><strong id="shopping-summary">Loading your list…</strong><span>Review first. Nothing is added to a cart.</span></div>
+      <button id="review_sticky_btn" class="btn btn-primary" type="button" disabled>Loading list…</button>
+    </aside>
   </main>
+  <dialog id="grocery-review-dialog" class="grocery-dialog review-dialog" aria-labelledby="review-title" aria-describedby="review-help">
+    <div class="grocery-dialog__form">
+      <p class="eyebrow">Review your shopping list</p>
+      <h2 id="review-title">Ready to choose your products?</h2>
+      <p id="review-summary" class="muted"></p>
+      <p id="review-help">Check the amounts below. Continuing saves this shopping list; it does not change your meals or add anything to a cart. Choose brands and package sizes at the next step.</p>
+      <div id="review-items" class="review-items"></div>
+      <p id="review-error" class="dialog-error" role="alert"></p>
+      <div class="dialog-actions review-actions">
+        <button id="review-cancel" class="btn" type="button">Back to list</button>
+        <button id="review-save" class="btn" type="button">Save list only</button>
+        <button id="review-continue" class="btn btn-primary" type="button">Continue to QFC product selection →</button>
+      </div>
+    </div>
+  </dialog>
   <dialog id="grocery-options-dialog" class="grocery-dialog">
     <form id="grocery-options-form" class="grocery-dialog__form">
       <p class="eyebrow">Shopping preference</p>

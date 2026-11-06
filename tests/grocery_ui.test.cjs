@@ -58,3 +58,49 @@ test('grocery page ignores legacy units and preserves Already have/Need this edi
   assert.equal(JSON.parse(stored.get('glyco_grocery:v3:2026-11-04:2026-11-04')).egg.unit,'oz');
   assert.equal(requests.some(r=>r.options.method && !r.url.endsWith('/preferences')),false);
 });
+
+async function reviewHarness({configured=true,missing=[],failSave=false}={}) {
+  const nodes=new Map(); const node=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
+  Element.prototype.showModal=function(){this.open=true;}; Element.prototype.close=function(){this.open=false;};
+  node('servings').value='1'; const requests=[], destinations=[]; let resolveSave;
+  const api=async(url,options={})=>{
+    requests.push({url,options});
+    if(url.endsWith('/qfc/status'))return {configured,connected:false};
+    if(url.includes('/week?'))return {missing_dates:missing,items:[{id:'cod',name:'Cod fillets',category:'Meat & Seafood',quantity:18,unit:'oz',uses:[]}]};
+    if(url.includes('/approval?')) {if(options.method==='POST'){if(failSave)throw Error('Save failed');await new Promise(resolve=>{resolveSave=resolve;});return {approval:{servings:1,approved_at:'2026-11-05T00:00:00Z',items:[]}};}return {approval:null};}
+    if(url.includes('/shopping?'))return {configured:false};
+    throw Error('Unexpected '+url);
+  };
+  const events={};const context=vm.createContext({window:{__glyco:{fetchJSON:api}},document:{getElementById:node,createElement:tag=>new Element(tag),addEventListener:(name,fn)=>events[name]=fn},localStorage:{getItem:()=>null,setItem(){}},location:{search:'?start=2026-12-01&end=2026-12-01',assign:url=>destinations.push(url)},Date,URLSearchParams,Intl,Map,Number,String,encodeURIComponent});
+  vm.runInContext(fs.readFileSync('ui/grocery.js','utf8'),context);events.DOMContentLoaded();await tick();await tick();
+  return {node,requests,destinations,release:()=>resolveSave()};
+}
+test('review opens without approval; cancel writes nothing; continue saves once before QFC',async()=>{
+  const h=await reviewHarness();
+  assert.match(h.node('approve_btn').textContent,/Review list & shop at QFC/);
+  h.node('review_sticky_btn').fire('click');assert.equal(h.node('grocery-review-dialog').open,true);
+  assert.equal(h.node('review-items').children[0].children[1].textContent,'18 oz');
+  h.node('review-cancel').fire('click');assert.equal(h.node('grocery-review-dialog').open,false);
+  assert.equal(h.requests.filter(r=>r.options.method==='POST').length,0);
+  h.node('approve_btn').fire('click');const pending=h.node('review-continue').fire('click');
+  await h.node('review-continue').fire('click');assert.equal(h.destinations.length,0);
+  assert.equal(h.requests.filter(r=>r.options.method==='POST').length,1);
+  const body=JSON.parse(h.requests.find(r=>r.options.method==='POST').options.body);
+  assert.equal(body.items[0].quantity,18);assert.equal(body.items[0].unit,'oz');
+  h.release();await pending;assert.deepEqual(h.destinations,['/ui/qfc.html?start=2026-12-01&end=2026-12-01']);
+  assert.equal(h.requests.some(r=>/\/send|\/cart/.test(r.url)),false);
+});
+test('failed review save stays open and never navigates; date changes block review',async()=>{
+  const h=await reviewHarness({failSave:true});h.node('approve_btn').fire('click');await h.node('review-continue').fire('click');
+  assert.equal(h.node('grocery-review-dialog').open,true);assert.equal(h.node('review-error').textContent,'Save failed');assert.equal(h.destinations.length,0);
+  h.node('review-cancel').fire('click');h.node('end_date').value='2026-12-02';h.node('end_date').fire('change');
+  assert.equal(h.node('approve_btn').disabled,true);assert.equal(h.node('review_sticky_btn').disabled,true);
+  h.node('approve_btn').fire('click');assert.equal(h.node('grocery-review-dialog').open,false);
+});
+test('QFC unavailable offers save-only and missing plans cannot be approved',async()=>{
+  const h=await reviewHarness({configured:false});h.node('approve_btn').fire('click');assert.equal(h.node('review-continue').hidden,true);
+  const pending=h.node('review-save').fire('click');h.release();await pending;
+  assert.equal(h.node('grocery-review-dialog').open,false);assert.equal(h.destinations.length,0);
+  const missing=await reviewHarness({missing:['2026-12-01']});assert.equal(missing.node('approve_btn').disabled,true);
+  missing.node('approve_btn').fire('click');assert.equal(missing.node('grocery-review-dialog').open,undefined);
+});
