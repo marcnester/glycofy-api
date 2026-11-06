@@ -15,7 +15,7 @@
   let saving = false;
 
   function rangeIsCurrent() { return loadedRange === rangeQuery(); }
-  function canReview() { return !loading && !saving && rangeIsCurrent() && data?.items?.length && !data?.missing_dates?.length; }
+  function canReview() { return !loading && !saving && rangeIsCurrent() && data?.items?.length; }
   async function loadRetailer() {
     try { retailer = await glyco.fetchJSON("/v1/qfc/status"); } catch { retailer = null; }
     renderApproval();
@@ -54,8 +54,8 @@
     let label = retailer?.configured ? "Review list & shop at QFC →" : "Review shopping list →";
     if (loading) { label = "Loading list…"; status.textContent = "Getting your groceries ready."; }
     else if (!rangeIsCurrent()) { label = "Update list first"; status.textContent = "Your dates changed. Select Update list to load those groceries."; }
-    else if (data?.missing_dates?.length) { label = "Plan all days first"; status.textContent = "Complete the missing meal-plan days before reviewing this shopping list."; }
     else if (!data?.items?.length) { label = "No groceries to review"; status.textContent = "Create a meal plan for these dates first."; }
+    else if (data?.missing_dates?.length) { status.textContent = "Shop for the days already planned. Unplanned dates are excluded; review again if you add meals later."; }
     else if (approval?.stale) { status.textContent = "Your grocery list needs a fresh review. Check what you already have, then continue below."; }
     else if (approval) { status.textContent = `List saved ${approvalDate(approval.approved_at)}. You can review it again or continue to choose products.`; }
     else { status.textContent = "Mark what you already have below. Then review the amounts and continue to choose products. No need to check off each item."; }
@@ -66,6 +66,7 @@
     if (!canReview()) return;
     $("review-error").textContent = "";
     $("review-summary").textContent = `${$("start_date").value} through ${$("end_date").value} · ${$("servings").value} household serving(s) · ${visibleItems().length} items to buy`;
+    if (data.missing_dates?.length) $("review-summary").textContent += ` · Unplanned dates excluded: ${data.missing_dates.join(", ")}. Review again if you add plans later.`;
     const root = $("review-items"); root.replaceChildren();
     (data.items || []).forEach(item => {
       const state = stateFor(item);
@@ -238,7 +239,7 @@
         $("servings").value = approval.servings;
         approval.items.forEach((item) => { edits[item.id] = { done: false, pantry: Boolean(item.pantry), quantity: item.quantity == null ? null : Number(item.quantity) / approval.servings, unit: item.unit, preferredBrand: item.preferred_brand || item.preference?.preferred_brand || "", packageQuantity: item.package_quantity || item.package?.package_size || null, packageUnit: item.package_unit || item.package?.package_unit || item.unit || "" }; });
       }
-      if (data.missing_dates.length) { notice.textContent = `${data.missing_dates.length} selected day${data.missing_dates.length === 1 ? " has" : "s have"} no meal plan yet. Only planned days are included.`; notice.hidden = false; }
+      if (data.missing_dates.length) { notice.textContent = data.items.length ? `Shopping includes planned days only. No plans for ${data.missing_dates.join(", ")}; these dates are excluded. You can still review and shop.` : "No planned groceries in this date range. Choose dates with meals or create a meal plan first."; notice.hidden = false; }
       loadedRange = requestedRange; loading = false; render(); renderApproval(); await loadShopping();
     } catch (error) { if (sequence !== loadSequence) return; const root = $("grocery_list"); root.replaceChildren(); const message = document.createElement("div"); message.className = "empty"; message.textContent = error.message || "Could not load grocery list."; root.appendChild(message); loading = false; renderApproval(); }
   }

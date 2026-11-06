@@ -2174,8 +2174,8 @@ def approve_grocery_list(
 ):
     final_day = end or (start + timedelta(days=6))
     current = grocery_list_week(start=start, end=final_day, db=db, user=user)
-    if current["missing_dates"]:
-        raise HTTPException(status_code=400, detail="Every selected day needs a meal plan before approval")
+    if not current["items"]:
+        raise HTTPException(status_code=400, detail="There are no planned groceries in this date range to review")
     base_by_id = {item["id"]: item for item in current["items"]}
     supplied_by_id = {item.id: item for item in payload.items}
     unknown = sorted(set(supplied_by_id) - set(base_by_id))

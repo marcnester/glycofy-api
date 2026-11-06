@@ -97,10 +97,12 @@ test('failed review save stays open and never navigates; date changes block revi
   assert.equal(h.node('approve_btn').disabled,true);assert.equal(h.node('review_sticky_btn').disabled,true);
   h.node('approve_btn').fire('click');assert.equal(h.node('grocery-review-dialog').open,false);
 });
-test('QFC unavailable offers save-only and missing plans cannot be approved',async()=>{
+test('QFC unavailable offers save-only and partial date ranges can be reviewed',async()=>{
   const h=await reviewHarness({configured:false});h.node('approve_btn').fire('click');assert.equal(h.node('review-continue').hidden,true);
   const pending=h.node('review-save').fire('click');h.release();await pending;
   assert.equal(h.node('grocery-review-dialog').open,false);assert.equal(h.destinations.length,0);
-  const missing=await reviewHarness({missing:['2026-12-01']});assert.equal(missing.node('approve_btn').disabled,true);
-  missing.node('approve_btn').fire('click');assert.equal(missing.node('grocery-review-dialog').open,undefined);
+  const missing=await reviewHarness({missing:['2026-12-02']});assert.equal(missing.node('approve_btn').disabled,false);
+  missing.node('approve_btn').fire('click');assert.equal(missing.node('grocery-review-dialog').open,true);
+  assert.match(missing.node('review-summary').textContent,/Unplanned dates excluded: 2026-12-02/);
+  assert.match(missing.node('approval_status').textContent,/Shop for the days already planned/);
 });
