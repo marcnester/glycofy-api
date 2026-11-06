@@ -110,3 +110,20 @@ test('QFC suggests package counts from store coverage and exposes a manual short
   qty.value='1';qty.fire('input');assert.match(controls.children[2].textContent,/6 oz short/);
   assert.equal(node('send').disabled,true);
 });
+
+test('QFC restores store and loads reviewed dates automatically without cart writes',async()=>{
+  const nodes=new Map();const node=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};const requests=[];
+  const api=async(url,options={})=>{requests.push({url,options});
+    if(url.endsWith('/status'))return {configured:true,connected:true};
+    if(url.includes('/stores?'))return {stores:[{locationId:'70500866',name:'QFC Northgate',address:{addressLine1:'11100 Roosevelt Way NE'}}]};
+    if(url.includes('/groceries?'))return {items:[{id:'cod',name:'Cod fillets',quantity:18,unit:'oz'}]};
+    throw Error('Unexpected '+url);
+  };
+  const context=vm.createContext({window:{__glyco:{fetchJSON:api}},document:{getElementById:node,createElement:tag=>new Element(tag)},Date,Map,Number,String,URL,URLSearchParams,encodeURIComponent,Intl,localStorage:{getItem:()=>JSON.stringify({zip:'98133',store:'70500866',modality:'PICKUP'}),setItem(){}},location:{search:'?start=2026-12-01&end=2026-12-01',pathname:'/ui/qfc.html'},history:{replaceState(){}},Option:class extends Element{constructor(label,value){super('option');this.textContent=label;this.value=value;}}});
+  await vm.runInContext(fs.readFileSync('ui/qfc.js','utf8'),context);
+  assert.equal(node('ingredients').children.length,1);assert.equal(node('list-count').textContent,'1 ingredients');
+  assert.equal(requests.filter(r=>r.url.includes('/groceries?')).length,1);
+  assert.equal(requests.find(r=>r.url.includes('/groceries?')).url,'/v1/qfc/groceries?start=2026-12-01&end=2026-12-01');
+  assert.equal(node('grocery-back').href,'/ui/grocery.html?start=2026-12-01&end=2026-12-01');
+  assert.equal(node('send').disabled,true);assert.equal(requests.some(r=>r.options.method),false);
+});

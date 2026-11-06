@@ -45,14 +45,14 @@
     saved = {zip:$('zip').value,store:$('store').value,modality:$('modality').value};
     try { localStorage.setItem(preferenceKey,JSON.stringify(saved)); } catch { /* Shopping still works without storage. */ }
   }
-  function selectedStore() {
+  async function selectedStore() {
     reset(); rememberStore(); const store = stores.get($('store').value);
     $('products-panel').hidden = !store;
     $('trip-store').textContent = store ? store.name.replace(/^Quality Food Center - /,'QFC ') : 'Choose your QFC';
     $('trip-address').textContent = store ? addressText(store.address) : 'Your store’s catalog and prices will appear here.';
     $('trip-modality').textContent = method();
     $('store-summary').textContent = store ? `${store.name.replace(/^Quality Food Center - /,'QFC ')} · ${method()}` : 'Choose where you shop';
-    if (store) { step('products'); say('Your store is set. Load your approved grocery list to choose products.'); }
+    if (store) { step('products'); await loadApprovedGroceries(); }
   }
   async function act(fn) { try { await fn(); } catch (err) { say(errorText(err),true); } }
   const today = new Date(); today.setDate(today.getDate()-((today.getDay()+6)%7));
@@ -63,20 +63,22 @@
   $('end').value = validDate(params.get('end')) ? params.get('end') : iso(today);
   if (/^\d{5}$/.test(saved.zip || '')) $('zip').value = saved.zip;
   if (['PICKUP','DELIVERY'].includes(saved.modality)) $('modality').value = saved.modality;
-  $('store').addEventListener('change',selectedStore);
-  $('modality').addEventListener('change',selectedStore);
-  ['start','end'].forEach(id => $(id).addEventListener('change',reset));
+  $('store').addEventListener('change',() => act(selectedStore));
+  $('modality').addEventListener('change',() => act(selectedStore));
+  function updateGroceryLinks() { const query=new URLSearchParams({start:$('start').value,end:$('end').value}); ['grocery-back','grocery-review-link','grocery-success-back'].forEach(id => { $(id).href=`/ui/grocery.html?${query}`; }); }
+  updateGroceryLinks();
+  ['start','end'].forEach(id => $(id).addEventListener('change',() => { reset(); updateGroceryLinks(); }));
   $('item-filter').addEventListener('change',applyFilter);
   async function loadStores(restore = false) {
     const result = await api(`/v1/qfc/stores?zip_code=${encodeURIComponent($('zip').value)}`);
     stores = new Map(result.stores.map(store => [store.locationId,store]));
     $('store').replaceChildren(new Option('Choose a store',''));
     for (const store of result.stores) $('store').add(new Option(`${store.name} — ${store.address.addressLine1}`,store.locationId));
-    if (restore && stores.has(saved.store)) { $('store').value = saved.store; selectedStore(); $('store-settings').open = false; }
-    else { $('store').value = ''; selectedStore(); step('store'); say(result.stores.length ? `${result.stores.length} QFC stores found. Choose where you shop.` : 'No QFC stores found nearby. Try another ZIP code.'); }
+    if (restore && stores.has(saved.store)) { $('store').value = saved.store; await selectedStore(); $('store-settings').open = false; }
+    else { $('store').value = ''; await selectedStore(); step('store'); say(result.stores.length ? `${result.stores.length} QFC stores found. Choose where you shop.` : 'No QFC stores found nearby. Try another ZIP code.'); }
   }
   $('stores-form').addEventListener('submit', e => { e.preventDefault(); return act(() => loadStores()); });
-  $('groceries-form').addEventListener('submit', e => { e.preventDefault(); return act(async () => {
+  async function loadApprovedGroceries() {
     reset(); if (!$('store').value) throw new Error('Choose your QFC store first.');
     const version = listGeneration;
     say('Loading your approved groceries…');
@@ -133,7 +135,8 @@
     $('store-settings').open=false; step('products'); updateSummary();
     if(!totalIngredients) $('ingredients').append(el('div','There are no groceries to shop for in this approved list.','qfc-empty'));
     say('Open an ingredient to compare products. Select only what you want to add to QFC.');
-  }); });
+  }
+  $('groceries-form').addEventListener('submit', e => { e.preventDefault(); return act(loadApprovedGroceries); });
   $('preview').addEventListener('click',() => act(async () => {
     invalidate(); const version=generation; $('preview').disabled=true;
     try {
