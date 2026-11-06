@@ -26,7 +26,7 @@
   const addressText = address => [address?.addressLine1,address?.city,address?.state,address?.zipCode].filter(Boolean).join(', ');
   const errorText = err => err.message && !err.message.includes('[object Object]') ? err.message : 'We couldn’t complete that request. Please check your selection and try again.';
   function say(message, error = false) { $('status').textContent = message; $('status').classList.toggle('is-error',error); }
-  function step(name) { ['store','products','review'].forEach(id => { if (id === name) $( `step-${id}`).setAttribute('aria-current','step'); else $(`step-${id}`).removeAttribute('aria-current'); }); }
+  function step(name) { $('shopping').classList.toggle('is-reviewing',name === 'review'); ['store','products','review'].forEach(id => { if (id === name) $( `step-${id}`).setAttribute('aria-current','step'); else $(`step-${id}`).removeAttribute('aria-current'); }); }
   function invalidate() { generation++; reviewId = null; $('review').hidden = true; $('success').hidden = true; $('store-confirmed').checked = false; $('send').disabled = true; }
   function updateSummary() {
     $('selected-count').textContent = String(selections.size);
@@ -36,11 +36,12 @@
     const values = [...selections.values()];
     const priced = values.filter(item => Number.isFinite(item.price));
     const total = priced.reduce((sum,item) => sum + item.price * item.quantity,0);
+    $('mobile-selection-summary').textContent = values.length ? `${values.length} selected · ${money(total)} estimated${priced.length < values.length ? ' + unpriced' : ''}` : 'Choose products · nothing added yet';
     $('selection-total').textContent = values.length ? `${money(total)} estimated${priced.length < values.length ? ' + unpriced products' : ''}. Before taxes and fees.` : 'Choose a product to see a package estimate.';
     applyFilter();
   }
   function applyFilter() { for (const [id,card] of cards) { const filter = $('item-filter').value; card.hidden = filter === 'selected' ? !selections.has(id) : filter === 'unmatched' ? selections.has(id) : false; } }
-  function reset() { invalidate(); listGeneration++; selections = new Map(); cards = new Map(); totalIngredients = 0; $('ingredients').replaceChildren(); $('list-tools').hidden = true; $('list-count').textContent = 'No list loaded'; updateSummary(); }
+  function reset() { $('shopping').classList.toggle('has-products',false); invalidate(); listGeneration++; selections = new Map(); cards = new Map(); totalIngredients = 0; $('ingredients').replaceChildren(); $('list-tools').hidden = true; $('list-count').textContent = 'No list loaded'; updateSummary(); }
   function rememberStore() {
     saved = {zip:$('zip').value,store:$('store').value,modality:$('modality').value};
     try { localStorage.setItem(preferenceKey,JSON.stringify(saved)); } catch { /* Shopping still works without storage. */ }
@@ -52,7 +53,7 @@
     $('trip-address').textContent = store ? addressText(store.address) : 'Your store’s catalog and prices will appear here.';
     $('trip-modality').textContent = method();
     $('store-summary').textContent = store ? `${store.name.replace(/^Quality Food Center - /,'QFC ')} · ${method()}` : 'Choose where you shop';
-    if (store) { step('products'); await loadApprovedGroceries(); }
+    if (store) { $('store-settings').open=false; step('products'); await loadApprovedGroceries(); }
   }
   async function act(fn) { try { await fn(); } catch (err) { say(errorText(err),true); } }
   const today = new Date(); today.setDate(today.getDate()-((today.getDay()+6)%7));
@@ -65,7 +66,7 @@
   if (['PICKUP','DELIVERY'].includes(saved.modality)) $('modality').value = saved.modality;
   $('store').addEventListener('change',() => act(selectedStore));
   $('modality').addEventListener('change',() => act(selectedStore));
-  function updateGroceryLinks() { const query=new URLSearchParams({start:$('start').value,end:$('end').value}); ['grocery-back','grocery-review-link','grocery-success-back'].forEach(id => { $(id).href=`/ui/grocery.html?${query}`; }); }
+  function updateGroceryLinks() { const fmt=value=>validDate(value)?new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric'}).format(new Date(`${value}T12:00:00`)):'Choose date'; $('qfc-date-summary').textContent=`${fmt($('start').value)} – ${fmt($('end').value)}`; const query=new URLSearchParams({start:$('start').value,end:$('end').value}); ['grocery-back','grocery-review-link','grocery-success-back'].forEach(id => { $(id).href=`/ui/grocery.html?${query}`; }); }
   updateGroceryLinks();
   ['start','end'].forEach(id => $(id).addEventListener('change',() => { reset(); updateGroceryLinks(); }));
   $('item-filter').addEventListener('change',applyFilter);
@@ -82,7 +83,9 @@
     reset(); if (!$('store').value) throw new Error('Choose your QFC store first.');
     const version = listGeneration;
     say('Loading your approved groceries…');
-    const result = await api(`/v1/qfc/groceries?start=${$('start').value}&end=${$('end').value}`);
+    let result;
+    try { result = await api(`/v1/qfc/groceries?start=${$('start').value}&end=${$('end').value}`); }
+    catch (error) { $('qfc-date-settings').open=true; throw error; }
     if (version !== listGeneration) return;
     totalIngredients = result.items.length;
     for (const item of result.items) {
@@ -131,6 +134,7 @@
       }); });
       if(item.shopping_note) body.append(el('p',item.shopping_note,'fine-print muted')); body.append(searchForm,results,controls); card.append(summary,body); $('ingredients').append(card);
     }
+    $('qfc-date-settings').open=false; $('shopping').classList.toggle('has-products',totalIngredients>0);
     $('list-count').textContent=`${totalIngredients} ingredients`; $('list-tools').hidden=!totalIngredients;
     $('store-settings').open=false; step('products'); updateSummary();
     if(!totalIngredients) $('ingredients').append(el('div','There are no groceries to shop for in this approved list.','qfc-empty'));

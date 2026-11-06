@@ -6,11 +6,11 @@
   <title>Grocery List • Glycofy</title>
   <link rel="icon" href="/ui/favicon.svg" />
   <link rel="stylesheet" href="/ui/styles.css?v=2026-09-06-beta-ready" />
-  <link rel="stylesheet" href="/ui/grocery.css?v=2026-11-05-guided-review-feedback-clear" />
+  <link rel="stylesheet" href="/ui/grocery.css?v=2026-11-06-mobile-polish-v1" />
   <link rel="stylesheet" href="/ui/theme.css?v=2026-09-03-unified" />
   <script src="/ui/app.js" defer></script>
-  <script src="/ui/grocery.js?v=2026-11-05-partial-plans" defer></script>
-  <script src="/ui/beta.js?v=2026-10-26-account-tour" defer></script>
+  <script src="/ui/grocery.js?v=2026-11-06-mobile-polish-v1" defer></script>
+  <script src="/ui/beta.js?v=2026-11-06-mobile-polish-v1" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -30,27 +30,29 @@
       <div>
         <p class="eyebrow">Meal plan shopping</p>
         <h1>Grocery List</h1>
-        <p class="muted">See what you need, what to buy, and what will likely be left for another meal.</p>
+        <p class="muted">Check what you already have, then choose your groceries.</p>
       </div>
-      <div class="grocery-actions">
-        <button id="copy_btn" class="btn">Copy list</button>
-        <button id="print_btn" class="btn">Print</button>
-        <details class="more-menu">
-          <summary class="btn">More</summary>
+      <details class="grocery-actions list-tools-menu">
+        <summary class="btn">List tools</summary>
+        <div class="list-tools-content">
+          <button id="copy_btn" type="button">Copy list</button>
+          <button id="print_btn" type="button">Print</button>
           <button id="csv_btn" type="button">Download CSV</button>
           <button id="txt_btn" type="button">Download TXT</button>
-        </details>
-      </div>
+          <div data-feedback-slot></div>
+        </div>
+      </details>
     </div>
 
-    <section class="grocery-controls" aria-label="Grocery list settings">
-      <label>From <input id="start_date" type="date" /></label>
-      <label>Through <input id="end_date" type="date" /></label>
-      <label>Household servings
-        <input id="servings" type="number" min="1" max="12" step="1" value="1" />
-      </label>
-      <button id="load_btn" class="btn btn-primary">Update list</button>
-    </section>
+    <details id="list-settings" class="list-settings">
+      <summary><span id="range-summary">Shopping dates &amp; servings</span><span class="settings-change">Change ⌄</span></summary>
+      <div class="grocery-controls" aria-label="Grocery list settings">
+        <label>From <input id="start_date" type="date" /></label>
+        <label>Through <input id="end_date" type="date" /></label>
+        <label>Household servings<input id="servings" type="number" min="1" max="12" step="1" value="1" /></label>
+        <button id="load_btn" class="btn btn-primary">Update list</button>
+      </div>
+    </details>
 
     <section class="approval-card" aria-labelledby="approval_title">
       <div class="approval-icon" aria-hidden="true">✓</div>
@@ -82,8 +84,10 @@
       <p class="eyebrow">Review your shopping list</p>
       <h2 id="review-title" tabindex="-1" autofocus>Ready to choose your products?</h2>
       <p id="review-summary" class="muted"></p>
-      <p id="review-help">Check the amounts below. Continuing saves this shopping list; it does not change your meals or add anything to a cart. Choose brands and package sizes at the next step.</p>
-      <div id="review-items" class="review-items"></div>
+      <div class="review-counts"><div><strong id="review-buy-count">0</strong><span>items to buy</span></div><div><strong id="review-pantry-count">0</strong><span>already have</span></div></div>
+      <p id="review-exclusions" class="muted" hidden></p>
+      <p id="review-help">Continuing saves your list so you can choose products and package sizes. Nothing is added to a cart.</p>
+      <details id="review-item-details" class="review-item-details"><summary id="review-items-summary">View ingredients and amounts</summary><div id="review-items" class="review-items"></div></details>
       <p id="review-error" class="dialog-error" role="alert"></p>
       <div class="dialog-actions review-actions">
         <button id="review-cancel" class="btn" type="button">Back to list</button>

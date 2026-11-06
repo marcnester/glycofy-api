@@ -126,4 +126,8 @@ test('QFC restores store and loads reviewed dates automatically without cart wri
   assert.equal(requests.find(r=>r.url.includes('/groceries?')).url,'/v1/qfc/groceries?start=2026-12-01&end=2026-12-01');
   assert.equal(node('grocery-back').href,'/ui/grocery.html?start=2026-12-01&end=2026-12-01');
   assert.equal(node('send').disabled,true);assert.equal(requests.some(r=>r.options.method),false);
+  assert.equal(node('qfc-date-settings').open,false);
+  node('start').value='';node('start').fire('change');
+  assert.match(node('qfc-date-summary').textContent,/Choose date/);
+  assert.equal(node('preview').disabled,true);
 });

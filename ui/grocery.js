@@ -44,9 +44,12 @@
   }
   function saveEdits(trackChange = true) { localStorage.setItem(storageKey(), JSON.stringify(edits)); if (trackChange) markChanged(); }
   function rangeQuery() { return `start=${encodeURIComponent($("start_date").value)}&end=${encodeURIComponent($("end_date").value)}`; }
+  function shortDate(value) { return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(`${value}T12:00:00`)); }
+  function rangeLabel() { return `${shortDate($("start_date").value)} – ${shortDate($("end_date").value)}`; }
   function approvalDate(value) { return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
 
   function renderApproval() {
+    if ($("start_date").value && $("end_date").value) $("range-summary").textContent = `${rangeLabel()} · ${$("servings").value} serving${Number($("servings").value) === 1 ? "" : "s"}`;
     const card = $("approval_title").closest(".approval-card");
     const status = $("approval_status");
     card.classList.toggle("is-approved", Boolean(approval && !approval.stale));
@@ -65,8 +68,14 @@
   function openReview() {
     if (!canReview()) return;
     $("review-error").textContent = "";
-    $("review-summary").textContent = `${$("start_date").value} through ${$("end_date").value} · ${$("servings").value} household serving(s) · ${visibleItems().length} items to buy`;
-    if (data.missing_dates?.length) $("review-summary").textContent += ` · Unplanned dates excluded: ${data.missing_dates.join(", ")}. Review again if you add plans later.`;
+    const servings = Number($("servings").value || 1);
+    $("review-summary").textContent = `${rangeLabel()} · ${servings} household serving${servings === 1 ? "" : "s"}`;
+    $("review-buy-count").textContent = String(visibleItems().length);
+    $("review-pantry-count").textContent = String(data.items.length - visibleItems().length);
+    $("review-exclusions").hidden = !data.missing_dates?.length;
+    $("review-exclusions").textContent = data.missing_dates?.length ? `Unplanned dates excluded: ${data.missing_dates.map(shortDate).join(", ")}. Review again if you add plans later.` : "";
+    $("review-item-details").open = false;
+    $("review-items-summary").textContent = `View ${data.items.length} ingredient${data.items.length === 1 ? "" : "s"} and amounts`;
     const root = $("review-items"); root.replaceChildren();
     (data.items || []).forEach(item => {
       const state = stateFor(item);
@@ -239,8 +248,8 @@
         $("servings").value = approval.servings;
         approval.items.forEach((item) => { edits[item.id] = { done: false, pantry: Boolean(item.pantry), quantity: item.quantity == null ? null : Number(item.quantity) / approval.servings, unit: item.unit, preferredBrand: item.preferred_brand || item.preference?.preferred_brand || "", packageQuantity: item.package_quantity || item.package?.package_size || null, packageUnit: item.package_unit || item.package?.package_unit || item.unit || "" }; });
       }
-      if (data.missing_dates.length) { notice.textContent = data.items.length ? `Shopping includes planned days only. No plans for ${data.missing_dates.join(", ")}; these dates are excluded. You can still review and shop.` : "No planned groceries in this date range. Choose dates with meals or create a meal plan first."; notice.hidden = false; }
-      loadedRange = requestedRange; loading = false; render(); renderApproval(); await loadShopping();
+      if (data.missing_dates.length) { notice.textContent = data.items.length ? `Planned days only · No meals for ${data.missing_dates.map(shortDate).join(", ")}. You can still review and shop.` : "No planned groceries in this date range. Choose dates with meals or create a meal plan first."; notice.hidden = false; }
+      loadedRange = requestedRange; loading = false; $("list-settings").open = false; render(); renderApproval(); await loadShopping();
     } catch (error) { if (sequence !== loadSequence) return; const root = $("grocery_list"); root.replaceChildren(); const message = document.createElement("div"); message.className = "empty"; message.textContent = error.message || "Could not load grocery list."; root.appendChild(message); loading = false; renderApproval(); }
   }
   async function approve(continueToQfc = false) {

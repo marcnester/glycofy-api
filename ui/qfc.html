@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Shop at QFC · Glycofy</title><link rel="icon" href="/ui/favicon.svg">
-  <link rel="stylesheet" href="/ui/styles.css"><link rel="stylesheet" href="/ui/grocery.css">
-  <link rel="stylesheet" href="/ui/qfc.css?v=2026-11-05-package-coverage"><link rel="stylesheet" href="/ui/theme.css">
-  <script src="/ui/app.js" defer></script><script src="/ui/qfc.js?v=2026-11-05-guided-review" defer></script>
+  <link rel="stylesheet" href="/ui/styles.css"><link rel="stylesheet" href="/ui/grocery.css?v=2026-11-06-mobile-polish-v1">
+  <link rel="stylesheet" href="/ui/qfc.css?v=2026-11-06-mobile-polish-v1"><link rel="stylesheet" href="/ui/theme.css">
+  <script src="/ui/app.js" defer></script><script src="/ui/qfc.js?v=2026-11-06-mobile-polish-v1" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -34,11 +34,11 @@
         </details>
         <section id="products-panel" class="panel products-panel" aria-labelledby="products-title" hidden>
           <div class="panel-header"><div><p class="eyebrow">Your approved grocery list</p><h2 id="products-title">Choose your products</h2></div><span id="list-count" class="count-badge">No list loaded</span></div>
-          <div class="panel-body"><form id="groceries-form" class="date-range"><label for="start">From<input type="date" id="start" required></label><label for="end">Through<input type="date" id="end" required></label><button class="btn" type="submit">Load approved groceries</button></form>
-          <p class="muted fine-print">Use the same dates you approved on your grocery list. <a id="grocery-review-link" href="/ui/grocery.html">Back to review your list</a>.</p></div>
+          <details id="qfc-date-settings" class="qfc-date-settings"><summary><span id="qfc-date-summary">Shopping dates</span><span>Change ⌄</span></summary><div class="panel-body"><form id="groceries-form" class="date-range"><label for="start">From<input type="date" id="start" required></label><label for="end">Through<input type="date" id="end" required></label><button class="btn" type="submit">Load approved groceries</button></form>
+          <p class="muted fine-print">Use the same dates you approved on your grocery list. <a id="grocery-review-link" href="/ui/grocery.html">Back to review your list</a>.</p></div></details>
           <div id="list-tools" class="list-tools" hidden><span id="selection-progress" aria-live="polite">Choose products to get started</span><label for="item-filter" class="filter-label">Show<select id="item-filter"><option value="all">All ingredients</option><option value="unmatched">Still to choose</option><option value="selected">Selected</option></select></label></div>
           <div id="ingredients" class="ingredient-list"><div class="qfc-empty"><span aria-hidden="true">☷</span><h3>Your list starts here</h3><p>Load an approved list, then choose products for the ingredients you want to shop for.</p></div></div>
-          <div class="panel-footer"><p class="fine-print muted">Unselected ingredients stay out of your QFC cart. Your meal portions never change.</p><button id="preview" class="btn btn-primary" type="button" disabled>Review selected products <span aria-hidden="true">→</span></button></div>
+          <div class="panel-footer"><span id="mobile-selection-summary" class="mobile-selection-summary">No products selected</span><p class="fine-print muted">Unselected ingredients stay out of your QFC cart. Your meal portions never change.</p><button id="preview" class="btn btn-primary" type="button" disabled>Review selected products <span aria-hidden="true">→</span></button></div>
         </section>
         <section id="review" class="panel review-panel" aria-labelledby="review-title" hidden tabindex="-1">
           <div class="panel-header"><div><p class="eyebrow">One last look</p><h2 id="review-title">Review your cart additions</h2></div><button id="edit-products" class="link-button" type="button">Edit products</button></div>
@@ -48,8 +48,8 @@
         </section>
         <section id="success" class="panel success-panel" hidden><div class="approval-icon" aria-hidden="true">✓</div><p class="eyebrow">Ready for QFC</p><h2>Products added to your cart</h2><p class="muted">Review your cart on QFC, confirm the store and any substitutions, and check out when you’re ready. Glycofy hasn’t placed an order.</p><a class="btn btn-primary" href="https://www.qfc.com/cart" target="_blank" rel="noopener noreferrer">View my QFC cart ↗</a><a id="grocery-success-back" class="back-link" href="/ui/grocery.html">Back to grocery list</a></section>
       </div>
-      <aside class="shopping-sidebar"><div class="panel shopping-summary"><p class="eyebrow">Your shopping trip</p><h2 id="trip-store">Choose your QFC</h2><p id="trip-address" class="muted">Your store’s catalog and prices will appear here.</p><span id="trip-modality" class="method-badge">Pickup</span><hr><div class="summary-metric"><strong id="selected-count">0</strong><span>products selected</span></div><p id="selection-total" class="muted fine-print">Choose a product to see a package estimate.</p><p class="fine-print muted">You control the products and package counts. Meals and portions stay as planned.</p></div>
-      <details class="connection-settings"><summary>QFC connection settings</summary><p class="muted fine-print">Disconnecting removes QFC access from your Glycofy account. It does not empty your QFC cart.</p><button id="disconnect" class="link-button" type="button">Disconnect local QFC connection</button></details></aside></div>
+      <aside class="shopping-sidebar"><details class="trip-details"><summary>Trip &amp; connection details ⌄</summary><div class="panel shopping-summary"><p class="eyebrow">Your shopping trip</p><h2 id="trip-store">Choose your QFC</h2><p id="trip-address" class="muted">Your store’s catalog and prices will appear here.</p><span id="trip-modality" class="method-badge">Pickup</span><hr><div class="summary-metric"><strong id="selected-count">0</strong><span>products selected</span></div><p id="selection-total" class="muted fine-print">Choose a product to see a package estimate.</p><p class="fine-print muted">You control the products and package counts. Meals and portions stay as planned.</p></div>
+      <details class="connection-settings"><summary>QFC connection settings</summary><p class="muted fine-print">Disconnecting removes QFC access from your Glycofy account. It does not empty your QFC cart.</p><button id="disconnect" class="link-button" type="button">Disconnect local QFC connection</button></details></details></aside></div>
     </section>
   </main>
 </body></html>
