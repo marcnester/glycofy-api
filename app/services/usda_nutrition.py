@@ -82,6 +82,10 @@ def _catalog_match(query: str) -> FDCMatch | None:
         row = db.query(NutritionCatalogEntry).filter(NutritionCatalogEntry.query_key == key).first()
         if row is None:
             return None
+        # Recheck identity so an old cached milk/yogurt mismatch cannot bypass
+        # the same safety rule used for fresh local and API candidates.
+        if not _milk_identity_matches(query, row.description):
+            return None
         nutrients = {name: float(row.nutrients_per_100g[name]) for name in ("kcal", "protein_g", "carbs_g", "fat_g")}
         return FDCMatch(
             fdc_id=row.fdc_id,
@@ -228,11 +232,28 @@ def _nutrients(food: dict[str, Any]) -> dict[str, float] | None:
     return nutrients
 
 
+def _milk_identity_matches(query: str, description: str) -> bool:
+    query_tokens = _tokens(query)
+    description_tokens = _tokens(description)
+    # A product containing milk is not necessarily milk. Foundation's type
+    # bonus must never promote yogurt above fluid milk. Explicit requests for
+    # cultured/concentrated products remain eligible for those products.
+    milk_products = {"yogurt", "kefir", "cheese", "buttermilk", "cream", "powder", "condensed", "evaporated"}
+    if "milk" in query_tokens and not (query_tokens & milk_products):
+        if description_tokens & milk_products:
+            return False
+        if "whole" in query_tokens and "whole" not in description_tokens:
+            return False
+    return True
+
+
 def _match_score(query: str, food: dict[str, Any]) -> float | None:
     query_tokens = _tokens(query)
     description = str(food.get("description") or "")
     description_tokens = _tokens(description)
     if not query_tokens:
+        return None
+    if not _milk_identity_matches(query, description):
         return None
     overlap = query_tokens & description_tokens
     # FDC descriptions use a controlled vocabulary (for example "Oil, olive")

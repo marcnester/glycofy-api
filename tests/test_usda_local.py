@@ -106,3 +106,14 @@ def test_equivalent_ties_still_use_api_relevance_order():
     foods = [_food(1, "Banana raw"), _food(2, "Banana raw")]
     catalog = LocalCatalog({"schema": 1, "release": "test", "foods": foods})
     assert catalog.lookup("banana raw") is None
+
+
+@pytest.mark.parametrize("query", ["milk whole", "whole milk", "whole milk plain"])
+def test_bundled_whole_milk_is_fluid_milk_not_yogurt(query):
+    from app.config import settings
+
+    catalog = load_catalog(settings.USDA_LOCAL_CATALOG_PATH, settings.USDA_LOCAL_CATALOG_SHA256)
+    match = catalog.lookup(query)
+    assert match is not None
+    assert match.description == "Milk, whole"
+    assert match.nutrients_per_100g == {"kcal": 61, "protein_g": 3.27, "carbs_g": 4.63, "fat_g": 3.2}
