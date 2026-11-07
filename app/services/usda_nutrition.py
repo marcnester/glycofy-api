@@ -353,6 +353,11 @@ def lookup_food(query: str) -> FDCMatch:
     cached = _catalog_match(query)
     if cached is not None:
         return cached
+    from app.services.usda_local import lookup_local
+
+    local = lookup_local(query)
+    if local is not None:
+        return local
     api_key = (settings.USDA_FDC_API_KEY or "").strip()
     if not api_key:
         raise USDANutritionError("USDA_FDC_API_KEY is not configured")
@@ -418,7 +423,13 @@ def resolve_foods(
         if cached is not None:
             resolved[query] = cached
         else:
-            pending.append(query)
+            from app.services.usda_local import lookup_local
+
+            local = lookup_local(query)
+            if local is not None:
+                resolved[query] = local
+            else:
+                pending.append(query)
     if max_live_lookups is not None:
         pending = pending[: max(0, max_live_lookups)]
     if not pending:

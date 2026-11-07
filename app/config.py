@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     USDA_FDC_API_KEY: str | None = None
     USDA_FDC_REQUIRED: bool = False
     USDA_FDC_TIMEOUT_SECONDS: float = 10.0
+    USDA_LOCAL_CATALOG_ENABLED: bool = False
+    USDA_LOCAL_CATALOG_PATH: str = "assets/usda/catalog.json"
+    USDA_LOCAL_CATALOG_SHA256: str = "d10e1caf6c094418c02d68e31a71f7a8374eb0ac640c0969e82c6931744c65dd"
 
     # ─── OAuth: Strava ────────────────────────────────────────────────────────
     STRAVA_CLIENT_ID: str | None = None
