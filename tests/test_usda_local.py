@@ -100,3 +100,9 @@ def test_local_miss_uses_existing_api_fallback(monkeypatch):
     assert usda_nutrition.lookup_food("banana raw").fdc_id == 123
     assert len(stored) == 1
     usda_nutrition.lookup_food.cache_clear()
+
+
+def test_equivalent_ties_still_use_api_relevance_order():
+    foods = [_food(1, "Banana raw"), _food(2, "Banana raw")]
+    catalog = LocalCatalog({"schema": 1, "release": "test", "foods": foods})
+    assert catalog.lookup("banana raw") is None

@@ -37,7 +37,14 @@ class LocalCatalog:
             raise ValueError("Empty USDA snapshot")
 
     def lookup(self, query: str):
-        from app.services.usda_nutrition import USDANutritionError, _tokens, select_match
+        from app.services.usda_nutrition import (
+            USDANutritionError,
+            _match_score,
+            _nutrients,
+            _plausible_nutrient_density,
+            _tokens,
+            select_match,
+        )
 
         tokens = _tokens(query)
         required = 1 if len(tokens) <= 2 else max(2, (len(tokens) + 1) // 2)
@@ -46,8 +53,20 @@ class LocalCatalog:
             overlap.update(self.index.get(token, ()))
         ids = {fdc_id for fdc_id, count in overlap.items() if count >= required}
         # Never truncate candidates: omitted ties could hide nutritional ambiguity.
+        candidates = [self.foods[i] for i in sorted(ids)]
+        ranked = [
+            (score, food)
+            for food in candidates
+            if (score := _match_score(query, food)) is not None and _plausible_nutrient_density(query, _nutrients(food))
+        ]
+        if ranked:
+            best = max(score for score, _ in ranked)
+            # API relevance order cannot be reconstructed from a bulk snapshot.
+            # Do not replace it with FDC-ID order, even for near-equivalent ties.
+            if sum(score == best for score, _ in ranked) > 1:
+                return None
         try:
-            return select_match(query, [self.foods[i] for i in sorted(ids)])
+            return select_match(query, candidates)
         except USDANutritionError:
             return None
 
