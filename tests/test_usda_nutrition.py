@@ -562,7 +562,14 @@ def test_whole_milk_cannot_resolve_to_yogurt_or_skim(query):
 
 @pytest.mark.parametrize(
     "description",
-    ["Yogurt, plain, whole milk", "Milk, condensed, whole", "Milk, dry, whole, powder", "Cream, whole milk"],
+    [
+        "Yogurt, plain, whole milk",
+        "Milk, condensed, whole",
+        "Milk, dry, whole, powder",
+        "Milk, dry, whole",
+        "Milk, whole, chocolate",
+        "Cream, whole milk",
+    ],
 )
 def test_whole_milk_rejects_other_milk_products(description):
     with pytest.raises(USDANutritionError):

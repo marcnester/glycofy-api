@@ -238,7 +238,20 @@ def _milk_identity_matches(query: str, description: str) -> bool:
     # A product containing milk is not necessarily milk. Foundation's type
     # bonus must never promote yogurt above fluid milk. Explicit requests for
     # cultured/concentrated products remain eligible for those products.
-    milk_products = {"yogurt", "kefir", "cheese", "buttermilk", "cream", "powder", "condensed", "evaporated"}
+    milk_products = {
+        "yogurt",
+        "kefir",
+        "cheese",
+        "buttermilk",
+        "cream",
+        "powder",
+        "powdered",
+        "dry",
+        "condensed",
+        "evaporated",
+        "chocolate",
+        "strawberry",
+    }
     if "milk" in query_tokens and not (query_tokens & milk_products):
         if description_tokens & milk_products:
             return False
