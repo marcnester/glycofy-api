@@ -4,6 +4,13 @@
     ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) },
   });
   const money = value => new Intl.NumberFormat(undefined, {style:'currency',currency:'USD'}).format(value);
+  const amountText = value => Number(value.toFixed(2)).toString();
+  function coverageText(coverage, packages=1) {
+    if (!coverage || coverage.status === 'unknown') return 'Amount check unavailable. Confirm the package weight or count.';
+    const selected=coverage.quantity_per_package*packages, needed=coverage.required_quantity;
+    const delta=selected-needed;
+    return `Need ${amountText(needed)} ${coverage.unit} · selected ${amountText(selected)} ${coverage.unit}${delta < -0.000001 ? ` · ${amountText(-delta)} ${coverage.unit} short` : ` · covers the approved amount`}.`;
+  }
   const preferenceKey = 'glyco_qfc_store_v1';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(preferenceKey) || '{}') || {}; } catch { /* Storage is optional. */ }
@@ -19,7 +26,7 @@
   const addressText = address => [address?.addressLine1,address?.city,address?.state,address?.zipCode].filter(Boolean).join(', ');
   const errorText = err => err.message && !err.message.includes('[object Object]') ? err.message : 'We couldn’t complete that request. Please check your selection and try again.';
   function say(message, error = false) { $('status').textContent = message; $('status').classList.toggle('is-error',error); }
-  function step(name) { ['store','products','review'].forEach(id => { if (id === name) $( `step-${id}`).setAttribute('aria-current','step'); else $(`step-${id}`).removeAttribute('aria-current'); }); }
+  function step(name) { $('shopping').classList.toggle('is-reviewing',name === 'review'); ['store','products','review'].forEach(id => { if (id === name) $( `step-${id}`).setAttribute('aria-current','step'); else $(`step-${id}`).removeAttribute('aria-current'); }); }
   function invalidate() { generation++; reviewId = null; $('review').hidden = true; $('success').hidden = true; $('store-confirmed').checked = false; $('send').disabled = true; }
   function updateSummary() {
     $('selected-count').textContent = String(selections.size);
@@ -29,23 +36,24 @@
     const values = [...selections.values()];
     const priced = values.filter(item => Number.isFinite(item.price));
     const total = priced.reduce((sum,item) => sum + item.price * item.quantity,0);
+    $('mobile-selection-summary').textContent = values.length ? `${values.length} selected · ${money(total)} estimated${priced.length < values.length ? ' + unpriced' : ''}` : 'Choose products · nothing added yet';
     $('selection-total').textContent = values.length ? `${money(total)} estimated${priced.length < values.length ? ' + unpriced products' : ''}. Before taxes and fees.` : 'Choose a product to see a package estimate.';
     applyFilter();
   }
   function applyFilter() { for (const [id,card] of cards) { const filter = $('item-filter').value; card.hidden = filter === 'selected' ? !selections.has(id) : filter === 'unmatched' ? selections.has(id) : false; } }
-  function reset() { invalidate(); listGeneration++; selections = new Map(); cards = new Map(); totalIngredients = 0; $('ingredients').replaceChildren(); $('list-tools').hidden = true; $('list-count').textContent = 'No list loaded'; updateSummary(); }
+  function reset() { $('shopping').classList.toggle('has-products',false); invalidate(); listGeneration++; selections = new Map(); cards = new Map(); totalIngredients = 0; $('ingredients').replaceChildren(); $('list-tools').hidden = true; $('list-count').textContent = 'No list loaded'; updateSummary(); }
   function rememberStore() {
     saved = {zip:$('zip').value,store:$('store').value,modality:$('modality').value};
     try { localStorage.setItem(preferenceKey,JSON.stringify(saved)); } catch { /* Shopping still works without storage. */ }
   }
-  function selectedStore() {
+  async function selectedStore() {
     reset(); rememberStore(); const store = stores.get($('store').value);
     $('products-panel').hidden = !store;
     $('trip-store').textContent = store ? store.name.replace(/^Quality Food Center - /,'QFC ') : 'Choose your QFC';
     $('trip-address').textContent = store ? addressText(store.address) : 'Your store’s catalog and prices will appear here.';
     $('trip-modality').textContent = method();
     $('store-summary').textContent = store ? `${store.name.replace(/^Quality Food Center - /,'QFC ')} · ${method()}` : 'Choose where you shop';
-    if (store) { step('products'); say('Your store is set. Load your approved grocery list to choose products.'); }
+    if (store) { $('store-settings').open=false; step('products'); await loadApprovedGroceries(); }
   }
   async function act(fn) { try { await fn(); } catch (err) { say(errorText(err),true); } }
   const today = new Date(); today.setDate(today.getDate()-((today.getDay()+6)%7));
@@ -56,24 +64,28 @@
   $('end').value = validDate(params.get('end')) ? params.get('end') : iso(today);
   if (/^\d{5}$/.test(saved.zip || '')) $('zip').value = saved.zip;
   if (['PICKUP','DELIVERY'].includes(saved.modality)) $('modality').value = saved.modality;
-  $('store').addEventListener('change',selectedStore);
-  $('modality').addEventListener('change',selectedStore);
-  ['start','end'].forEach(id => $(id).addEventListener('change',reset));
+  $('store').addEventListener('change',() => act(selectedStore));
+  $('modality').addEventListener('change',() => act(selectedStore));
+  function updateGroceryLinks() { const fmt=value=>validDate(value)?new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric'}).format(new Date(`${value}T12:00:00`)):'Choose date'; $('qfc-date-summary').textContent=`${fmt($('start').value)} – ${fmt($('end').value)}`; const query=new URLSearchParams({start:$('start').value,end:$('end').value}); ['grocery-back','grocery-review-link','grocery-success-back'].forEach(id => { $(id).href=`/ui/grocery.html?${query}`; }); }
+  updateGroceryLinks();
+  ['start','end'].forEach(id => $(id).addEventListener('change',() => { reset(); updateGroceryLinks(); }));
   $('item-filter').addEventListener('change',applyFilter);
   async function loadStores(restore = false) {
     const result = await api(`/v1/qfc/stores?zip_code=${encodeURIComponent($('zip').value)}`);
     stores = new Map(result.stores.map(store => [store.locationId,store]));
     $('store').replaceChildren(new Option('Choose a store',''));
     for (const store of result.stores) $('store').add(new Option(`${store.name} — ${store.address.addressLine1}`,store.locationId));
-    if (restore && stores.has(saved.store)) { $('store').value = saved.store; selectedStore(); $('store-settings').open = false; }
-    else { $('store').value = ''; selectedStore(); step('store'); say(result.stores.length ? `${result.stores.length} QFC stores found. Choose where you shop.` : 'No QFC stores found nearby. Try another ZIP code.'); }
+    if (restore && stores.has(saved.store)) { $('store').value = saved.store; await selectedStore(); $('store-settings').open = false; }
+    else { $('store').value = ''; await selectedStore(); step('store'); say(result.stores.length ? `${result.stores.length} QFC stores found. Choose where you shop.` : 'No QFC stores found nearby. Try another ZIP code.'); }
   }
   $('stores-form').addEventListener('submit', e => { e.preventDefault(); return act(() => loadStores()); });
-  $('groceries-form').addEventListener('submit', e => { e.preventDefault(); return act(async () => {
+  async function loadApprovedGroceries() {
     reset(); if (!$('store').value) throw new Error('Choose your QFC store first.');
     const version = listGeneration;
     say('Loading your approved groceries…');
-    const result = await api(`/v1/qfc/groceries?start=${$('start').value}&end=${$('end').value}`);
+    let result;
+    try { result = await api(`/v1/qfc/groceries?start=${$('start').value}&end=${$('end').value}`); }
+    catch (error) { $('qfc-date-settings').open=true; throw error; }
     if (version !== listGeneration) return;
     totalIngredients = result.items.length;
     for (const item of result.items) {
@@ -88,10 +100,10 @@
       const results = el('div',null,'product-results'); results.append(el('p','Search QFC to compare products, package sizes, and prices.','product-empty'));
       const controls = el('div',null,'package-controls'); const label = el('label','Packages to buy');
       const qty = el('input'); qty.type='number'; qty.min='1'; qty.max='99'; qty.step='1'; qty.value='1'; qty.setAttribute('aria-label',`Number of packages for ${item.name || item.id}`); label.append(qty);
-      const clear = el('button','Leave this ingredient out','link-button'); clear.type='button'; controls.hidden=true; controls.append(label,clear);
+      const clear = el('button','Leave this ingredient out','link-button'); clear.type='button'; controls.hidden=true; const coverageHint=el('p',null,'package-coverage'); controls.append(label,clear,coverageHint);
       const update = () => {
         invalidate(); const selected = selections.get(item.id);
-        if (selected) { selected.quantity=Number(qty.value); state.textContent='Selected'; check.textContent='✓'; needed.textContent=`${qty.value} × ${selected.description} · ${selected.size}`; }
+        if (selected) { selected.quantity=Number(qty.value); state.textContent='Selected'; check.textContent='✓'; needed.textContent=`Need ${item.quantity ?? 'review amount'} ${item.unit || ''} · ${qty.value} × ${selected.description} · ${selected.size}`; coverageHint.textContent=coverageText(selected.coverage,Number(qty.value)); coverageHint.classList.toggle('is-short',!!selected.coverage?.quantity_per_package && selected.coverage.quantity_per_package*Number(qty.value)<selected.coverage.required_quantity); }
         else { state.textContent='To choose'; check.textContent='+'; needed.textContent=`Needed: ${item.quantity ?? 'review amount'} ${item.unit || ''}`; }
         card.classList.toggle('is-selected',!!selected); controls.hidden=!selected; updateSummary();
       };
@@ -101,7 +113,7 @@
         search.disabled=true; search.textContent='Searching…';
         try {
           const store=$('store').value; const currentList=listGeneration;
-          const result=await api(`/v1/qfc/products?location_id=${store}&term=${encodeURIComponent(query.value)}`);
+          const result=await api(`/v1/qfc/products?location_id=${store}&term=${encodeURIComponent(query.value)}&start=${$('start').value}&end=${$('end').value}&ingredient_id=${encodeURIComponent(item.id)}`);
           if (!card.isConnected || store !== $('store').value || currentList !== listGeneration) return;
           selections.delete(item.id); results.replaceChildren(); update();
           const available=result.products.filter(p => p.upc && p.items?.length===1 && p.items[0].soldBy==='UNIT' && p.items[0].fulfillment?.[$('modality').value==='PICKUP'?'curbside':'delivery']);
@@ -111,21 +123,24 @@
             radio.setAttribute('aria-label',`${product.description}, ${pack.size || 'size unknown'}${Number.isFinite(price)?`, ${money(price)}`:''}`);
             const copy=el('span'); if(product.brand) copy.append(el('span',product.brand,'product-brand'));
             copy.append(el('span',product.description,'product-title'),el('span',`${pack.size || 'Size not provided'} · ${method()} available`,'product-size'));
+            if (product.coverage?.suggested_packages) copy.append(el('span',`${product.coverage.suggested_packages} package${product.coverage.suggested_packages===1?'':'s'} suggested to cover ${amountText(product.coverage.required_quantity)} ${product.coverage.unit}`,'product-size')); else copy.append(el('span','Confirm package amount','product-size'));
             choice.append(radio,copy,el('span',Number.isFinite(price)?money(price):'See QFC','product-price'));
-            radio.addEventListener('change',() => { if(!radio.checked) return; selections.set(item.id,{ingredient_id:item.id,upc:product.upc,quantity:Number(qty.value),description:product.description,size:pack.size || 'Size not provided',price:Number.isFinite(price)?price:null}); update(); });
+            radio.addEventListener('change',() => { if(!radio.checked) return; qty.value=String(product.coverage?.suggested_packages || 1); selections.set(item.id,{ingredient_id:item.id,upc:product.upc,quantity:Number(qty.value),description:product.description,size:pack.size || 'Size not provided',price:Number.isFinite(price)?price:null,coverage:product.coverage}); update(); });
             results.append(choice);
           }
           if(!available.length) results.append(el('p',`No packaged products available for ${method().toLowerCase()} in these results. Try a different search or leave this ingredient out.`,'product-empty'));
         } catch(err) { results.replaceChildren(el('p',errorText(err),'product-empty')); throw err; }
         finally { search.disabled=false; search.textContent='Find products'; }
       }); });
-      body.append(searchForm,results,controls); card.append(summary,body); $('ingredients').append(card);
+      if(item.shopping_note) body.append(el('p',item.shopping_note,'fine-print muted')); body.append(searchForm,results,controls); card.append(summary,body); $('ingredients').append(card);
     }
+    $('qfc-date-settings').open=false; $('shopping').classList.toggle('has-products',totalIngredients>0);
     $('list-count').textContent=`${totalIngredients} ingredients`; $('list-tools').hidden=!totalIngredients;
     $('store-settings').open=false; step('products'); updateSummary();
     if(!totalIngredients) $('ingredients').append(el('div','There are no groceries to shop for in this approved list.','qfc-empty'));
     say('Open an ingredient to compare products. Select only what you want to add to QFC.');
-  }); });
+  }
+  $('groceries-form').addEventListener('submit', e => { e.preventDefault(); return act(loadApprovedGroceries); });
   $('preview').addEventListener('click',() => act(async () => {
     invalidate(); const version=generation; $('preview').disabled=true;
     try {
@@ -136,7 +151,7 @@
       const store=el('div',null,'review-store'); const storeCopy=el('div'); storeCopy.append(el('h3',result.store),el('p',addressText(result.store_address),'review-address')); store.append(storeCopy,el('span',result.modality==='PICKUP'?'Pickup':'Delivery','method-badge')); root.append(store);
       let total=0; let unpriced=0;
       for(const [index,item] of result.items.entries()) {
-        const row=el('div',null,'review-product'); const copy=el('div'); copy.append(el('strong',item.description),el('p',`${item.quantity} package${item.quantity===1?'':'s'} · ${item.size || 'Size not provided'}`));
+        const row=el('div',null,'review-product'); const copy=el('div'); copy.append(el('strong',item.description),el('p',`${item.quantity} package${item.quantity===1?'':'s'} · ${item.size || 'Size not provided'}`),el('p',coverageText(item.coverage,item.quantity),item.coverage?.status==='short'?'is-short':''));
         const price=item.price?.promo ?? item.price?.regular; const priced=Number.isFinite(price);
         if(priced) total+=price*item.quantity; else unpriced++;
         row.append(el('span',String(index+1),'review-number'),copy,el('span',priced?money(price*item.quantity):'See QFC','product-price')); root.append(row);

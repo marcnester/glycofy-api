@@ -24,6 +24,7 @@ from app.db import get_db
 from app.models import GroceryApproval, GroceryPreference, Plan, PlanItem, PlanMeal, Recipe, User
 from app.routers.plan_models import EnergyTarget, UserPreference
 from app.services.instacart import InstacartError, create_products_link
+from app.services.purchase_ingredients import purchase_ingredient
 from app.services.training_nutrition import athlete_profile_baseline, calculate_training_nutrition
 
 router = APIRouter()
@@ -1490,7 +1491,6 @@ _GROCERY_NAME_ALIASES = {
     "egg whole": "egg",
     "whole egg": "egg",
     "whole eggs": "egg",
-    "raw cod fillet": "cod fillet raw",
     "corn tortillas": "corn tortilla",
     "rice cakes": "rice cake",
     "ginger root": "ginger",
@@ -1511,7 +1511,7 @@ _GROCERY_NAME_ALIASES = {
 }
 
 _GROCERY_DISPLAY_NAMES = {
-    "cod fillet raw": "Raw cod fillet",
+    "cod fillet": "Cod fillets",
     "whole milk mozzarella": "Whole-milk mozzarella",
     "russet potatoes raw with skin": "Russet potatoes (with skin)",
     "ready to eat firm tofu prepared with calcium sulfate": "Firm tofu (ready to eat, calcium-set)",
@@ -1596,6 +1596,9 @@ def _grocery_name(value: str | None) -> tuple[str, str]:
     display = re.sub(r"\s+", " ", (value or "").strip())
     key = re.sub(r"[^a-z0-9]+", " ", display.lower()).strip()
     key = _GROCERY_NAME_ALIASES.get(key, key)
+    purchase = purchase_ingredient(key)
+    if purchase:
+        return purchase.key, purchase.label
     display = _GROCERY_DISPLAY_NAMES.get(key, key.capitalize())
     return key, display
 
@@ -1842,7 +1845,7 @@ def _grocery_preference_to_dict(preference: GroceryPreference) -> dict[str, Any]
 
 
 def _grocery_plan_fingerprint(plans: list[Plan]) -> list[dict[str, Any]]:
-    return [{"grocery_schema": 3}] + [
+    return [{"grocery_schema": 4}] + [
         {
             "id": plan.id,
             "date": plan.date.isoformat(),
@@ -2031,6 +2034,7 @@ def grocery_list_week(
                     "name": display_name,
                     "category": _grocery_category(display_name, item.meta),
                     "default_pantry": name_key in _DEFAULT_PANTRY,
+                    "shopping_note": purchase_ingredient(name_key).note if purchase_ingredient(name_key) else None,
                     "measurements": {},
                     "uses": [],
                 },
@@ -2078,6 +2082,7 @@ def grocery_list_week(
     return {
         "start": start.isoformat(),
         "end": final_day.isoformat(),
+        "grocery_schema": 4,
         "plan_count": len(plans),
         "missing_dates": [day.isoformat() for day in expected_dates if day not in planned_dates],
         "items": items,
@@ -2169,8 +2174,8 @@ def approve_grocery_list(
 ):
     final_day = end or (start + timedelta(days=6))
     current = grocery_list_week(start=start, end=final_day, db=db, user=user)
-    if current["missing_dates"]:
-        raise HTTPException(status_code=400, detail="Every selected day needs a meal plan before approval")
+    if not current["items"]:
+        raise HTTPException(status_code=400, detail="There are no planned groceries in this date range to review")
     base_by_id = {item["id"]: item for item in current["items"]}
     supplied_by_id = {item.id: item for item in payload.items}
     unknown = sorted(set(supplied_by_id) - set(base_by_id))

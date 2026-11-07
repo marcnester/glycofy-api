@@ -384,7 +384,8 @@ def test_grocery_page_exposes_package_and_pantry_preferences(client: TestClient)
 
     assert page.status_code == 200
     assert 'id="grocery-options-dialog"' in page.text
-    assert "what will likely be left" in page.text
+    assert 'id="grocery-package-quantity"' in page.text
+    assert 'id="grocery-in-pantry"' in page.text
     assert "/v1/plan/grocery-list/preferences" in script.text
     assert "packages_to_buy" in script.text
 

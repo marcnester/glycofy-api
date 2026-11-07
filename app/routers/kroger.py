@@ -24,6 +24,7 @@ from app.models import KrogerAuthorization, KrogerCartReview, KrogerConnection, 
 from app.rate_limit import AUTH_LIMITER
 from app.routers.plans import _shopping_approval
 from app.services import kroger
+from app.services.purchase_ingredients import package_coverage
 
 router = APIRouter(tags=["qfc"])
 COOKIE = "__Host-kroger-state" if settings.is_production else "kroger_state"
@@ -213,13 +214,34 @@ def stores(zip_code: str = Query(..., pattern=r"^\d{5}$"), user: User = Depends(
 def products(
     location_id: str = Query(..., pattern=r"^\d{8}$"),
     term: str = Query(..., min_length=2, max_length=100),
+    start: date | None = None,
+    end: date | None = None,
+    ingredient_id: str | None = Query(None, min_length=1, max_length=260),
+    db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    required = None
+    if any(value is not None for value in (start, end, ingredient_id)):
+        if start is None or end is None or ingredient_id is None:
+            raise HTTPException(422, "Supply the approved dates and ingredient together")
+        approved = approval_snapshot(db, user, start, end)
+        required = next(
+            (item for item in approved["items"] if item["id"] == ingredient_id and not item.get("pantry")), None
+        )
+        if required is None:
+            raise HTTPException(422, "Choose an ingredient from your approved shopping list")
     require_qfc(location_id)
     body = catalog("/products", {"filter.locationId": location_id, "filter.term": term, "filter.limit": 10})
     return {
         "products": [
-            {k: row.get(k) for k in ("upc", "productId", "description", "brand", "items")}
+            {
+                **{k: row.get(k) for k in ("upc", "productId", "description", "brand", "items")},
+                "coverage": (
+                    package_coverage(required.get("quantity"), required.get("unit"), row["items"][0].get("size"))
+                    if required and len(row.get("items", [])) == 1 and row["items"][0].get("soldBy") == "UNIT"
+                    else {"status": "unknown", "suggested_packages": None}
+                ),
+            }
             for row in body.get("data", [])
         ]
     }
@@ -243,7 +265,8 @@ class CartPreview(BaseModel):
 def preview(body: CartPreview, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     connection(db, user)
     approved = approval_snapshot(db, user, body.start, body.end)
-    allowed = {str(item["id"]) for item in approved["items"] if not item.get("pantry")}
+    required_items = {str(item["id"]): item for item in approved["items"] if not item.get("pantry")}
+    allowed = set(required_items)
     ids = [item.ingredient_id for item in body.items]
     if len(set(ids)) != len(ids) or not set(ids).issubset(allowed):
         raise HTTPException(422, "Select each grocery ingredient once; exclude pantry items")
@@ -268,6 +291,12 @@ def preview(body: CartPreview, db: Session = Depends(get_db), user: User = Depen
                 "description": product.get("description"),
                 "size": package.get("size"),
                 "price": package.get("price"),
+                "coverage": package_coverage(
+                    required_items[item.ingredient_id].get("quantity"),
+                    required_items[item.ingredient_id].get("unit"),
+                    package.get("size"),
+                    item.quantity,
+                ),
             }
         )
     snapshot = {

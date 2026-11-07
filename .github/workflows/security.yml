@@ -125,6 +125,8 @@ jobs:
           assert bcrypt.checkpw(password, bcrypt.hashpw(password, bcrypt.gensalt()))
           print("Native library and application import smoke checks passed")
           PYTHON
+      - name: Verify patched zlib and repeated failed writes
+        run: docker run --rm --entrypoint python glycofy:${{ github.sha }} scripts/container/check_zlib.py --vex > zlib-fixed.openvex.json
       - name: Verify migrations and readiness against PostgreSQL in the runtime image
         env:
           DATABASE_URL: postgresql+psycopg://glycofy:glycofy_test@127.0.0.1:5432/glycofy_runtime
@@ -230,6 +232,8 @@ jobs:
           upload-artifact: true
           upload-artifact-retention: 30
       - name: Block all high or critical vulnerabilities, including unfixed findings
+        env:
+          TRIVY_VEX: zlib-fixed.openvex.json
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: glycofy:${{ github.sha }}
@@ -271,7 +275,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: container-vulnerabilities-${{ github.sha }}
-          path: container-vulnerabilities.json
+          path: |
+            container-vulnerabilities.json
+            zlib-fixed.openvex.json
           retention-days: 30
           if-no-files-found: error
 

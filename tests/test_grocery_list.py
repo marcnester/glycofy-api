@@ -249,7 +249,7 @@ def test_weekly_grocery_approval_is_persisted_and_detects_plan_changes():
         app.dependency_overrides.clear()
 
 
-def test_grocery_approval_requires_every_selected_day_to_be_planned():
+def test_grocery_approval_rejects_a_range_without_any_grocery_ingredients():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
 
@@ -270,6 +270,38 @@ def test_grocery_approval_requires_every_selected_day_to_be_planned():
                 json={"servings": 1, "items": []},
             )
             assert response.status_code == 400
-            assert "Every selected day" in response.json()["detail"]
+            assert "no planned groceries" in response.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_partial_range_approval_includes_only_plans_and_expires_when_missing_day_is_added():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+
+    def override_db():
+        with Session(engine) as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_db
+    query = "start=2026-09-03&end=2026-09-04"
+    meal = {"meal_type": "dinner", "title": "Salmon", "ingredients": [{"name": "salmon", "qty": 6, "unit": "oz"}]}
+    try:
+        with TestClient(app) as client:
+            client.post("/auth/signup", json={"email": "partial@example.com", "password": "a-secure-password-123"})
+            empty = client.post(f"/v1/plan/grocery-list/approval?{query}", json={"servings": 1, "items": []})
+            assert empty.status_code == 400
+            assert client.post("/v1/plan/2026-09-03", json={"meals": [meal], "source": "manual"}).status_code == 200
+            grocery = client.get(f"/v1/plan/grocery-list/week?{query}").json()
+            assert grocery["missing_dates"] == ["2026-09-04"]
+            assert grocery["items"][0]["quantity"] == 6
+            approved = client.post(f"/v1/plan/grocery-list/approval?{query}", json={"servings": 1, "items": []})
+            assert approved.status_code == 200
+            assert approved.json()["approval"]["items"][0]["quantity"] == 6
+            assert approved.json()["approval"]["stale"] is False
+            assert client.get("/v1/plan/2026-09-04").status_code == 404
+            assert client.post("/v1/plan/2026-09-04", json={"meals": [meal], "source": "manual"}).status_code == 200
+            assert client.get(f"/v1/plan/grocery-list/approval?{query}").json()["approval"]["stale"] is True
+            assert client.get(f"/v1/plan/grocery-list/week?{query}").json()["items"][0]["quantity"] == 12
     finally:
         app.dependency_overrides.clear()
