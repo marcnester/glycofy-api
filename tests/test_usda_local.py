@@ -57,3 +57,46 @@ def test_disabled_catalog_skips_loader(monkeypatch):
     monkeypatch.setattr(settings, "USDA_LOCAL_CATALOG_ENABLED", False)
     monkeypatch.setattr(usda_local, "load_catalog", lambda *args: pytest.fail("disabled catalog loaded"))
     assert usda_local.lookup_local("banana") is None
+
+
+def test_snapshot_import_retains_usda_values_and_excludes_invalid(tmp_path):
+    from scripts.usda.import_snapshot import compile_snapshot
+
+    food = _food(1, "Banana raw")
+    records = []
+    for key, amount in [(1, 89), (2, -1)]:
+        records.append(
+            {
+                "fdcId": key,
+                "description": food["description"],
+                "dataType": food["dataType"],
+                "foodNutrients": [
+                    {"nutrient": {"id": n["nutrientId"]}, "amount": amount if n["nutrientId"] == 1008 else n["value"]}
+                    for n in food["foodNutrients"]
+                ],
+            }
+        )
+    path = tmp_path / "source.json"
+    path.write_text(json.dumps({"FoundationFoods": records}))
+    snapshot = compile_snapshot([path], "fixture")
+    assert snapshot["excluded_incomplete"] == 1
+    assert snapshot["foods"] == [food]
+    assert snapshot["sources"][0]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_local_miss_uses_existing_api_fallback(monkeypatch):
+    import httpx
+
+    match_food = _food(123, "Banana raw")
+    monkeypatch.setattr(usda_nutrition, "_catalog_match", lambda q: None)
+    monkeypatch.setattr("app.services.usda_local.lookup_local", lambda q: None)
+    monkeypatch.setattr(usda_nutrition.settings, "USDA_FDC_API_KEY", "synthetic-key")
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"foods": [match_food]}))
+    client = httpx.Client(transport=transport)
+    monkeypatch.setattr(usda_nutrition.httpx, "Client", lambda **kw: client)
+    stored = []
+    monkeypatch.setattr(usda_nutrition, "_store_catalog_match", lambda q, m: stored.append(m))
+    usda_nutrition.lookup_food.cache_clear()
+    assert usda_nutrition.lookup_food("banana raw").fdc_id == 123
+    assert len(stored) == 1
+    usda_nutrition.lookup_food.cache_clear()
