@@ -266,7 +266,7 @@ def _match_score(query: str, food: dict[str, Any]) -> float | None:
     description_tokens = _tokens(description)
     if not query_tokens:
         return None
-    if not _milk_identity_matches(query, description):
+    if "milk" in query_tokens and not _milk_identity_matches(query, description):
         return None
     overlap = query_tokens & description_tokens
     # FDC descriptions use a controlled vocabulary (for example "Oil, olive")
