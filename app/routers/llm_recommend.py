@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from collections import Counter, OrderedDict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -4562,12 +4563,6 @@ def _parallel_week_recommendations(
         }
         for index, day in enumerate(days)
     ]
-    weekly_lookup_limit = max(0, int(os.environ.get("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "12")))
-    lookups_per_day, extra_lookup_days = divmod(weekly_lookup_limit, len(themed_days))
-    day_lookup_limits = [lookups_per_day + int(index < extra_lookup_days) for index in range(len(themed_days))]
-    output: dict[str, dict[str, SlotRecommendation]] = {}
-    metas: list[dict[str, Any]] = []
-    started = time.perf_counter()
 
     def generate(day: dict[str, Any], lookup_limit: int):
         return _batch_week_recommendations(
@@ -4581,14 +4576,32 @@ def _parallel_week_recommendations(
             synchronous_lookup_limit=lookup_limit,
         )
 
+    return _parallel_day_batches(themed_days, generate)
+
+
+def _parallel_day_batches(
+    days: list[dict[str, Any]],
+    generate: Callable[[dict[str, Any], int], tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]],
+) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
+    weekly_lookup_limit = max(0, int(os.environ.get("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "12")))
+    lookups_per_day, extra_lookup_days = divmod(weekly_lookup_limit, len(days))
+    started = time.perf_counter()
+    output: dict[str, dict[str, SlotRecommendation]] = {}
+    metas: list[dict[str, Any]] = []
+    if len(days) == 1:
+        return generate(days[0], weekly_lookup_limit)
+
     try:
         configured_workers = max(1, int(os.environ.get("WEEKLY_DAY_MAX_WORKERS", "3")))
     except ValueError:
         configured_workers = 3
     with ThreadPoolExecutor(
-        max_workers=min(configured_workers, len(themed_days)), thread_name_prefix="weekly-day"
+        max_workers=min(configured_workers, len(days)), thread_name_prefix="weekly-day"
     ) as executor:
-        futures = [executor.submit(generate, day, day_lookup_limits[index]) for index, day in enumerate(themed_days)]
+        futures = [
+            executor.submit(generate, day, lookups_per_day + int(index < extra_lookup_days))
+            for index, day in enumerate(days)
+        ]
         for future in futures:
             day_output, day_meta = future.result()
             output.update(day_output)
@@ -4698,10 +4711,29 @@ def recommend_weekly_apply(
     kept_titles, duplicate_titles_removed = _deduplicate_week_batch(batch_days, batch_items)
     batch_meta["duplicate_titles_removed"] = duplicate_titles_removed
 
-    # Repair only the rejected cells in one compact model call. USDA remains
-    # authoritative and the same validation runs again; this is not a fallback
-    # to guessed nutrition. Keeping the repair bounded avoids turning one bad
-    # ingredient into dozens of slow per-slot calls.
+    def repair_days_in_parallel(days: list[dict[str, Any]]):
+        exclusions = _preference_exclusions(pref)
+        forbidden_variety_keys = _saturated_week_variety_keys(batch_items)
+
+        def generate(day: dict[str, Any], lookup_limit: int):
+            return _batch_week_recommendations(
+                client,
+                days=[day],
+                primary_diet=primary_diet,
+                diet_tags=pref_tags,
+                exclusions=exclusions,
+                athlete_feedback=athlete_feedback,
+                week_context=batch_days,
+                flexible_meal_count=True,
+                forbidden_titles=kept_titles,
+                forbidden_variety_keys=forbidden_variety_keys,
+                synchronous_lookup_limit=lookup_limit,
+            )
+
+        return _parallel_day_batches(days, generate)
+
+    # Repair only rejected cells, with one concurrent request per affected day.
+    # Recheck duplicates after merging because sibling requests cannot see each other.
     repair_days: list[dict[str, Any]] = []
     missing_count = 0
     for batch_day in batch_days:
@@ -4718,18 +4750,7 @@ def recommend_weekly_apply(
     except ValueError:
         repair_limit = 10
     if repair_days and missing_count <= repair_limit:
-        repaired_items, repair_meta = _batch_week_recommendations(
-            client,
-            days=repair_days,
-            primary_diet=primary_diet,
-            diet_tags=pref_tags,
-            exclusions=_preference_exclusions(pref),
-            athlete_feedback=athlete_feedback,
-            week_context=batch_days,
-            flexible_meal_count=True,
-            forbidden_titles=kept_titles,
-            forbidden_variety_keys=_saturated_week_variety_keys(batch_items),
-        )
+        repaired_items, repair_meta = repair_days_in_parallel(repair_days)
         for repair_date, slots in repaired_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
         # A repair call can itself repeat a title from another repair cell.
@@ -4747,11 +4768,8 @@ def recommend_weekly_apply(
     elif repair_days:
         batch_meta["repair"] = {"requested": missing_count, "skipped": "limit_exceeded"}
 
-    # Make one final compact request for cells that the first repair did not
-    # satisfy (including duplicates removed from that repair). This preserves
-    # whole-week context and is substantially faster than serial AI calls for
-    # every residual slot. Verified catalog recovery and tightly bounded,
-    # same-slot reuse remain the non-network safety nets below.
+    # Retry the remaining cells, including duplicates removed from the first repair.
+    # Verified catalog recovery and same-slot reuse remain the safety nets below.
     final_repair_days: list[dict[str, Any]] = []
     final_missing_count = 0
     for batch_day in batch_days:
@@ -4764,18 +4782,7 @@ def recommend_weekly_apply(
             final_missing_count += len(missing_meals)
             final_repair_days.append({**batch_day, "meals": missing_meals})
     if final_repair_days and final_missing_count <= repair_limit:
-        final_items, final_meta = _batch_week_recommendations(
-            client,
-            days=final_repair_days,
-            primary_diet=primary_diet,
-            diet_tags=pref_tags,
-            exclusions=_preference_exclusions(pref),
-            athlete_feedback=athlete_feedback,
-            week_context=batch_days,
-            flexible_meal_count=True,
-            forbidden_titles=kept_titles,
-            forbidden_variety_keys=_saturated_week_variety_keys(batch_items),
-        )
+        final_items, final_meta = repair_days_in_parallel(final_repair_days)
         for repair_date, slots in final_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
         kept_titles, final_duplicates_removed = _deduplicate_week_batch(batch_days, batch_items)
