@@ -3,6 +3,7 @@ import threading
 import time
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -400,6 +401,27 @@ def test_weekly_batch_schema_supports_one_compact_variable_slot_repair(monkeypat
     assert meta["accepted"] == 3
     assert set(recommendations[dates[0]]) == {"breakfast"}
     assert set(recommendations[dates[1]]) == {"breakfast", "lunch"}
+
+
+def test_weekly_repair_token_limit_counts_every_requested_slot(monkeypatch):
+    monkeypatch.delenv("OPENAI_WEEKLY_MAX_TOKENS", raising=False)
+    monkeypatch.setattr(llm_recommend, "_circuit_open", lambda: False)
+    monkeypatch.setattr(llm_recommend, "_daily_budget_usd", lambda: 100.0)
+    completion = Mock(return_value=SimpleNamespace(choices=[], usage=None))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=completion)))
+    days = [
+        {
+            "date": f"2026-09-0{index}",
+            "meals": [{"slot": slot, "target_macros": {}} for slot in llm_recommend.SLOTS[:count]],
+        }
+        for index, count in enumerate((1, 4, 3), start=1)
+    ]
+
+    llm_recommend._batch_week_recommendations(
+        client, days=days, primary_diet="omnivore", diet_tags=[], exclusions=[], flexible_meal_count=True
+    )
+
+    assert completion.call_args.kwargs["max_completion_tokens"] == 8000
 
 
 def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch):

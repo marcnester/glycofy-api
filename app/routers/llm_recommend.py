@@ -4208,18 +4208,18 @@ def _batch_week_recommendations(
         "forbidden_titles": forbidden_titles or [],
         "forbidden_variety_keys": forbidden_variety_keys or [],
     }
+    # Repair days can have different numbers of slots. Size their response
+    # for every requested recipe so a truncated batch does not force another pass.
+    meal_count = sum(len(day["meals"]) for day in days)
+    tokens_per_meal = 1000 if flexible_meal_count else 700
+    default_token_limit = max(5000, meal_count * tokens_per_meal)
     started = time.perf_counter()
     try:
         model = _openai_model()
         response = client.chat.completions.create(
             model=model,
             **_chat_generation_options(model),
-            max_completion_tokens=int(
-                os.environ.get(
-                    "OPENAI_WEEKLY_MAX_TOKENS",
-                    str(max(5000, len(days) * len(days[0].get("meals", [])) * 700)),
-                )
-            ),
+            max_completion_tokens=int(os.environ.get("OPENAI_WEEKLY_MAX_TOKENS", str(default_token_limit))),
             response_format={
                 "type": "json_schema",
                 "json_schema": _weekly_batch_schema(
