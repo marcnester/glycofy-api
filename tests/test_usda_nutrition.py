@@ -548,3 +548,66 @@ def test_verify_ingredients_rejects_missing_or_invalid_weight(monkeypatch, amoun
     monkeypatch.setattr(usda_nutrition, "lookup_food", lambda query: pytest.fail("lookup should not run"))
     with pytest.raises(USDANutritionError):
         verify_ingredients([{"name": "banana", "amount_g": amount_g}])
+
+
+@pytest.mark.parametrize("query", ["milk whole", "whole milk", "whole milk plain"])
+def test_whole_milk_cannot_resolve_to_yogurt_or_skim(query):
+    foods = [
+        _food(1, "Yogurt, plain, whole milk"),
+        _food(2, "Milk, nonfat, fluid"),
+        _food(3, "Milk, whole, fluid", data_type="SR Legacy"),
+    ]
+    assert select_match(query, foods).fdc_id == 3
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Yogurt, plain, whole milk",
+        "Milk, condensed, whole",
+        "Milk, dry, whole, powder",
+        "Milk, dry, whole",
+        "Milk, whole, chocolate",
+        "Cream, whole milk",
+    ],
+)
+def test_whole_milk_rejects_other_milk_products(description):
+    with pytest.raises(USDANutritionError):
+        select_match("whole milk", [_food(1, description)])
+
+
+def test_explicit_whole_milk_yogurt_still_matches():
+    yogurt = _food(1, "Yogurt, plain, whole milk")
+    yogurt["foodNutrients"] = [
+        {"nutrientId": k, "value": v} for k, v in {1008: 77.3, 1003: 3.82, 1005: 5.57, 1004: 4.48}.items()
+    ]
+    assert select_match("whole milk yogurt", [yogurt]).fdc_id == 1
+
+
+def test_cached_milk_yogurt_mismatch_cannot_bypass_identity_guard(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
+        description="Yogurt, plain, whole milk"
+    )
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    assert usda_nutrition._catalog_match("whole milk") is None
+    db.close.assert_called_once()
+
+
+def test_cached_fluid_whole_milk_mapping_is_preserved(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
+        fdc_id=123,
+        description="Milk, whole",
+        data_type="Survey (FNDDS)",
+        nutrients_per_100g={"kcal": 61, "protein_g": 3.27, "carbs_g": 4.63, "fat_g": 3.2},
+    )
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    assert usda_nutrition._catalog_match("whole milk").fdc_id == 123
+    db.close.assert_called_once()

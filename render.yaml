@@ -3,7 +3,7 @@ services:
     name: glycofy-api
     runtime: image
     image:
-      url: ghcr.io/marcnester/glycofy-api@sha256:e4f36621a1d34de7f48559295c586775532c7def8b7829c3c8836de5861cf604
+      url: ghcr.io/marcnester/glycofy-api@sha256:2b814e20b754a572f007018e40d87567dfc5301b7648eccdf67cb45f3a2a5518
     plan: 1c-2g
     region: oregon
     preDeployCommand: alembic upgrade head
@@ -81,6 +81,8 @@ services:
         value: "0.0012"
       - key: USDA_FDC_API_KEY
         sync: false
+      - key: USDA_LOCAL_CATALOG_ENABLED
+        value: "true"
       - key: USDA_FDC_REQUIRED
         value: "false"
       - key: USDA_FDC_TIMEOUT_SECONDS
