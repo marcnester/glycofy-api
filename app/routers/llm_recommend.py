@@ -4721,8 +4721,9 @@ def recommend_weekly_apply(
                 requested += len(selected)
         return days, requested, missing - requested
 
-    repair_days, missing_count, deferred_count = collect_repair_days()
-    if repair_days:
+    def repair_week_slots(
+        repair_days: list[dict[str, Any]], missing_count: int
+    ) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
         repair_options = {
             "primary_diet": primary_diet,
             "diet_tags": pref_tags,
@@ -4767,8 +4768,12 @@ def recommend_weekly_apply(
                 "rejected": int(first_meta.get("rejected") or 0) + int(second_meta.get("rejected") or 0),
                 "latency_ms": round((time.perf_counter() - started) * 1000),
             }
-        else:
-            repaired_items, repair_meta = _batch_week_recommendations(client, days=repair_days, **repair_options)
+            return repaired_items, repair_meta
+        return _batch_week_recommendations(client, days=repair_days, **repair_options)
+
+    repair_days, missing_count, deferred_count = collect_repair_days()
+    if repair_days:
+        repaired_items, repair_meta = repair_week_slots(repair_days, missing_count)
         for repair_date, slots in repaired_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
         # A repair call can itself repeat a title from another repair cell.
@@ -4794,18 +4799,7 @@ def recommend_weekly_apply(
     # same-slot reuse remain the non-network safety nets below.
     final_repair_days, final_missing_count, final_deferred_count = collect_repair_days()
     if final_repair_days:
-        final_items, final_meta = _batch_week_recommendations(
-            client,
-            days=final_repair_days,
-            primary_diet=primary_diet,
-            diet_tags=pref_tags,
-            exclusions=_preference_exclusions(pref),
-            athlete_feedback=athlete_feedback,
-            week_context=batch_days,
-            flexible_meal_count=True,
-            forbidden_titles=kept_titles,
-            forbidden_variety_keys=_saturated_week_variety_keys(batch_items),
-        )
+        final_items, final_meta = repair_week_slots(final_repair_days, final_missing_count)
         for repair_date, slots in final_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
         kept_titles, final_duplicates_removed = _deduplicate_week_batch(batch_days, batch_items)

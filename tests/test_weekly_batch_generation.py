@@ -526,20 +526,12 @@ def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
                 date: {
                     slot: recommendation(
                         slot,
-                        (
-                            "Repeated Oat Bowl"
-                            if slot == "breakfast"
-                            else (
-                                "Repeated Yogurt Cup"
-                                if slot == "snack"
-                                else f"{date} "
-                                + {
-                                    "lunch": "chicken quinoa salad",
-                                    "dinner": "salmon sweet potato",
-                                    "snack": "apple yogurt cup",
-                                }[slot]
-                            )
-                        ),
+                        {
+                            "breakfast": "Repeated Oat Bowl",
+                            "snack": "Repeated Yogurt Cup",
+                            "lunch": "Repeated Quinoa Salad",
+                            "dinner": f"{date} Salmon Sweet Potato",
+                        }[slot],
                     )
                     for slot in llm_recommend.SLOTS
                 }
@@ -553,7 +545,11 @@ def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
         repair_calls.append((days, forbidden_titles, synchronous_lookup_limit))
         if synchronous_lookup_limit is not None:
             repairs_started.wait(timeout=3)
-        titles = {"breakfast": "Apple Egg Breakfast", "snack": "Pear Cottage Cheese Cup"}
+        titles = {
+            "breakfast": "Apple Egg Breakfast",
+            "snack": "Pear Cottage Cheese Cup",
+            "lunch": "Tofu Rice Salad",
+        }
         return {
             day["date"]: {
                 meal["slot"]: recommendation(meal["slot"], f'{day["date"]} {titles[meal["slot"]]}')
@@ -590,16 +586,23 @@ def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
 
         result = llm_recommend.recommend_weekly_apply(request, payload, db, user)
 
-    assert result["generation"]["duplicate_titles_removed"] == 12
+    assert result["generation"]["duplicate_titles_removed"] == 18
     assert result["generation"]["repair"]["requested"] == 10
-    assert result["generation"]["repair"]["deferred"] == 2
-    assert result["generation"]["final_repair"]["requested"] == 2
-    first_pass = [(batch, limit) for batch, _, limit in repair_calls if limit is not None]
-    assert sorted(day["date"] for batch, _ in first_pass for day in batch) == dates[1:6]
-    assert sorted(sum(len(day["meals"]) for day in batch) for batch, _ in first_pass) == [4, 6]
-    assert sum(limit for _, limit in first_pass) == 12
-    assert [day["date"] for batch, _, limit in repair_calls if limit is None for day in batch] == dates[6:]
+    assert result["generation"]["repair"]["deferred"] == 8
+    assert result["generation"]["final_repair"]["requested"] == 8
+    first_pass, second_pass = repair_calls[:2], repair_calls[2:]
+    assert [
+        sum(len(day["meals"]) for batch, _, _ in calls for day in batch) for calls in (first_pass, second_pass)
+    ] == [
+        10,
+        8,
+    ]
+    assert all(sum(limit for _, _, limit in calls) == 12 for calls in (first_pass, second_pass))
     assert all(titles.count("Repeated Oat Bowl") == 1 for _, titles, _ in repair_calls)
+    repaired_slots = [
+        (day["date"], meal["slot"]) for batch, _, _ in repair_calls for day in batch for meal in day["meals"]
+    ]
+    assert set(repaired_slots) == {(day, slot) for day in dates[1:] for slot in ("breakfast", "lunch", "snack")}
     assert [
         next(item for item in day["items"] if item["slot"] == "breakfast")["ai_idea"]["title"] for day in result["days"]
     ] == ["Repeated Oat Bowl", *(f"{day} Apple Egg Breakfast" for day in dates[1:])]
