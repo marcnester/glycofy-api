@@ -3582,6 +3582,29 @@ def _day_target_misses(
     ]
 
 
+def _fit_weekly_day(
+    day_items: list[SlotRecommendation], targets: list[MealTarget]
+) -> tuple[list[SlotRecommendation], dict[str, float], list[str]]:
+    target_totals = _rebalance_verified_day(day_items, targets)
+    misses = _day_target_misses(day_items, target_totals)
+    if not misses:
+        return day_items, target_totals, misses
+
+    # Each fit replaces recommendation fields rather than editing nested data.
+    # Keep the first fit available in case adjusting catalog portions makes it worse.
+    complete_fit = [item.model_copy() for item in day_items]
+    _rebalance_complete_verified_day(complete_fit, targets)
+    complete_misses = _day_target_misses(complete_fit, target_totals)
+    logger.info("weekly_complete_day_rebalance")
+    if (
+        complete_misses
+        and _day_target_misses(complete_fit, target_totals, _DAY_RECOVERY_LIMITS)
+        and not _day_target_misses(day_items, target_totals, _DAY_RECOVERY_LIMITS)
+    ):
+        return day_items, target_totals, misses
+    return complete_fit, target_totals, complete_misses
+
+
 def _create_recipe_from_ai_idea(
     db: Session,
     slot: str,
@@ -5068,36 +5091,37 @@ def recommend_weekly_apply(
                 },
             )
 
-        day_target_totals = _rebalance_verified_day(day_items, adjusted_meals)
-        target_misses = _day_target_misses(day_items, day_target_totals)
-        if target_misses:
-            _rebalance_complete_verified_day(day_items, adjusted_meals)
-            target_misses = _day_target_misses(day_items, day_target_totals)
-            logger.info("weekly_complete_day_rebalance")
+        day_items, day_target_totals, target_misses = _fit_weekly_day(day_items, adjusted_meals)
         if target_misses:
             hard_misses = _day_target_misses(day_items, day_target_totals, _DAY_RECOVERY_LIMITS)
-            if not hard_misses:
+            if hard_misses:
+                db.rollback()
                 logger.warning(
-                    "weekly_day_target_variance_accepted",
+                    "weekly_day_target_rejected",
                     extra={
+                        "job_id": getattr(_WEEKLY_JOB_CONTEXT, "job_id", None),
                         "date": date_iso,
-                        "reason_codes": [f"daily_{name}_target_variance" for name in target_misses],
+                        "reason_codes": [f"daily_{name}_target_variance" for name in hard_misses],
                     },
                 )
-                for item in day_items:
-                    item.meta = {**(item.meta or {}), "day_target_variance": target_misses}
-                target_misses = []
-        if target_misses:
-            db.rollback()
-            logger.warning("weekly_day_target_rejected")
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "message": "Unable to generate a day that safely matches the athlete's nutrition targets",
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "message": "Unable to generate a day that safely matches the athlete's nutrition targets",
+                        "reason": "day_target_rejected",
+                        "date": date_iso,
+                        "target_misses": target_misses,
+                    },
+                )
+            logger.warning(
+                "weekly_day_target_variance_accepted",
+                extra={
                     "date": date_iso,
-                    "target_misses": target_misses,
+                    "reason_codes": [f"daily_{name}_target_variance" for name in target_misses],
                 },
             )
+            for item in day_items:
+                item.meta = {**(item.meta or {}), "day_target_variance": target_misses}
 
         out_days.append(
             {
@@ -5282,12 +5306,16 @@ def _run_weekly_job(job_id: str, payload_data: dict[str, Any], user_id: int, ip:
                 "weekly_job_failed",
                 extra={"job_id": job_id, "error_reference": error_reference, "error_code": type(exc).__name__},
             )
+            error = "We couldn't finish this week plan. Please retry."
+            if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
+                if exc.detail.get("reason") == "day_target_rejected":
+                    error = "We couldn't match your nutrition targets for one day. Please retry to generate new meals."
             _update_weekly_job(
                 job_id,
                 status="failed",
                 stage="failed",
                 message="We couldn't finish this week plan.",
-                error="We couldn't finish this week plan. Please retry.",
+                error=error,
                 error_code=type(exc).__name__[:80],
                 error_reference=error_reference,
                 completed_at=datetime.utcnow(),

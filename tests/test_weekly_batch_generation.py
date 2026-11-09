@@ -1210,6 +1210,66 @@ def test_complete_day_rebalance_adjusts_verified_meals_around_provisional_meal()
     )
 
 
+def test_weekly_fit_keeps_acceptable_day_when_complete_refit_overshoots():
+    slots = ("breakfast", "lunch", "dinner")
+    target_values = [(331.3, 10.4, 91.9, 12.5), (487.1, 103.1, 16.4, 16.4), (582.9, 39.4, 61.7, 25.4)]
+    targets = [
+        llm_recommend.MealTarget(slot=slot, **dict(zip(llm_recommend._MACROS, values, strict=True)))
+        for slot, values in zip(slots, target_values, strict=True)
+    ]
+    foods = [
+        [
+            ("greek yogurt", 73, (59, 10, 3.6, 0.4)),
+            ("banana", 254, (89, 1.1, 22.8, 0.3)),
+            ("peanut butter", 14, (588, 25, 20, 50)),
+        ],
+        [
+            ("chicken breast", 214, (165, 31, 0, 3.6)),
+            ("cooked rice", 62, (130, 2.7, 28, 0.3)),
+            ("olive oil", 11, (884, 0, 0, 100)),
+        ],
+        [
+            ("salmon", 158, (206, 22, 0, 12)),
+            ("cooked potato", 195, (87, 1.9, 20, 0.1)),
+            ("avocado", 9, (160, 2, 8.5, 14.7)),
+        ],
+    ]
+    meals = []
+    for target, ingredients in zip(targets, foods, strict=True):
+        slot = target.slot
+        target_macros = target.model_dump(exclude={"slot"})
+        evidence = [
+            {
+                "name": name,
+                "amount": grams,
+                "amount_g": grams,
+                "unit": "g",
+                "nutrition": {
+                    macro: round(value * grams / 100, 1)
+                    for macro, value in zip(llm_recommend._MACROS, per_100g, strict=True)
+                },
+            }
+            for name, grams, per_100g in ingredients
+        ]
+        macros = llm_recommend.ingredient_nutrition_totals({"ingredients": evidence})
+        assert macros is not None
+        title = f"{ingredients[0][0]} bowl"
+        if slot == "dinner":
+            recipe = llm_recommend.RecipePick(id=1, title=title, meal_type=slot, ingredients=evidence, **macros)
+            meals.append(llm_recommend.SlotRecommendation(slot=slot, target=target_macros, recipe=recipe))
+        else:
+            idea = {"title": title, "ingredients": evidence, "approx_macros": macros}
+            meals.append(llm_recommend.SlotRecommendation(slot=slot, target=target_macros, ai_idea=idea))
+
+    fitted, totals, misses = llm_recommend._fit_weekly_day(meals, targets)
+    assert misses
+    assert llm_recommend._day_target_misses(fitted, totals, llm_recommend._DAY_RECOVERY_LIMITS) == []
+    assert fitted[-1].recipe is not None
+
+    llm_recommend._rebalance_complete_verified_day(fitted, targets)
+    assert llm_recommend._day_target_misses(fitted, totals, llm_recommend._DAY_RECOVERY_LIMITS) == ["kcal"]
+
+
 def test_day_target_protein_tolerance_accepts_real_world_variability():
     target_totals = {"kcal": 2000, "protein_g": 100, "carbs_g": 250, "fat_g": 67}
 
