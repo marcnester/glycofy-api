@@ -506,6 +506,7 @@ def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
     dates = [f"2026-09-0{day}" for day in range(1, 8)]
     repairs_started = threading.Barrier(2)
     monkeypatch.setenv("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "12")
+    monkeypatch.setenv("WEEKLY_REPAIR_MAX_SLOTS", "10")
     targets = {"kcal": 500.0, "protein_g": 40.0, "carbs_g": 50.0, "fat_g": 15.0}
     repair_calls = []
 
@@ -528,12 +529,16 @@ def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
                         (
                             "Repeated Oat Bowl"
                             if slot == "breakfast"
-                            else f"{date} "
-                            + {
-                                "lunch": "chicken quinoa salad",
-                                "dinner": "salmon sweet potato",
-                                "snack": "apple yogurt cup",
-                            }[slot]
+                            else (
+                                "Repeated Yogurt Cup"
+                                if slot == "snack"
+                                else f"{date} "
+                                + {
+                                    "lunch": "chicken quinoa salad",
+                                    "dinner": "salmon sweet potato",
+                                    "snack": "apple yogurt cup",
+                                }[slot]
+                            )
                         ),
                     )
                     for slot in llm_recommend.SLOTS
@@ -544,11 +549,16 @@ def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
         ),
     )
 
-    def repair(_client, *, days, forbidden_titles, synchronous_lookup_limit, **_kwargs):
+    def repair(_client, *, days, forbidden_titles, synchronous_lookup_limit=None, **_kwargs):
         repair_calls.append((days, forbidden_titles, synchronous_lookup_limit))
-        repairs_started.wait(timeout=3)
+        if synchronous_lookup_limit is not None:
+            repairs_started.wait(timeout=3)
+        titles = {"breakfast": "Apple Egg Breakfast", "snack": "Pear Cottage Cheese Cup"}
         return {
-            day["date"]: {"breakfast": recommendation("breakfast", f'{day["date"]} Apple Egg Breakfast')}
+            day["date"]: {
+                meal["slot"]: recommendation(meal["slot"], f'{day["date"]} {titles[meal["slot"]]}')
+                for meal in day["meals"]
+            }
             for day in days
         }, {"rejected": 0}
 
@@ -580,10 +590,15 @@ def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
 
         result = llm_recommend.recommend_weekly_apply(request, payload, db, user)
 
-    assert result["generation"]["duplicate_titles_removed"] == 6
-    assert sorted(day["date"] for batch, _, _ in repair_calls for day in batch) == dates[1:]
-    assert [len(batch) for batch, _, _ in repair_calls] == [3, 3]
-    assert sum(limit for _, _, limit in repair_calls) == 12
+    assert result["generation"]["duplicate_titles_removed"] == 12
+    assert result["generation"]["repair"]["requested"] == 10
+    assert result["generation"]["repair"]["deferred"] == 2
+    assert result["generation"]["final_repair"]["requested"] == 2
+    first_pass = [(batch, limit) for batch, _, limit in repair_calls if limit is not None]
+    assert sorted(day["date"] for batch, _ in first_pass for day in batch) == dates[1:6]
+    assert sorted(sum(len(day["meals"]) for day in batch) for batch, _ in first_pass) == [4, 6]
+    assert sum(limit for _, limit in first_pass) == 12
+    assert [day["date"] for batch, _, limit in repair_calls if limit is None for day in batch] == dates[6:]
     assert all(titles.count("Repeated Oat Bowl") == 1 for _, titles, _ in repair_calls)
     assert [
         next(item for item in day["items"] if item["slot"] == "breakfast")["ai_idea"]["title"] for day in result["days"]

@@ -4702,22 +4702,27 @@ def recommend_weekly_apply(
     # authoritative and the same validation runs again; this is not a fallback
     # to guessed nutrition. Keeping the repair bounded avoids turning one bad
     # ingredient into dozens of slow per-slot calls.
-    repair_days: list[dict[str, Any]] = []
-    missing_count = 0
-    for batch_day in batch_days:
-        missing_meals = [
-            meal
-            for meal in batch_day["meals"]
-            if _normalize_slot(str(meal["slot"])) not in batch_items.get(batch_day["date"], {})
-        ]
-        if missing_meals:
-            missing_count += len(missing_meals)
-            repair_days.append({**batch_day, "meals": missing_meals})
     try:
         repair_limit = max(0, int(os.environ.get("WEEKLY_REPAIR_MAX_SLOTS", "10")))
     except ValueError:
         repair_limit = 10
-    if repair_days and missing_count <= repair_limit:
+
+    def collect_repair_days() -> tuple[list[dict[str, Any]], int, int]:
+        days = []
+        requested = 0
+        missing = 0
+        for batch_day in batch_days:
+            accepted = batch_items.get(batch_day["date"], {})
+            gaps = [meal for meal in batch_day["meals"] if _normalize_slot(str(meal["slot"])) not in accepted]
+            missing += len(gaps)
+            selected = gaps[: repair_limit - requested]
+            if selected:
+                days.append({**batch_day, "meals": selected})
+                requested += len(selected)
+        return days, requested, missing - requested
+
+    repair_days, missing_count, deferred_count = collect_repair_days()
+    if repair_days:
         repair_options = {
             "primary_diet": primary_diet,
             "diet_tags": pref_tags,
@@ -4777,27 +4782,18 @@ def recommend_weekly_apply(
             "rejected": int(repair_meta.get("rejected") or 0),
             "latency_ms": int(repair_meta.get("latency_ms") or 0),
             "duplicates_removed": repair_duplicates_removed,
+            **({"deferred": deferred_count} if deferred_count else {}),
         }
-    elif repair_days:
-        batch_meta["repair"] = {"requested": missing_count, "skipped": "limit_exceeded"}
+    elif deferred_count:
+        batch_meta["repair"] = {"requested": deferred_count, "skipped": "limit_exceeded"}
 
     # Make one final compact request for cells that the first repair did not
     # satisfy (including duplicates removed from that repair). This preserves
     # whole-week context and is substantially faster than serial AI calls for
     # every residual slot. Verified catalog recovery and tightly bounded,
     # same-slot reuse remain the non-network safety nets below.
-    final_repair_days: list[dict[str, Any]] = []
-    final_missing_count = 0
-    for batch_day in batch_days:
-        missing_meals = [
-            meal
-            for meal in batch_day["meals"]
-            if _normalize_slot(str(meal["slot"])) not in batch_items.get(batch_day["date"], {})
-        ]
-        if missing_meals:
-            final_missing_count += len(missing_meals)
-            final_repair_days.append({**batch_day, "meals": missing_meals})
-    if final_repair_days and final_missing_count <= repair_limit:
+    final_repair_days, final_missing_count, final_deferred_count = collect_repair_days()
+    if final_repair_days:
         final_items, final_meta = _batch_week_recommendations(
             client,
             days=final_repair_days,
@@ -4821,9 +4817,10 @@ def recommend_weekly_apply(
             "rejected": int(final_meta.get("rejected") or 0),
             "latency_ms": int(final_meta.get("latency_ms") or 0),
             "duplicates_removed": final_duplicates_removed,
+            **({"deferred": final_deferred_count} if final_deferred_count else {}),
         }
-    elif final_repair_days:
-        batch_meta["final_repair"] = {"requested": final_missing_count, "skipped": "limit_exceeded"}
+    elif final_deferred_count:
+        batch_meta["final_repair"] = {"requested": final_deferred_count, "skipped": "limit_exceeded"}
 
     # Bulk repair is efficient, but one difficult cell can still be rejected
     # twice for a correctable portion or cooking-state mistake. Give only the
