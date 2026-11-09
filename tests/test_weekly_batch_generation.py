@@ -3,6 +3,7 @@ import threading
 import time
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -402,6 +403,27 @@ def test_weekly_batch_schema_supports_one_compact_variable_slot_repair(monkeypat
     assert set(recommendations[dates[1]]) == {"breakfast", "lunch"}
 
 
+def test_weekly_repair_token_limit_counts_every_requested_slot(monkeypatch):
+    monkeypatch.delenv("OPENAI_WEEKLY_MAX_TOKENS", raising=False)
+    monkeypatch.setattr(llm_recommend, "_circuit_open", lambda: False)
+    monkeypatch.setattr(llm_recommend, "_daily_budget_usd", lambda: 100.0)
+    completion = Mock(return_value=SimpleNamespace(choices=[], usage=None))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=completion)))
+    days = [
+        {
+            "date": f"2026-09-0{index}",
+            "meals": [{"slot": slot, "target_macros": {}} for slot in llm_recommend.SLOTS[:count]],
+        }
+        for index, count in enumerate((1, 4, 3), start=1)
+    ]
+
+    llm_recommend._batch_week_recommendations(
+        client, days=days, primary_diet="omnivore", diet_tags=[], exclusions=[], flexible_meal_count=True
+    )
+
+    assert completion.call_args.kwargs["max_completion_tokens"] == 8000
+
+
 def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
@@ -481,7 +503,10 @@ def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch)
 def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
-    dates = ["2026-09-01", "2026-09-02"]
+    dates = [f"2026-09-0{day}" for day in range(1, 8)]
+    repairs_started = threading.Barrier(2)
+    monkeypatch.setenv("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "12")
+    monkeypatch.setenv("WEEKLY_REPAIR_MAX_SLOTS", "10")
     targets = {"kcal": 500.0, "protein_g": 40.0, "carbs_g": 50.0, "fat_g": 15.0}
     repair_calls = []
 
@@ -501,31 +526,37 @@ def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
                 date: {
                     slot: recommendation(
                         slot,
-                        (
-                            "Repeated Oat Bowl"
-                            if slot == "breakfast"
-                            else f"{date} "
-                            + {
-                                "lunch": "chicken quinoa salad",
-                                "dinner": "salmon sweet potato",
-                                "snack": "apple yogurt cup",
-                            }[slot]
-                        ),
+                        {
+                            "breakfast": "Repeated Oat Bowl",
+                            "snack": "Repeated Yogurt Cup",
+                            "lunch": "Repeated Quinoa Salad",
+                            "dinner": f"{date} Salmon Sweet Potato",
+                        }[slot],
                     )
                     for slot in llm_recommend.SLOTS
                 }
                 for date in dates
             },
-            {"accepted": 8, "rejected": 0, "latency_ms": 100},
+            {"accepted": 28, "rejected": 0, "latency_ms": 100},
         ),
     )
 
-    def repair(_client, *, days, forbidden_titles=None, **_kwargs):
-        repair_calls.append({"days": days, "forbidden_titles": forbidden_titles})
-        return {dates[1]: {"breakfast": recommendation("breakfast", "Apple Egg Breakfast")}}, {
-            "rejected": 0,
-            "latency_ms": 25,
+    def repair(_client, *, days, forbidden_titles, synchronous_lookup_limit=None, **_kwargs):
+        repair_calls.append((days, forbidden_titles, synchronous_lookup_limit))
+        if synchronous_lookup_limit is not None:
+            repairs_started.wait(timeout=3)
+        titles = {
+            "breakfast": "Apple Egg Breakfast",
+            "snack": "Pear Cottage Cheese Cup",
+            "lunch": "Tofu Rice Salad",
         }
+        return {
+            day["date"]: {
+                meal["slot"]: recommendation(meal["slot"], f'{day["date"]} {titles[meal["slot"]]}')
+                for meal in day["meals"]
+            }
+            for day in days
+        }, {"rejected": 0}
 
     monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", repair)
     monkeypatch.setattr(llm_recommend, "_get_openai_client", lambda: object())
@@ -555,15 +586,26 @@ def test_weekly_apply_repairs_duplicate_titles_from_parallel_days(monkeypatch):
 
         result = llm_recommend.recommend_weekly_apply(request, payload, db, user)
 
-    assert result["generation"]["duplicate_titles_removed"] == 1
-    assert "Repeated Oat Bowl" in repair_calls[0]["forbidden_titles"]
-    assert repair_calls[0]["forbidden_titles"].count("Repeated Oat Bowl") == 1
+    assert result["generation"]["duplicate_titles_removed"] == 18
+    assert result["generation"]["repair"]["requested"] == 10
+    assert result["generation"]["repair"]["deferred"] == 8
+    assert result["generation"]["final_repair"]["requested"] == 8
+    first_pass, second_pass = repair_calls[:2], repair_calls[2:]
+    assert [
+        sum(len(day["meals"]) for batch, _, _ in calls for day in batch) for calls in (first_pass, second_pass)
+    ] == [
+        10,
+        8,
+    ]
+    assert all(sum(limit for _, _, limit in calls) == 12 for calls in (first_pass, second_pass))
+    assert all(titles.count("Repeated Oat Bowl") == 1 for _, titles, _ in repair_calls)
+    repaired_slots = [
+        (day["date"], meal["slot"]) for batch, _, _ in repair_calls for day in batch for meal in day["meals"]
+    ]
+    assert set(repaired_slots) == {(day, slot) for day in dates[1:] for slot in ("breakfast", "lunch", "snack")}
     assert [
         next(item for item in day["items"] if item["slot"] == "breakfast")["ai_idea"]["title"] for day in result["days"]
-    ] == [
-        "Repeated Oat Bowl",
-        "Apple Egg Breakfast",
-    ]
+    ] == ["Repeated Oat Bowl", *(f"{day} Apple Egg Breakfast" for day in dates[1:])]
 
 
 def test_seven_day_batch_removes_cross_day_and_same_day_recipe_repeats():

@@ -4208,18 +4208,18 @@ def _batch_week_recommendations(
         "forbidden_titles": forbidden_titles or [],
         "forbidden_variety_keys": forbidden_variety_keys or [],
     }
+    # Repair days can have different numbers of slots. Size their response
+    # for every requested recipe so a truncated batch does not force another pass.
+    meal_count = sum(len(day["meals"]) for day in days)
+    tokens_per_meal = 1000 if flexible_meal_count else 700
+    default_token_limit = max(5000, meal_count * tokens_per_meal)
     started = time.perf_counter()
     try:
         model = _openai_model()
         response = client.chat.completions.create(
             model=model,
             **_chat_generation_options(model),
-            max_completion_tokens=int(
-                os.environ.get(
-                    "OPENAI_WEEKLY_MAX_TOKENS",
-                    str(max(5000, len(days) * len(days[0].get("meals", [])) * 700)),
-                )
-            ),
+            max_completion_tokens=int(os.environ.get("OPENAI_WEEKLY_MAX_TOKENS", str(default_token_limit))),
             response_format={
                 "type": "json_schema",
                 "json_schema": _weekly_batch_schema(
@@ -4698,38 +4698,82 @@ def recommend_weekly_apply(
     kept_titles, duplicate_titles_removed = _deduplicate_week_batch(batch_days, batch_items)
     batch_meta["duplicate_titles_removed"] = duplicate_titles_removed
 
-    # Repair only the rejected cells in one compact model call. USDA remains
+    # Repair only the rejected cells in compact model calls. USDA remains
     # authoritative and the same validation runs again; this is not a fallback
     # to guessed nutrition. Keeping the repair bounded avoids turning one bad
     # ingredient into dozens of slow per-slot calls.
-    repair_days: list[dict[str, Any]] = []
-    missing_count = 0
-    for batch_day in batch_days:
-        missing_meals = [
-            meal
-            for meal in batch_day["meals"]
-            if _normalize_slot(str(meal["slot"])) not in batch_items.get(batch_day["date"], {})
-        ]
-        if missing_meals:
-            missing_count += len(missing_meals)
-            repair_days.append({**batch_day, "meals": missing_meals})
     try:
         repair_limit = max(0, int(os.environ.get("WEEKLY_REPAIR_MAX_SLOTS", "10")))
     except ValueError:
         repair_limit = 10
-    if repair_days and missing_count <= repair_limit:
-        repaired_items, repair_meta = _batch_week_recommendations(
-            client,
-            days=repair_days,
-            primary_diet=primary_diet,
-            diet_tags=pref_tags,
-            exclusions=_preference_exclusions(pref),
-            athlete_feedback=athlete_feedback,
-            week_context=batch_days,
-            flexible_meal_count=True,
-            forbidden_titles=kept_titles,
-            forbidden_variety_keys=_saturated_week_variety_keys(batch_items),
-        )
+
+    def collect_repair_days() -> tuple[list[dict[str, Any]], int, int]:
+        days = []
+        requested = 0
+        missing = 0
+        for batch_day in batch_days:
+            accepted = batch_items.get(batch_day["date"], {})
+            gaps = [meal for meal in batch_day["meals"] if _normalize_slot(str(meal["slot"])) not in accepted]
+            missing += len(gaps)
+            selected = gaps[: repair_limit - requested]
+            if selected:
+                days.append({**batch_day, "meals": selected})
+                requested += len(selected)
+        return days, requested, missing - requested
+
+    def repair_week_slots(
+        repair_days: list[dict[str, Any]], missing_count: int
+    ) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
+        repair_options = {
+            "primary_diet": primary_diet,
+            "diet_tags": pref_tags,
+            "exclusions": _preference_exclusions(pref),
+            "athlete_feedback": athlete_feedback,
+            "week_context": batch_days,
+            "flexible_meal_count": True,
+            "forbidden_titles": kept_titles,
+            "forbidden_variety_keys": _saturated_week_variety_keys(batch_items),
+        }
+        if missing_count >= 6 and len(repair_days) > 1:
+            # Keep all slots for one day in the same response. Balance the two
+            # requests by meal count so neither becomes the slow bulk request.
+            groups: list[list[dict[str, Any]]] = [[], []]
+            counts = [0, 0]
+            for repair_day in sorted(repair_days, key=lambda day: -len(day["meals"])):
+                group = 0 if counts[0] <= counts[1] else 1
+                groups[group].append(repair_day)
+                counts[group] += len(repair_day["meals"])
+            lookup_limit = max(0, int(os.environ.get("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "12")))
+            first_limit = math.ceil(lookup_limit * counts[0] / missing_count)
+            started = time.perf_counter()
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="weekly-repair") as executor:
+                first = executor.submit(
+                    _batch_week_recommendations,
+                    client,
+                    days=groups[0],
+                    synchronous_lookup_limit=first_limit,
+                    **repair_options,
+                )
+                second = executor.submit(
+                    _batch_week_recommendations,
+                    client,
+                    days=groups[1],
+                    synchronous_lookup_limit=lookup_limit - first_limit,
+                    **repair_options,
+                )
+                first_items, first_meta = first.result()
+                second_items, second_meta = second.result()
+            repaired_items = {**first_items, **second_items}
+            repair_meta = {
+                "rejected": int(first_meta.get("rejected") or 0) + int(second_meta.get("rejected") or 0),
+                "latency_ms": round((time.perf_counter() - started) * 1000),
+            }
+            return repaired_items, repair_meta
+        return _batch_week_recommendations(client, days=repair_days, **repair_options)
+
+    repair_days, missing_count, deferred_count = collect_repair_days()
+    if repair_days:
+        repaired_items, repair_meta = repair_week_slots(repair_days, missing_count)
         for repair_date, slots in repaired_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
         # A repair call can itself repeat a title from another repair cell.
@@ -4743,39 +4787,19 @@ def recommend_weekly_apply(
             "rejected": int(repair_meta.get("rejected") or 0),
             "latency_ms": int(repair_meta.get("latency_ms") or 0),
             "duplicates_removed": repair_duplicates_removed,
+            **({"deferred": deferred_count} if deferred_count else {}),
         }
-    elif repair_days:
-        batch_meta["repair"] = {"requested": missing_count, "skipped": "limit_exceeded"}
+    elif deferred_count:
+        batch_meta["repair"] = {"requested": deferred_count, "skipped": "limit_exceeded"}
 
     # Make one final compact request for cells that the first repair did not
     # satisfy (including duplicates removed from that repair). This preserves
     # whole-week context and is substantially faster than serial AI calls for
     # every residual slot. Verified catalog recovery and tightly bounded,
     # same-slot reuse remain the non-network safety nets below.
-    final_repair_days: list[dict[str, Any]] = []
-    final_missing_count = 0
-    for batch_day in batch_days:
-        missing_meals = [
-            meal
-            for meal in batch_day["meals"]
-            if _normalize_slot(str(meal["slot"])) not in batch_items.get(batch_day["date"], {})
-        ]
-        if missing_meals:
-            final_missing_count += len(missing_meals)
-            final_repair_days.append({**batch_day, "meals": missing_meals})
-    if final_repair_days and final_missing_count <= repair_limit:
-        final_items, final_meta = _batch_week_recommendations(
-            client,
-            days=final_repair_days,
-            primary_diet=primary_diet,
-            diet_tags=pref_tags,
-            exclusions=_preference_exclusions(pref),
-            athlete_feedback=athlete_feedback,
-            week_context=batch_days,
-            flexible_meal_count=True,
-            forbidden_titles=kept_titles,
-            forbidden_variety_keys=_saturated_week_variety_keys(batch_items),
-        )
+    final_repair_days, final_missing_count, final_deferred_count = collect_repair_days()
+    if final_repair_days:
+        final_items, final_meta = repair_week_slots(final_repair_days, final_missing_count)
         for repair_date, slots in final_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
         kept_titles, final_duplicates_removed = _deduplicate_week_batch(batch_days, batch_items)
@@ -4787,9 +4811,10 @@ def recommend_weekly_apply(
             "rejected": int(final_meta.get("rejected") or 0),
             "latency_ms": int(final_meta.get("latency_ms") or 0),
             "duplicates_removed": final_duplicates_removed,
+            **({"deferred": final_deferred_count} if final_deferred_count else {}),
         }
-    elif final_repair_days:
-        batch_meta["final_repair"] = {"requested": final_missing_count, "skipped": "limit_exceeded"}
+    elif final_deferred_count:
+        batch_meta["final_repair"] = {"requested": final_deferred_count, "skipped": "limit_exceeded"}
 
     # Bulk repair is efficient, but one difficult cell can still be rejected
     # twice for a correctable portion or cooking-state mistake. Give only the
