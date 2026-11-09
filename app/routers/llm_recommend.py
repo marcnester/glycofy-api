@@ -4698,7 +4698,7 @@ def recommend_weekly_apply(
     kept_titles, duplicate_titles_removed = _deduplicate_week_batch(batch_days, batch_items)
     batch_meta["duplicate_titles_removed"] = duplicate_titles_removed
 
-    # Repair only the rejected cells in one compact model call. USDA remains
+    # Repair only the rejected cells in compact model calls. USDA remains
     # authoritative and the same validation runs again; this is not a fallback
     # to guessed nutrition. Keeping the repair bounded avoids turning one bad
     # ingredient into dozens of slow per-slot calls.
@@ -4718,18 +4718,52 @@ def recommend_weekly_apply(
     except ValueError:
         repair_limit = 10
     if repair_days and missing_count <= repair_limit:
-        repaired_items, repair_meta = _batch_week_recommendations(
-            client,
-            days=repair_days,
-            primary_diet=primary_diet,
-            diet_tags=pref_tags,
-            exclusions=_preference_exclusions(pref),
-            athlete_feedback=athlete_feedback,
-            week_context=batch_days,
-            flexible_meal_count=True,
-            forbidden_titles=kept_titles,
-            forbidden_variety_keys=_saturated_week_variety_keys(batch_items),
-        )
+        repair_options = {
+            "primary_diet": primary_diet,
+            "diet_tags": pref_tags,
+            "exclusions": _preference_exclusions(pref),
+            "athlete_feedback": athlete_feedback,
+            "week_context": batch_days,
+            "flexible_meal_count": True,
+            "forbidden_titles": kept_titles,
+            "forbidden_variety_keys": _saturated_week_variety_keys(batch_items),
+        }
+        if missing_count >= 6 and len(repair_days) > 1:
+            # Keep all slots for one day in the same response. Balance the two
+            # requests by meal count so neither becomes the slow bulk request.
+            groups: list[list[dict[str, Any]]] = [[], []]
+            counts = [0, 0]
+            for repair_day in sorted(repair_days, key=lambda day: -len(day["meals"])):
+                group = 0 if counts[0] <= counts[1] else 1
+                groups[group].append(repair_day)
+                counts[group] += len(repair_day["meals"])
+            lookup_limit = max(0, int(os.environ.get("USDA_FDC_WEEKLY_SYNC_LOOKUPS", "12")))
+            first_limit = math.ceil(lookup_limit * counts[0] / missing_count)
+            started = time.perf_counter()
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="weekly-repair") as executor:
+                first = executor.submit(
+                    _batch_week_recommendations,
+                    client,
+                    days=groups[0],
+                    synchronous_lookup_limit=first_limit,
+                    **repair_options,
+                )
+                second = executor.submit(
+                    _batch_week_recommendations,
+                    client,
+                    days=groups[1],
+                    synchronous_lookup_limit=lookup_limit - first_limit,
+                    **repair_options,
+                )
+                first_items, first_meta = first.result()
+                second_items, second_meta = second.result()
+            repaired_items = {**first_items, **second_items}
+            repair_meta = {
+                "rejected": int(first_meta.get("rejected") or 0) + int(second_meta.get("rejected") or 0),
+                "latency_ms": round((time.perf_counter() - started) * 1000),
+            }
+        else:
+            repaired_items, repair_meta = _batch_week_recommendations(client, days=repair_days, **repair_options)
         for repair_date, slots in repaired_items.items():
             batch_items.setdefault(repair_date, {}).update(slots)
         # A repair call can itself repeat a title from another repair cell.
