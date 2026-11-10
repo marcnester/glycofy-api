@@ -73,7 +73,7 @@ def test_every_known_alias_for_every_supported_allergen_is_rejected(allergen, al
 
 @pytest.mark.parametrize(
     "alternative",
-    ["oat milk", "rice milk", "coconut milk", "dairy-free yogurt", "vegan cheese"],
+    ["oat milk", "rice milk", "coconut milk", "dairy-free yogurt", "vegan cheese", "peanut butter", "almond butter"],
 )
 def test_explicit_plant_dairy_alternatives_are_not_false_positive_milk_hits(alternative):
     candidate = meal(
@@ -84,6 +84,18 @@ def test_explicit_plant_dairy_alternatives_are_not_false_positive_milk_hits(alte
     )
     assert "excluded_ingredient" not in validate_meal(candidate, exclusions=["milk"]).codes()
     assert "diet_violation" not in validate_meal(candidate, diet="vegan").codes()
+
+
+def test_plant_butter_keeps_milk_and_peanut_exclusions_independent():
+    candidate = meal(
+        ingredients=[
+            {"name": "peanut butter", "amount": "20", "unit": "g"},
+            {"name": "rolled oats", "amount": "40", "unit": "g"},
+        ],
+        instructions=["Cook the oats.", "Stir in peanut butter and whey."],
+    )
+    assert "excluded_ingredient" in validate_meal(candidate, exclusions=["milk"]).codes()
+    assert "excluded_ingredient" in validate_meal(candidate, exclusions=["peanut"]).codes()
 
 
 @pytest.mark.parametrize(

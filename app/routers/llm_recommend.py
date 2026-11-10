@@ -4203,7 +4203,8 @@ def _batch_week_recommendations(
         system += (
             " For a milk or dairy exclusion, leave out all animal milk, including lactose-free milk, and all "
             "dairy derivatives such as yogurt, cheese, butter, ghee, whey and casein. Build breakfasts and snacks "
-            "around compatible measured foods such as eggs, legumes, or seeds if the other restrictions allow them. "
+            "around compatible measured protein sources such as egg whites, cooked poultry, tofu, or cooked legumes "
+            "if the other restrictions allow them. Use measured plant fats and carbohydrates as needed. "
             "Check ingredient names, USDA queries, and cooking instructions for dairy."
         )
     payload = {
