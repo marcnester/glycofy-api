@@ -49,6 +49,40 @@ def test_diet_hierarchy_preserves_secondary_recipe_requirements():
     assert {recipe.title for recipe in filtered} == {"Gluten-free vegetarian", "Gluten-free vegan"}
 
 
+@pytest.mark.parametrize(
+    ("diet", "prohibited"),
+    [("pescatarian", "chicken broth"), ("vegetarian", "halibut"), ("vegan", "whey")],
+)
+def test_catalog_candidates_reject_contents_that_contradict_diet_tags(monkeypatch, diet, prohibited):
+    db = MagicMock()
+    fields = {
+        "diet_tags": [diet],
+        "kcal": 500,
+        "protein_g": 40,
+        "carbs_g": 50,
+        "fat_g": 15,
+        "ingredients": [
+            {"name": "lentils", "amount": 200, "unit": "g"},
+            {"name": "brown rice", "amount": 150, "unit": "g"},
+        ],
+    }
+    allowed = Recipe(id=1, title="Lentil rice bowl", instructions="Simmer the lentils and rice.", **fields)
+    blocked = Recipe(id=2, title="Lentil rice soup", instructions=f"Finish with {prohibited}.", **fields)
+    db.query.return_value.filter.return_value.all.return_value = [allowed, blocked]
+    monkeypatch.setattr(llm_recommend, "_recipe_has_reconciled_nutrition", lambda recipe: True)
+    monkeypatch.setattr(llm_recommend, "_recipe_has_complete_cooking_guidance", lambda recipe: True)
+
+    candidates = llm_recommend._top_k_candidates(
+        db,
+        "lunch",
+        llm_recommend.MealTarget(slot="lunch", kcal=500, protein_g=40, carbs_g=50, fat_g=15),
+        [diet],
+        diet,
+    )
+
+    assert [recipe.id for recipe, _, _ in candidates] == [allowed.id]
+
+
 def test_catalog_only_recovery_returns_immediately_when_no_safe_candidate(monkeypatch):
     monkeypatch.setattr(llm_recommend, "_top_k_candidates", lambda **_kwargs: [])
     monkeypatch.setattr(

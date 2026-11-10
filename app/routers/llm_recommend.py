@@ -44,6 +44,8 @@ from app.services.meal_quality import (
     practical_minimum_grams,
     text_violates_exclusions,
     validate_meal,
+    violates_diet,
+    violates_exclusions,
 )
 from app.services.training_nutrition import (
     MacroTargets,
@@ -760,6 +762,7 @@ def _top_k_candidates(
     logger.info("meal_candidates_loaded", extra={"candidate_count": len(all_items)})
 
     items = _filter_by_diet_tags(all_items, diet_tags, primary_diet)
+    items = [recipe for recipe in items if not violates_diet(_catalog_recipe_fields(recipe), primary_diet)]
 
     # Legacy catalog macros were not derived from itemized ingredient
     # nutrition. Do not use those rows as a nutrition-safe fallback. Newly
@@ -945,15 +948,12 @@ def _text_violates_exclusions(text: str, exclusions: list[str]) -> bool:
     return bool(text_violates_exclusions(str(text or ""), exclusions))
 
 
+def _catalog_recipe_fields(recipe: Recipe) -> dict[str, Any]:
+    return {"title": recipe.title, "ingredients": recipe.ingredients, "instructions": recipe.instructions}
+
+
 def _recipe_violates_exclusions(recipe: Recipe, exclusions: list[str]) -> bool:
-    text = " ".join(
-        (
-            getattr(recipe, "title", "") or "",
-            json.dumps(getattr(recipe, "ingredients", None) or [], default=str),
-            getattr(recipe, "instructions", "") or "",
-        )
-    )
-    return _text_violates_exclusions(text, exclusions)
+    return bool(violates_exclusions(_catalog_recipe_fields(recipe), exclusions))
 
 
 # ===========================
