@@ -111,7 +111,9 @@ ALLERGEN_ALIASES = {
     "wheat": {"bread", "bulgur", "couscous", "farro", "flour", "pasta", "seitan", "wheat"},
 }
 PLANT_DAIRY_PHRASES = {
+    "almond butter",
     "almond milk",
+    "cashew butter",
     "cashew milk",
     "coconut cream",
     "coconut milk",
@@ -123,6 +125,7 @@ PLANT_DAIRY_PHRASES = {
     "non dairy milk",
     "oat cream",
     "oat milk",
+    "peanut butter",
     "plant based butter",
     "plant based cheese",
     "plant based milk",
@@ -131,6 +134,7 @@ PLANT_DAIRY_PHRASES = {
     "rice milk",
     "soy cream",
     "soy milk",
+    "sunflower seed butter",
     "vegan butter",
     "vegan cheese",
     "vegan mayonnaise",
