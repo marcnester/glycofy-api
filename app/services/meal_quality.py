@@ -99,6 +99,7 @@ ANIMAL_PRODUCTS = (
 MEAT = TERRESTRIAL_MEAT
 WHEAT_MARKERS = {"bread", "bulgur", "couscous", "durum", "farro", "flour", "pasta", "seitan", "spelt", "wheat"}
 GLUTEN_MARKERS = WHEAT_MARKERS | {"barley", "gluten", "rye", "triticale"}
+EXPLICIT_NON_WHEAT_FLOURS = re.compile(r"\b(?:chickpea|sunflower seed) flour\b")
 ALLERGEN_ALIASES = {
     "milk": DAIRY_MARKERS,
     "dairy": DAIRY_MARKERS,
@@ -230,11 +231,20 @@ PROTEIN_SOURCE_MARKERS = {
     "egg",
     "eggs",
     "greek yogurt",
+    "black bean",
+    "chickpea",
+    "hemp seed",
+    "kidney bean",
     "lentil",
     "lentils",
     "pork",
+    "pinto bean",
     "protein",
+    "pumpkin seed",
     "salmon",
+    "split pea",
+    "sunflower seed flour",
+    "white bean",
     "seitan",
     "shrimp",
     "tempeh",
@@ -244,6 +254,20 @@ PROTEIN_SOURCE_MARKERS = {
     "whey",
 }
 CARB_SOURCE_MARKERS = {
+    "chickpea",
+    "amaranth",
+    "apple",
+    "blueberry",
+    "buckwheat",
+    "mango",
+    "millet",
+    "pea",
+    "peach",
+    "pear",
+    "pineapple",
+    "raspberry",
+    "strawberry",
+    "sweet potato",
     "bagel",
     "banana",
     "barley",
@@ -544,6 +568,8 @@ def text_violates_exclusions(text: str, exclusions: list[str]) -> list[str]:
             if exclusion.replace(" ", "_") in {"milk", "dairy", "lactose_intolerant", "milk_allergy", "dairy_allergy"}
             else normalized_text
         )
+        if exclusion.replace(" ", "_") in {"wheat", "gluten", "gluten_free"}:
+            searchable = EXPLICIT_NON_WHEAT_FLOURS.sub(" ", searchable)
         if any(_contains(searchable, alias) for alias in aliases if alias):
             hits.append(raw)
     return hits

@@ -60,6 +60,7 @@ from app.services.usda_nutrition import (
     resolve_foods,
     verify_ingredients_resilient,
 )
+from app.services.vegan_meal_options import MENU_COUNT, vegan_menu_options
 
 # Optional OpenAI client (lazy import so dev works without the package)
 ClientType = Any
@@ -3611,6 +3612,58 @@ def _fit_weekly_day(
     return complete_fit, target_totals, complete_misses
 
 
+def _prevalidated_vegan_week(
+    days: list[dict[str, Any]],
+    exclusions: list[str],
+) -> dict[str, dict[str, SlotRecommendation]]:
+    """Use a curated week only when every requested meal fits and validates."""
+    if not days or len(days) > MENU_COUNT or any(day.get("diet_tags") for day in days):
+        return {}
+    result: dict[str, dict[str, SlotRecommendation]] = {}
+    ordered_days = sorted(days, key=lambda day: day["date"])
+    first_menu = _parse_iso_date(ordered_days[0]["date"]).isocalendar().week % MENU_COUNT
+    for offset, day in enumerate(ordered_days):
+        targets = [MealTarget(slot=meal["slot"], **meal["target_macros"]) for meal in day["meals"]]
+        menu = vegan_menu_options(first_menu + offset, [target.slot for target in targets])
+        if not menu:
+            return {}
+        items = []
+        for target in targets:
+            idea = menu[target.slot]
+            target_macros = target.model_dump(exclude={"slot"})
+            ingredients = fit_portions_to_targets(idea["ingredients"], target_macros)
+            macros = ingredient_nutrition_totals({"ingredients": ingredients})
+            if macros is None:
+                return {}
+            idea = {**idea, "ingredients": ingredients, "approx_macros": macros}
+            items.append(
+                SlotRecommendation(
+                    slot=target.slot,
+                    target=target_macros,
+                    ai_idea=idea,
+                    reason="A curated plant-based recipe with portions adjusted for your training day.",
+                    meta={"provider": "catalog", "mode": "prevalidated_vegan"},
+                )
+            )
+
+        fitted, totals, _ = _fit_weekly_day(items, targets)
+        if _day_target_misses(fitted, totals, _DAY_RECOVERY_LIMITS):
+            return {}
+        for item in fitted:
+            report = validate_meal(
+                {**(item.ai_idea or {}), "slot": item.slot},
+                diet="vegan",
+                exclusions=exclusions,
+                require_ingredient_nutrition=True,
+            )
+            if not report.safe:
+                return {}
+        result[day["date"]] = {item.slot: item for item in fitted}
+
+    _, removed = _deduplicate_week_batch(days, result)
+    return {} if removed else result
+
+
 def _create_recipe_from_ai_idea(
     db: Session,
     slot: str,
@@ -4696,14 +4749,23 @@ def recommend_weekly_apply(
             }
         )
 
-    batch_items, batch_meta = _parallel_week_recommendations(
-        client,
-        days=batch_days,
-        primary_diet=primary_diet,
-        diet_tags=pref_tags,
-        exclusions=_preference_exclusions(pref),
-        athlete_feedback=athlete_feedback,
+    exclusions = _preference_exclusions(pref)
+    curated_week = (
+        _prevalidated_vegan_week(batch_days, exclusions) if primary_diet == "vegan" and "soy" in exclusions else {}
     )
+    if curated_week:
+        batch_items = curated_week
+        batch_meta = {"mode": "prevalidated_vegan", "accepted": sum(len(items) for items in curated_week.values())}
+        provider = "catalog"
+    else:
+        batch_items, batch_meta = _parallel_week_recommendations(
+            client,
+            days=batch_days,
+            primary_diet=primary_diet,
+            diet_tags=pref_tags,
+            exclusions=exclusions,
+            athlete_feedback=athlete_feedback,
+        )
 
     # Daily calls run concurrently for speed, so siblings cannot see one
     # another's returned titles. Remove exact repeats here and let compact
@@ -5103,7 +5165,11 @@ def recommend_weekly_apply(
                 },
             )
 
-        day_items, day_target_totals, target_misses = _fit_weekly_day(day_items, adjusted_meals)
+        if curated_week:
+            day_target_totals = {name: sum(getattr(meal, name) for meal in adjusted_meals) for name in _MACROS}
+            target_misses = _day_target_misses(day_items, day_target_totals)
+        else:
+            day_items, day_target_totals, target_misses = _fit_weekly_day(day_items, adjusted_meals)
         if target_misses:
             hard_misses = _day_target_misses(day_items, day_target_totals, _DAY_RECOVERY_LIMITS)
             if hard_misses:
