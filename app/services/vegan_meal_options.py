@@ -46,6 +46,9 @@ _FOODS = {
     "lemon juice": 167747,
     "lime juice": 168156,
     "olive oil": 171413,
+    "raw salmon": 175167,
+    "raw cod": 171955,
+    "raw tilapia": 175176,
 }
 
 # Fruit pair, lunch pulse and starch, dinner pulse and starch, two vegetables.
@@ -189,7 +192,27 @@ def _menu(index: int) -> dict[str, dict[str, Any]]:
     }
 
 
-def vegan_menu_options(index: int, slots: list[str]) -> dict[str, dict[str, Any]]:
+_FISH_DINNERS = {0: "salmon", 2: "cod", 4: "tilapia"}
+
+
+def _fish_dinner(index: int, fish: str) -> dict[str, Any]:
+    _, _, _, _, _, starch, _, veg = _MENUS[index]
+    citrus = "lemon juice" if index % 2 == 0 else "lime juice"
+    return _recipe(
+        f"Roasted {fish} with {starch} and {veg}",
+        {f"raw {fish}": 135, f"cooked {starch}": 230, veg: 130, "olive oil": 12, citrus: 12},
+        [
+            f"Heat the oven to 205°C (400°F). Cut the {veg} into small pieces and toss with half the olive oil.",
+            f"Place the {veg} and {fish} on a baking tray. Brush the fish with the rest of the olive oil.",
+            f"Roast until the {veg} is tender and the fish reaches an internal temperature of 145°F (63°C), about 12–18 minutes. Warm the cooked {starch} separately and serve with {citrus}.",
+        ],
+        20,
+        protein=fish,
+        carb=starch,
+    ) | {"protein_group": "fish"}
+
+
+def curated_menu_options(index: int, slots: list[str], *, include_fish: bool) -> dict[str, dict[str, Any]]:
     """Build a fresh menu using exact, local USDA evidence or decline it."""
     if not settings.USDA_LOCAL_CATALOG_ENABLED:
         return {}
@@ -198,6 +221,9 @@ def vegan_menu_options(index: int, slots: list[str]) -> dict[str, dict[str, Any]
         return {}
 
     menu = _menu(index)
+    fish = _FISH_DINNERS.get(index % MENU_COUNT) if include_fish else None
+    if fish:
+        menu["dinner"] = _fish_dinner(index % MENU_COUNT, fish)
     if any(slot not in menu for slot in slots):
         return {}
     for slot in slots:

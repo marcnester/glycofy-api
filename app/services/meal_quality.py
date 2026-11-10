@@ -248,6 +248,7 @@ PROTEIN_SOURCE_MARKERS = {
     "seitan",
     "shrimp",
     "tempeh",
+    "tilapia",
     "tofu",
     "tuna",
     "turkey",
