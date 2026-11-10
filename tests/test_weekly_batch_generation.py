@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -11,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base
 from app.models import User, UserPreference, WeeklyPlanningJob
 from app.routers import llm_recommend
+from app.services.meal_quality import SUPPORTED_DIETS
 
 
 def _meal(slot: str, day: int) -> dict:
@@ -401,6 +403,56 @@ def test_weekly_batch_schema_supports_one_compact_variable_slot_repair(monkeypat
     assert meta["accepted"] == 3
     assert set(recommendations[dates[0]]) == {"breakfast"}
     assert set(recommendations[dates[1]]) == {"breakfast", "lunch"}
+
+
+@pytest.mark.parametrize(
+    ("diet", "exclusions", "prohibited"),
+    [
+        *[
+            (diet, [allergen], prohibited)
+            for diet in SUPPORTED_DIETS
+            for allergen, prohibited in (
+                ("milk", "sodium caseinate"),
+                ("egg", "albumen powder"),
+                ("fish", "anchovies"),
+                ("shellfish", "crawfish"),
+                ("tree_nuts", "pine nuts"),
+                ("peanut", "arachis oil"),
+                ("wheat", "spelt"),
+                ("soy", "tamari"),
+                ("sesame", "benne seeds"),
+            )
+        ],
+        ("pescatarian", [], "chicken stock"),
+        ("vegetarian", [], "halibut"),
+        ("vegan", [], "ovalbumin"),
+        ("vegan", ["soy", "sesame"], "gingelly oil"),
+        ("vegetarian", ["cilantro", "mushrooms"], "chopped cilantro"),
+        ("omnivore", ["gluten"], "pearled barley"),
+        ("omnivore", ["gluten-free"], "rye flakes"),
+    ],
+)
+def test_weekly_model_output_cannot_bypass_profile_restrictions(monkeypatch, diet, exclusions, prohibited):
+    date = "2026-09-01"
+    blocked = _meal("breakfast", 1)
+    blocked["instructions"].append(f"Finish with {prohibited}.")
+    allowed = _meal("lunch", 1)
+    content = json.dumps({"days": [{"date": date, "meals": [blocked, allowed]}]})
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))], usage=None)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: response)))
+    target = {"kcal": 500, "protein_g": 40, "carbs_g": 50, "fat_g": 15}
+    monkeypatch.setattr(llm_recommend, "_circuit_open", lambda: False)
+    monkeypatch.setattr(llm_recommend, "_daily_budget_usd", lambda: 100.0)
+    recommendations, meta = llm_recommend._batch_week_recommendations(
+        client,
+        days=[{"date": date, "meals": [{"slot": slot, "target_macros": target} for slot in ("breakfast", "lunch")]}],
+        primary_diet=diet,
+        diet_tags=[diet],
+        exclusions=exclusions,
+    )
+
+    assert set(recommendations[date]) == {"lunch"}
+    assert (meta["accepted"], meta["rejected"]) == (1, 1)
 
 
 def test_weekly_apply_repairs_only_a_missing_slot_before_persisting(monkeypatch):

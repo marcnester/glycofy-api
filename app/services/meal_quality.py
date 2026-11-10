@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 PROMPT_VERSION = "meal-planner-2026-09-13-v11-beta-quality"
-QUALITY_POLICY_VERSION = "nutrition-safety-2026-09-16-v20-practical-portions"
+QUALITY_POLICY_VERSION = "nutrition-safety-v21-restriction-validation"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 SUPPORTED_DIETS = ("omnivore", "pescatarian", "vegetarian", "vegan")
@@ -32,12 +32,21 @@ TERRESTRIAL_MEAT = {
 }
 SEAFOOD = {
     "anchovy",
+    "bass",
+    "catfish",
     "clam",
     "cod",
     "crab",
     "crayfish",
+    "crawfish",
     "fish",
+    "haddock",
+    "halibut",
+    "herring",
+    "krill",
     "lobster",
+    "mackerel",
+    "mahi mahi",
     "mussel",
     "oyster",
     "prawn",
@@ -55,6 +64,7 @@ DAIRY_MARKERS = {
     "butter",
     "buttermilk",
     "casein",
+    "caseinate",
     "cheddar",
     "cheese",
     "cream",
@@ -75,6 +85,7 @@ ANIMAL_PRODUCTS = (
     ANIMAL_MEAT
     | DAIRY_MARKERS
     | {
+        "albumen",
         "egg",
         "eggs",
         "gelatin",
@@ -82,19 +93,52 @@ ANIMAL_PRODUCTS = (
         "lard",
         "mayonnaise",
         "meringue",
+        "ovalbumin",
     }
 )
 MEAT = TERRESTRIAL_MEAT
+WHEAT_MARKERS = {"bread", "bulgur", "couscous", "durum", "farro", "flour", "pasta", "seitan", "spelt", "wheat"}
+GLUTEN_MARKERS = WHEAT_MARKERS | {"barley", "gluten", "rye", "triticale"}
+EXPLICIT_NON_WHEAT_FLOURS = re.compile(r"\b(?:chickpea|sunflower seed) flour\b")
 ALLERGEN_ALIASES = {
     "milk": DAIRY_MARKERS,
     "dairy": DAIRY_MARKERS,
     "lactose_intolerant": DAIRY_MARKERS - {"casein"},
     "milk_allergy": DAIRY_MARKERS,
     "dairy_allergy": DAIRY_MARKERS,
-    "egg": {"egg", "eggs", "mayonnaise", "meringue"},
-    "fish": {"anchovy", "cod", "fish", "salmon", "sardine", "tilapia", "trout", "tuna"},
-    "shellfish": {"clam", "crab", "crayfish", "lobster", "mussel", "oyster", "prawn", "scallop", "shellfish", "shrimp"},
-    "peanut": {"groundnut", "peanut", "peanuts"},
+    "egg": {"albumen", "egg", "eggs", "mayonnaise", "meringue", "ovalbumin"},
+    "fish": {
+        "anchovy",
+        "bass",
+        "catfish",
+        "cod",
+        "fish",
+        "haddock",
+        "halibut",
+        "herring",
+        "mackerel",
+        "mahi mahi",
+        "salmon",
+        "sardine",
+        "tilapia",
+        "trout",
+        "tuna",
+    },
+    "shellfish": {
+        "clam",
+        "crab",
+        "crawfish",
+        "crayfish",
+        "krill",
+        "lobster",
+        "mussel",
+        "oyster",
+        "prawn",
+        "scallop",
+        "shellfish",
+        "shrimp",
+    },
+    "peanut": {"arachis", "groundnut", "peanut", "peanuts"},
     "tree_nuts": {
         "almond",
         "brazil nut",
@@ -102,13 +146,16 @@ ALLERGEN_ALIASES = {
         "hazelnut",
         "macadamia",
         "pecan",
+        "pine nut",
         "pistachio",
         "tree nut",
         "walnut",
     },
-    "soy": {"edamame", "miso", "soy", "soya", "tempeh", "tofu"},
-    "sesame": {"sesame", "sesame seed", "tahini"},
-    "wheat": {"bread", "bulgur", "couscous", "farro", "flour", "pasta", "seitan", "wheat"},
+    "soy": {"edamame", "miso", "natto", "soy", "soya", "soybean", "tamari", "tempeh", "tofu"},
+    "sesame": {"benne", "gingelly", "sesame", "sesame seed", "tahini"},
+    "wheat": WHEAT_MARKERS,
+    "gluten": GLUTEN_MARKERS,
+    "gluten_free": GLUTEN_MARKERS,
 }
 PLANT_DAIRY_PHRASES = {
     "almond butter",
@@ -184,20 +231,44 @@ PROTEIN_SOURCE_MARKERS = {
     "egg",
     "eggs",
     "greek yogurt",
+    "black bean",
+    "chickpea",
+    "hemp seed",
+    "kidney bean",
     "lentil",
     "lentils",
     "pork",
+    "pinto bean",
     "protein",
+    "pumpkin seed",
     "salmon",
+    "split pea",
+    "sunflower seed flour",
+    "white bean",
     "seitan",
     "shrimp",
     "tempeh",
+    "tilapia",
     "tofu",
     "tuna",
     "turkey",
     "whey",
 }
 CARB_SOURCE_MARKERS = {
+    "chickpea",
+    "amaranth",
+    "apple",
+    "blueberry",
+    "buckwheat",
+    "mango",
+    "millet",
+    "pea",
+    "peach",
+    "pear",
+    "pineapple",
+    "raspberry",
+    "strawberry",
+    "sweet potato",
     "bagel",
     "banana",
     "barley",
@@ -397,6 +468,8 @@ def _contains(text: str, marker: str) -> bool:
         forms.add(marker[:-1])
     else:
         forms.update({f"{marker}s", f"{marker}es"})
+        if len(marker) > 1 and marker.endswith("y") and marker[-2] not in "aeiou":
+            forms.add(f"{marker[:-1]}ies")
     return any(bool(re.search(rf"\b{re.escape(form)}\b", text)) for form in forms)
 
 
@@ -496,6 +569,8 @@ def text_violates_exclusions(text: str, exclusions: list[str]) -> list[str]:
             if exclusion.replace(" ", "_") in {"milk", "dairy", "lactose_intolerant", "milk_allergy", "dairy_allergy"}
             else normalized_text
         )
+        if exclusion.replace(" ", "_") in {"wheat", "gluten", "gluten_free"}:
+            searchable = EXPLICIT_NON_WHEAT_FLOURS.sub(" ", searchable)
         if any(_contains(searchable, alias) for alias in aliases if alias):
             hits.append(raw)
     return hits
