@@ -753,3 +753,8 @@ def test_weekly_generation_fails_closed_without_ai_or_verified_catalog(monkeypat
 
     assert exc_info.value.status_code == 422
     assert "nutrition-safe" in str(exc_info.value.detail)
+
+
+def test_catalog_recipe_rejects_milk_in_preparation_instructions():
+    recipe = Recipe(title="Rice bowl", ingredients=[{"name": "cooked rice"}], instructions="Stir in whey.")
+    assert llm_recommend._recipe_violates_exclusions(recipe, ["milk"])

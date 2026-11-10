@@ -946,7 +946,13 @@ def _text_violates_exclusions(text: str, exclusions: list[str]) -> bool:
 
 
 def _recipe_violates_exclusions(recipe: Recipe, exclusions: list[str]) -> bool:
-    text = f"{getattr(recipe, 'title', '')} {json.dumps(getattr(recipe, 'ingredients', None) or [], default=str)}"
+    text = " ".join(
+        (
+            getattr(recipe, "title", "") or "",
+            json.dumps(getattr(recipe, "ingredients", None) or [], default=str),
+            getattr(recipe, "instructions", "") or "",
+        )
+    )
     return _text_violates_exclusions(text, exclusions)
 
 
@@ -4191,6 +4197,15 @@ def _batch_week_recommendations(
         "rules. When preference learning materially influenced a meal, say so briefly in its reason. Do not infer "
         "medical conditions."
     )
+    if any(
+        exclusion.replace("_", " ") in {"milk", "dairy", "milk allergy", "dairy allergy"} for exclusion in exclusions
+    ):
+        system += (
+            " For a milk or dairy exclusion, leave out all animal milk, including lactose-free milk, and all "
+            "dairy derivatives such as yogurt, cheese, butter, ghee, whey and casein. Build breakfasts and snacks "
+            "around compatible measured foods such as eggs, legumes, or seeds if the other restrictions allow them. "
+            "Check ingredient names, USDA queries, and cooking instructions for dairy."
+        )
     payload = {
         "primary_diet": primary_diet,
         "diet_tags": diet_tags,
@@ -4208,18 +4223,15 @@ def _batch_week_recommendations(
         "forbidden_titles": forbidden_titles or [],
         "forbidden_variety_keys": forbidden_variety_keys or [],
     }
+    meal_count = sum(len(day["meals"]) for day in days)
+    default_token_limit = max(5000, meal_count * (1000 if flexible_meal_count else 700))
     started = time.perf_counter()
     try:
         model = _openai_model()
         response = client.chat.completions.create(
             model=model,
             **_chat_generation_options(model),
-            max_completion_tokens=int(
-                os.environ.get(
-                    "OPENAI_WEEKLY_MAX_TOKENS",
-                    str(max(5000, len(days) * len(days[0].get("meals", [])) * 700)),
-                )
-            ),
+            max_completion_tokens=int(os.environ.get("OPENAI_WEEKLY_MAX_TOKENS", str(default_token_limit))),
             response_format={
                 "type": "json_schema",
                 "json_schema": _weekly_batch_schema(
@@ -4702,22 +4714,27 @@ def recommend_weekly_apply(
     # authoritative and the same validation runs again; this is not a fallback
     # to guessed nutrition. Keeping the repair bounded avoids turning one bad
     # ingredient into dozens of slow per-slot calls.
-    repair_days: list[dict[str, Any]] = []
-    missing_count = 0
-    for batch_day in batch_days:
-        missing_meals = [
-            meal
-            for meal in batch_day["meals"]
-            if _normalize_slot(str(meal["slot"])) not in batch_items.get(batch_day["date"], {})
-        ]
-        if missing_meals:
-            missing_count += len(missing_meals)
-            repair_days.append({**batch_day, "meals": missing_meals})
     try:
         repair_limit = max(0, int(os.environ.get("WEEKLY_REPAIR_MAX_SLOTS", "10")))
     except ValueError:
         repair_limit = 10
-    if repair_days and missing_count <= repair_limit:
+
+    def collect_repair_days() -> tuple[list[dict[str, Any]], int, int]:
+        days = []
+        requested = 0
+        missing = 0
+        for batch_day in batch_days:
+            accepted = batch_items.get(batch_day["date"], {})
+            gaps = [meal for meal in batch_day["meals"] if _normalize_slot(str(meal["slot"])) not in accepted]
+            missing += len(gaps)
+            selected = gaps[: repair_limit - requested]
+            if selected:
+                days.append({**batch_day, "meals": selected})
+                requested += len(selected)
+        return days, requested, missing - requested
+
+    repair_days, missing_count, deferred_count = collect_repair_days()
+    if repair_days:
         repaired_items, repair_meta = _batch_week_recommendations(
             client,
             days=repair_days,
@@ -4743,27 +4760,18 @@ def recommend_weekly_apply(
             "rejected": int(repair_meta.get("rejected") or 0),
             "latency_ms": int(repair_meta.get("latency_ms") or 0),
             "duplicates_removed": repair_duplicates_removed,
+            **({"deferred": deferred_count} if deferred_count else {}),
         }
-    elif repair_days:
-        batch_meta["repair"] = {"requested": missing_count, "skipped": "limit_exceeded"}
+    elif deferred_count:
+        batch_meta["repair"] = {"requested": deferred_count, "skipped": "limit_exceeded"}
 
     # Make one final compact request for cells that the first repair did not
     # satisfy (including duplicates removed from that repair). This preserves
     # whole-week context and is substantially faster than serial AI calls for
     # every residual slot. Verified catalog recovery and tightly bounded,
     # same-slot reuse remain the non-network safety nets below.
-    final_repair_days: list[dict[str, Any]] = []
-    final_missing_count = 0
-    for batch_day in batch_days:
-        missing_meals = [
-            meal
-            for meal in batch_day["meals"]
-            if _normalize_slot(str(meal["slot"])) not in batch_items.get(batch_day["date"], {})
-        ]
-        if missing_meals:
-            final_missing_count += len(missing_meals)
-            final_repair_days.append({**batch_day, "meals": missing_meals})
-    if final_repair_days and final_missing_count <= repair_limit:
+    final_repair_days, final_missing_count, final_deferred_count = collect_repair_days()
+    if final_repair_days:
         final_items, final_meta = _batch_week_recommendations(
             client,
             days=final_repair_days,
@@ -4787,9 +4795,10 @@ def recommend_weekly_apply(
             "rejected": int(final_meta.get("rejected") or 0),
             "latency_ms": int(final_meta.get("latency_ms") or 0),
             "duplicates_removed": final_duplicates_removed,
+            **({"deferred": final_deferred_count} if final_deferred_count else {}),
         }
-    elif final_repair_days:
-        batch_meta["final_repair"] = {"requested": final_missing_count, "skipped": "limit_exceeded"}
+    elif final_deferred_count:
+        batch_meta["final_repair"] = {"requested": final_deferred_count, "skipped": "limit_exceeded"}
 
     # Bulk repair is efficient, but one difficult cell can still be rejected
     # twice for a correctable portion or cooking-state mistake. Give only the
@@ -5081,11 +5090,13 @@ def recommend_weekly_apply(
 
         missing_slots = _missing_recommendation_slots(day_items)
         if missing_slots:
+            reason = "restricted_week_incomplete" if _preference_exclusions(pref) else "week_incomplete"
             db.rollback()
             raise HTTPException(
                 status_code=422,
                 detail={
                     "message": "Unable to generate a complete, nutrition-safe weekly meal plan",
+                    "reason": reason,
                     "date": date_iso,
                     "missing_slots": missing_slots,
                 },
@@ -5310,6 +5321,8 @@ def _run_weekly_job(job_id: str, payload_data: dict[str, Any], user_id: int, ip:
             if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
                 if exc.detail.get("reason") == "day_target_rejected":
                     error = "We couldn't match your nutrition targets for one day. Please retry to generate new meals."
+                elif exc.detail.get("reason") == "restricted_week_incomplete":
+                    error = "We couldn't fill every meal within your current food restrictions. Please retry."
             _update_weekly_job(
                 job_id,
                 status="failed",
