@@ -3,7 +3,7 @@ services:
     name: glycofy-api
     runtime: image
     image:
-      url: ghcr.io/marcnester/glycofy-api@sha256:5d7925f89acb70af37077a501bbe1f579d2e45b2065843f3af99916f3bd267a5
+      url: ghcr.io/marcnester/glycofy-api@sha256:ebfb06067eaf0580728b3638efbb875993bd2556620e64b0b3192682fcbab766
     plan: 1c-2g
     region: oregon
     preDeployCommand: alembic upgrade head
@@ -17,6 +17,8 @@ services:
     autoDeployTrigger: "off"
     maxShutdownDelaySeconds: 30
     envVars:
+      - key: WEEKLY_GUIDED_FIRST_PASS_ENABLED
+        value: "2"
       - key: ENV
         value: production
       - key: DEBUG
