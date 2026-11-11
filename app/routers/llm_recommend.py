@@ -61,6 +61,7 @@ from app.services.usda_nutrition import (
     verify_ingredients_resilient,
 )
 from app.services.vegan_meal_options import MENU_COUNT, curated_menu_options
+from app.services.weekly_starters import guide_week_days
 
 # Optional OpenAI client (lazy import so dev works without the package)
 ClientType = Any
@@ -4265,6 +4266,16 @@ def _batch_week_recommendations(
             "if the other restrictions allow them. Use measured plant fats and carbohydrates as needed. "
             "Check ingredient names, USDA queries, and cooking instructions for dairy."
         )
+    if any(day.get("starter_examples") or day.get("planned_anchors") for day in days):
+        system += (
+            " Use the current day's starter_examples as optional, exclusion-checked meal formats with measured "
+            "starting portions. Choose an example or build a meal around that slot's planned_anchors; do not "
+            "combine two full examples. Adjust portions for target_macros and write complete cooking steps. "
+            "Prefer the planned protein and carbohydrate pairing when it fits the requested meal and other rules. "
+            "If using an anchor, reuse its verified_anchor_foods USDA description with the same preparation state. "
+            "Use the other dates' planned_anchors to avoid duplicating their main-meal combinations. "
+            "All dietary, allergen, nutrition, cooking, and variety requirements still apply."
+        )
     payload = {
         "primary_diet": primary_diet,
         "diet_tags": diet_tags,
@@ -4275,6 +4286,7 @@ def _batch_week_recommendations(
                 "date": day.get("date"),
                 "training": day.get("training"),
                 "variety_assignment": day.get("variety_assignment"),
+                **({"planned_anchors": day["planned_anchors"]} if day.get("planned_anchors") else {}),
             }
             for day in (week_context or days)
         ],
@@ -4610,6 +4622,8 @@ def _parallel_week_recommendations(
     athlete_feedback: dict[str, Any] | None = None,
 ) -> tuple[dict[str, dict[str, SlotRecommendation]], dict[str, Any]]:
     """Generate bounded daily payloads concurrently while retaining full-week context."""
+    if client and os.getenv("WEEKLY_GUIDED_FIRST_PASS_ENABLED") == "1":
+        days = guide_week_days(days, diet=primary_diet, exclusions=exclusions)
     if len(days) <= 1:
         return _batch_week_recommendations(
             client,
@@ -4625,7 +4639,9 @@ def _parallel_week_recommendations(
         {
             **day,
             "variety_assignment": (
-                f"Cuisine: {_DAY_THEMES[index % len(_DAY_THEMES)]}; "
+                f"Cuisine: {_DAY_THEMES[index % len(_DAY_THEMES)]}."
+                if day.get("starter_examples") or day.get("planned_anchors")
+                else f"Cuisine: {_DAY_THEMES[index % len(_DAY_THEMES)]}; "
                 f"breakfast format: {_DAY_BREAKFAST_FORMATS[index % len(_DAY_BREAKFAST_FORMATS)]}; "
                 f"lunch format: {_DAY_LUNCH_FORMATS[index % len(_DAY_LUNCH_FORMATS)]}; "
                 f"dinner format: {_DAY_DINNER_FORMATS[index % len(_DAY_DINNER_FORMATS)]}."
