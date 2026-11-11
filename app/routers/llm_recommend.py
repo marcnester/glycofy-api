@@ -3618,6 +3618,7 @@ def _prevalidated_restricted_week(
     exclusions: list[str],
     *,
     diet: str,
+    menu_rotation: int = 0,
 ) -> dict[str, dict[str, SlotRecommendation]]:
     """Use a curated week only when every requested meal fits and validates."""
     if not days or len(days) > MENU_COUNT or any(day.get("diet_tags") for day in days):
@@ -3629,7 +3630,7 @@ def _prevalidated_restricted_week(
     for offset, day in enumerate(ordered_days):
         targets = [MealTarget(slot=meal["slot"], **meal["target_macros"]) for meal in day["meals"]]
         menu = curated_menu_options(
-            first_menu + offset, [target.slot for target in targets], include_fish=diet == "pescatarian"
+            first_menu + menu_rotation + offset, [target.slot for target in targets], include_fish=diet == "pescatarian"
         )
         if not menu:
             return {}
@@ -3668,6 +3669,96 @@ def _prevalidated_restricted_week(
 
     _, removed = _deduplicate_week_batch(days, result)
     return {} if removed else result
+
+
+def _choose_verified_week(
+    client: ClientType,
+    *,
+    days: list[dict[str, Any]],
+    diet: str,
+    exclusions: list[str],
+    athlete_feedback: dict[str, Any] | None,
+) -> dict[str, dict[str, SlotRecommendation]]:
+    """Let the model rank complete weeks without rewriting verified recipes."""
+    options = {}
+    for rotation in (0, 2, 4):
+        week = _prevalidated_restricted_week(days, exclusions, diet=diet, menu_rotation=rotation)
+        if week:
+            options[str(rotation)] = week
+    if not options:
+        return {}
+    default = next(iter(options))
+    if len(options) == 1:
+        return options[default]
+
+    payload = {
+        "days": [{"date": day["date"], "training": day.get("training")} for day in days],
+        "feedback": athlete_feedback,
+        "options": {
+            key: {
+                day: {slot: (item.ai_idea or {})["title"] for slot, item in meals.items()}
+                for day, meals in week.items()
+            }
+            for key, week in options.items()
+        },
+    }
+    started = time.perf_counter()
+    model = _openai_model()
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            **_chat_generation_options(model),
+            max_completion_tokens=500,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "verified_week_choice",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {"option": {"type": "string", "enum": list(options)}},
+                        "required": ["option"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Choose one complete meal plan using training schedule and meal feedback. "
+                        "Every option has already passed diet and nutrition checks. Return only an option ID."
+                    ),
+                },
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+        )
+        selection = json.loads(response.choices[0].message.content or "{}")["option"]
+        selected = options[selection]
+    except Exception as exc:
+        _record_failure()
+        record_ai_operation(
+            "weekly_plan",
+            status="failed",
+            model=model,
+            prompt_version=PROMPT_VERSION,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            error_code=type(exc).__name__,
+        )
+        return options[default]
+
+    usage, cost = _extract_usage_meta(response)
+    _record_success(cost)
+    record_ai_operation(
+        "weekly_plan",
+        status="success",
+        model=model,
+        prompt_version=PROMPT_VERSION,
+        latency_ms=round((time.perf_counter() - started) * 1000),
+        usage=usage,
+        cost_usd=cost,
+    )
+    return selected
 
 
 def _create_recipe_from_ai_idea(
@@ -4624,6 +4715,15 @@ def _parallel_week_recommendations(
     """Generate bounded daily payloads concurrently while retaining full-week context."""
     if client and os.getenv("WEEKLY_GUIDED_FIRST_PASS_ENABLED") == "1":
         days = guide_week_days(days, diet=primary_diet, exclusions=exclusions)
+    if client and set(diet_tags) <= {primary_diet} and os.getenv("WEEKLY_GUIDED_FIRST_PASS_ENABLED") == "2":
+        verified = _choose_verified_week(
+            client, days=days, diet=primary_diet, exclusions=exclusions, athlete_feedback=athlete_feedback
+        )
+        if verified:
+            return verified, {
+                "mode": "verified_week_choice",
+                "accepted": sum(len(items) for items in verified.values()),
+            }
     if len(days) <= 1:
         return _batch_week_recommendations(
             client,
@@ -5190,7 +5290,7 @@ def recommend_weekly_apply(
                 },
             )
 
-        if curated_week:
+        if curated_week or batch_meta["mode"] == "verified_week_choice":
             day_target_totals = {name: sum(getattr(meal, name) for meal in adjusted_meals) for name in _MACROS}
             target_misses = _day_target_misses(day_items, day_target_totals)
         else:

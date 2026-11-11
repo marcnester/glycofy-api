@@ -78,3 +78,39 @@ def test_parallel_generation_passes_opt_in_guidance_without_conflicting_formats(
         assert "breakfast format" not in day["variety_assignment"]
         assert all(context.get("planned_anchors") for context in call["week_context"])
         assert day["meals"] == next(item["meals"] for item in days if item["date"] == day["date"])
+
+
+def test_verified_week_selection_preserves_nutrition_evidence(monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(settings, "USDA_LOCAL_CATALOG_ENABLED", True)
+    monkeypatch.setenv("WEEKLY_GUIDED_FIRST_PASS_ENABLED", "2")
+    monkeypatch.setattr(llm_recommend, "record_ai_operation", lambda *args, **kwargs: None)
+    monkeypatch.setattr(llm_recommend, "_record_success", lambda *args: None)
+    monkeypatch.setattr(llm_recommend, "_record_failure", lambda: None)
+    choices = []
+
+    def choose(**kwargs):
+        options = json.loads(kwargs["messages"][1]["content"])["options"]
+        selected = list(options)[-1] if not choices else "unknown"
+        choices.append((options, selected))
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"option": selected})))],
+            usage=None,
+        )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=choose)))
+    arguments = dict(days=_week(), primary_diet="vegetarian", diet_tags=["vegetarian"], exclusions=["milk", "egg"])
+    for attempt in range(2):
+        week, meta = llm_recommend._parallel_week_recommendations(client, **arguments)
+        assert meta == {"mode": "verified_week_choice", "accepted": 35}
+        options, selected = choices[attempt]
+        expected = options[selected] if attempt == 0 else next(iter(options.values()))
+        assert {
+            day: {slot: item.ai_idea["title"] for slot, item in meals.items()} for day, meals in week.items()
+        } == expected
+        for meals in week.values():
+            for item in meals.values():
+                assert not text_violates_exclusions(str(item.ai_idea), arguments["exclusions"])
+                assert all(ingredient["food_ref_id"] for ingredient in item.ai_idea["ingredients"])
