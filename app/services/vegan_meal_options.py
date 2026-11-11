@@ -94,6 +94,8 @@ def _recipe(
 
 def _menu(index: int) -> dict[str, dict[str, Any]]:
     fruit, snack_fruit, pulse, starch, second_pulse, second_starch, veg, second_veg = _MENUS[index % MENU_COUNT]
+    # Offset the spread's legume from both the lunch and dinner legumes.
+    _, _, snack_pulse, *_ = _MENUS[(index + 3) % MENU_COUNT]
     seeds = ("hemp seeds", "pumpkin seeds", "sunflower seeds")[index % 3]
     citrus = "lemon juice" if index % 2 == 0 else "lime juice"
     breakfast_format = "breakfast squares" if index % 3 == 1 else "griddle cakes"
@@ -170,14 +172,14 @@ def _menu(index: int) -> dict[str, dict[str, Any]]:
             carb=snack_fruit,
         ),
         "snack_2": _recipe(
-            f"{pulse} and {citrus} spread with {second_veg}",
-            {f"cooked {pulse}": 95, second_veg: 100, "hemp seeds": 25, citrus: 12, "olive oil": 4},
+            f"{snack_pulse} and {citrus} spread with {second_veg}",
+            {f"cooked {snack_pulse}": 95, second_veg: 100, "hemp seeds": 25, citrus: 12, "olive oil": 4},
             [
-                f"Mash the cooked {pulse} with the {citrus} and olive oil, then stir in the hemp seeds.",
+                f"Mash the cooked {snack_pulse} with the {citrus} and olive oil, then stir in the hemp seeds.",
                 f"Slice the {second_veg} and serve with the spread.",
             ],
             0,
-            carb=pulse,
+            carb=snack_pulse,
         ),
         "snack_3": _recipe(
             f"{second_pulse} and {veg} bowl with pumpkin seeds",

@@ -65,6 +65,10 @@ def test_weekly_planner_saves_all_verified_restricted_meals(monkeypatch, diet, e
 
         saved = db.scalars(select(PlanMeal).join(Plan).where(Plan.user_id == user.id)).all()
         assert len(saved) == len({meal.title for meal in saved}) == 35
+        lunch_legumes = {meal.plan_id: meal.items[0].name for meal in saved if meal.meal_type == "lunch"}
+        for meal in saved:
+            if meal.meal_type.startswith("snack"):
+                assert lunch_legumes[meal.plan_id] not in {item.name for item in meal.items}
         fish_meals = [
             meal for meal in saved if any(item.name in {"raw salmon", "raw cod", "raw tilapia"} for item in meal.items)
         ]
