@@ -5290,7 +5290,7 @@ def recommend_weekly_apply(
                 },
             )
 
-        if curated_week or batch_meta["mode"] == "verified_week_choice":
+        if curated_week or batch_meta.get("mode") == "verified_week_choice":
             day_target_totals = {name: sum(getattr(meal, name) for meal in adjusted_meals) for name in _MACROS}
             target_misses = _day_target_misses(day_items, day_target_totals)
         else:
