@@ -4756,7 +4756,7 @@ def recommend_weekly_apply(
 
     exclusions = _preference_exclusions(pref)
     use_curated_week = (primary_diet == "vegan" and "soy" in exclusions) or (
-        primary_diet == "pescatarian" and {"milk", "wheat", "sesame"}.issubset(exclusions)
+        primary_diet == "pescatarian" and "milk" in exclusions
     )
     curated_week = _prevalidated_restricted_week(batch_days, exclusions, diet=primary_diet) if use_curated_week else {}
     if curated_week:
