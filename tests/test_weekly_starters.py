@@ -114,3 +114,17 @@ def test_verified_week_selection_preserves_nutrition_evidence(monkeypatch):
             for item in meals.values():
                 assert not text_violates_exclusions(str(item.ai_idea), arguments["exclusions"])
                 assert all(ingredient["food_ref_id"] for ingredient in item.ai_idea["ingredients"])
+
+
+def test_verified_week_rollout_skips_profiles_and_week_sizes_outside_staging_coverage(monkeypatch):
+    monkeypatch.setenv("WEEKLY_GUIDED_FIRST_PASS_ENABLED", "2")
+    monkeypatch.setattr(llm_recommend, "_batch_week_recommendations", lambda *args, **kwargs: ({}, {}))
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("An untested case reached the verified week experiment")
+
+    monkeypatch.setattr(llm_recommend, "_choose_verified_week", unexpected)
+    for days, exclusions in [(_week(), ["milk", "soy"]), (_week()[:6], ["milk"]), (_week(), [])]:
+        llm_recommend._parallel_week_recommendations(
+            object(), days=days, primary_diet="omnivore", diet_tags=[], exclusions=exclusions
+        )

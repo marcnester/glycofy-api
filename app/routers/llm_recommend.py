@@ -4715,7 +4715,19 @@ def _parallel_week_recommendations(
     """Generate bounded daily payloads concurrently while retaining full-week context."""
     if client and os.getenv("WEEKLY_GUIDED_FIRST_PASS_ENABLED") == "1":
         days = guide_week_days(days, diet=primary_diet, exclusions=exclusions)
-    if client and set(diet_tags) <= {primary_diet} and os.getenv("WEEKLY_GUIDED_FIRST_PASS_ENABLED") == "2":
+    # Limit the initial rollout to the profiles and week size verified on staging.
+    verified_week_profile = (primary_diet, frozenset(exclusions)) in {
+        ("omnivore", frozenset({"milk"})),
+        ("vegetarian", frozenset({"milk", "egg"})),
+    }
+    if (
+        client
+        and os.getenv("WEEKLY_GUIDED_FIRST_PASS_ENABLED") == "2"
+        and verified_week_profile
+        and set(diet_tags) <= {primary_diet}
+        and len(days) == 7
+        and all(len(day.get("meals", [])) == 5 for day in days)
+    ):
         verified = _choose_verified_week(
             client, days=days, diet=primary_diet, exclusions=exclusions, athlete_feedback=athlete_feedback
         )
