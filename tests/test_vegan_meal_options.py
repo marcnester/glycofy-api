@@ -16,8 +16,13 @@ from app.services.training_nutrition import athlete_profile_baseline
 
 @pytest.mark.parametrize(
     ("diet", "exclusions"),
-    [("vegan", ("soy",)), ("vegan", SUPPORTED_ALLERGENS), ("pescatarian", ("milk", "wheat", "sesame"))],
-    ids=["vegan-soy-free", "vegan-all-nine", "pescatarian"],
+    [
+        ("vegan", ("soy",)),
+        ("vegan", SUPPORTED_ALLERGENS),
+        ("pescatarian", ("milk", "wheat", "sesame")),
+        ("pescatarian", ("milk", "sardines")),
+    ],
+    ids=["vegan-soy-free", "vegan-all-nine", "pescatarian", "pescatarian-milk"],
 )
 def test_weekly_planner_saves_all_verified_restricted_meals(monkeypatch, diet, exclusions):
     monkeypatch.setattr(settings, "USDA_LOCAL_CATALOG_ENABLED", True)
@@ -110,3 +115,39 @@ def test_vegan_options_decline_additional_restrictions(monkeypatch):
     assert not llm_recommend._prevalidated_restricted_week(days, ["soy", "sunflower seed"], diet="vegan")
     assert text_violates_exclusions("sunflower seed flour mixed with wheat flour", ["wheat"]) == ["wheat"]
     assert not text_violates_exclusions("sunflower seed flour mixed with chickpea flour", ["wheat"])
+
+
+@pytest.mark.parametrize(
+    "totals",
+    [
+        {"kcal": 3200, "protein_g": 180, "carbs_g": 455, "fat_g": 73},
+        {"kcal": 3600, "protein_g": 180, "carbs_g": 540, "fat_g": 80},
+        {"kcal": 4000, "protein_g": 185, "carbs_g": 635, "fat_g": 80},
+    ],
+)
+def test_milk_free_pescatarian_options_fit_high_training_targets(monkeypatch, totals):
+    monkeypatch.setattr(settings, "USDA_LOCAL_CATALOG_ENABLED", True)
+    days = []
+    for offset in range(7):
+        day = llm_recommend.WeeklyDayRequest(
+            date=(date(2026, 12, 7) + timedelta(days=offset)).isoformat(), totals=totals
+        )
+        targets = llm_recommend._targets_for_preferences(day, SimpleNamespace(daily_snack_count=2))
+        days.append(
+            {
+                "date": day.date,
+                "meals": [{"slot": meal.slot, "target_macros": meal.model_dump(exclude={"slot"})} for meal in targets],
+            }
+        )
+    result = llm_recommend._prevalidated_restricted_week(days, ["milk", "sardines"], diet="pescatarian")
+    assert len(result) == 7
+    assert sum(len(meals) for meals in result.values()) == 35
+    for meals in result.values():
+        assert not llm_recommend._day_target_misses(list(meals.values()), totals)
+        for meal in meals.values():
+            assert validate_meal(
+                {**meal.ai_idea, "slot": meal.slot},
+                diet="pescatarian",
+                exclusions=["milk", "sardines"],
+                require_ingredient_nutrition=True,
+            ).safe
