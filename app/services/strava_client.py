@@ -95,3 +95,22 @@ def get_with_bearer(path: str, access_token: str, params: dict[str, Any] | None 
     resp = requests.get(url, headers=headers, params=params or {}, timeout=30)
     resp.raise_for_status()
     return resp.json()
+
+
+def fetch_activity_calories(token: str, activity_id: str) -> float | None:
+    """Read Strava's reported calories from the activity detail."""
+    try:
+        response = requests.get(
+            f"{STRAVA_API_BASE}/activities/{activity_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=20,
+        )
+        if response.status_code != 200:
+            return None
+        payload = response.json()
+        calories = payload.get("calories") if isinstance(payload, dict) else None
+        if isinstance(calories, (int, float)) and calories > 0:
+            return float(calories)
+    except (requests.RequestException, ValueError):
+        return None
+    return None

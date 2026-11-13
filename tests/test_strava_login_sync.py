@@ -136,3 +136,46 @@ def test_incremental_sync_uses_latest_activity_with_overlap(monkeypatch):
         assert result["fetched"] == 0
     finally:
         db.close()
+
+
+def test_scheduled_sync_preserves_and_recovers_strength_calories(monkeypatch):
+    from app.services import imports_strava
+
+    with _db() as db:
+        user = _linked_user(db, updated_at=datetime.utcnow())
+        for source_id, kcal in [("9", 716), ("6", None)]:
+            db.add(
+                Activity(
+                    user_id=user.id,
+                    provider="strava",
+                    source_provider="strava",
+                    source_id=source_id,
+                    sport="WeightTraining",
+                    start_time=datetime(2026, 11, int(source_id)),
+                    kcal=kcal,
+                )
+            )
+        db.commit()
+
+        feed = [
+            {
+                "id": int(source_id),
+                "type": "WeightTraining",
+                "start_date": f"2026-11-0{source_id}T18:00:00Z",
+                "elapsed_time": 2700,
+            }
+            for source_id in ("9", "6")
+        ]
+        monkeypatch.setattr(imports_strava, "_pull_page", lambda *args, **kwargs: feed)
+        fetched = []
+
+        def detail(_token, source_id):
+            fetched.append(source_id)
+            return 310
+
+        monkeypatch.setattr(imports_strava, "fetch_activity_calories", detail)
+        imports_strava.sync_strava(db, user)
+        imports_strava.sync_strava(db, user)
+
+        assert fetched == ["6"]
+        assert {row.source_id: row.kcal for row in db.query(Activity).all()} == {"9": 716, "6": 310}
