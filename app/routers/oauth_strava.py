@@ -26,6 +26,7 @@ from app.models import Activity, OAuthAccount, User
 from app.observability import record_security_event
 from app.rate_limit import AUTH_LIMITER, client_key
 from app.redirects import safe_return_path
+from app.services.strava_client import fetch_activity_calories as _fetch_detail_calories
 
 # Router for OAuth endpoints (mounted at /oauth/strava)
 router = APIRouter(tags=["oauth/strava"])
@@ -35,7 +36,6 @@ sync_router = APIRouter(tags=["sync/strava"])
 STRAVA_AUTH = "https://www.strava.com/oauth/authorize"
 STRAVA_TOKEN = "https://www.strava.com/oauth/token"
 STRAVA_ACTIVITIES = "https://www.strava.com/api/v3/athlete/activities"
-STRAVA_ACTIVITY_DETAIL = "https://www.strava.com/api/v3/activities/{id}"
 
 DEFAULT_PROFILE_URL = "/ui/profile.html"
 STATE_COOKIE_NAME = "__Host-strava-oauth-state" if settings.is_production else "strava_oauth_state"
@@ -400,35 +400,6 @@ def _estimate_kcal_from_feed(act: dict[str, Any], sport_norm: str) -> tuple[floa
         return kj * 0.239, "feed_kj_mech"
 
     return None, "none"
-
-
-def _fetch_detail_calories(token: str, activity_id: str) -> float | None:
-    """
-    Fetch calories from the Strava activity detail endpoint.
-    Returns None if unavailable or on non-200 (other than 404).
-    """
-    try:
-        url = STRAVA_ACTIVITY_DETAIL.format(id=activity_id)
-        r = requests.get(
-            url,
-            headers={"Authorization": f"Bearer {token}", "User-Agent": UA},
-            timeout=20,
-        )
-        # 404/410 etc. → treat as no calories; avoid raising
-        if r.status_code == 404:
-            return None
-        if r.status_code == 429:
-            # surface as None; the sync loop will stop calling details when budget is spent
-            return None
-        if r.status_code != 200:
-            return None
-        j = r.json() or {}
-        cal = j.get("calories")
-        if isinstance(cal, (int, float)):
-            return float(cal)
-        return None
-    except Exception:
-        return None
 
 
 def _estimate_kcal_from_met(sport: str, duration_s: int, weight_kg: float | None) -> float:

@@ -11,14 +11,16 @@ Pulls activities from Strava into our activities table.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import UTC, date, datetime
+from functools import partial
 from typing import Any
 
 import requests
 from sqlalchemy.orm import Session
 
 from app.models import Activity, OAuthAccount, User
-from app.services.strava_client import STRAVA_API_BASE, refresh_access_token
+from app.services.strava_client import STRAVA_API_BASE, fetch_activity_calories, refresh_access_token
 
 
 def _now_epoch() -> int:
@@ -94,6 +96,8 @@ def _upsert_activity(
     provider: str,
     source_id: str,
     payload: dict[str, Any],
+    *,
+    fetch_missing_calories: Callable[[], float | None] | None = None,
 ) -> tuple[bool, bool, Activity]:
     """
     Upsert by unique key (user_id, provider, source_id).
@@ -109,11 +113,19 @@ def _upsert_activity(
         .first()
     )
 
+    calories = payload.get("calories")
+    if not calories or calories <= 0:
+        calories = act.kcal if act and act.kcal and act.kcal > 0 else None
+    if calories is None and fetch_missing_calories:
+        calories = fetch_missing_calories()
+    if calories is None or calories <= 0:
+        calories = payload.get("kcal")
+
     fields = {
         "sport": payload["sport"],
         "start_time": payload["start_time"],
         "duration_s": payload["duration_s"],
-        "kcal": payload.get("kcal"),
+        "kcal": calories,
         "distance_m": payload.get("distance_m"),
     }
 
@@ -177,6 +189,14 @@ def sync_strava(
 
     created = updated = skipped = 0
     pages = 0
+    detail_budget = 10
+
+    def fetch_missing_calories(source_id: str) -> float | None:
+        nonlocal detail_budget
+        if detail_budget <= 0:
+            return None
+        detail_budget -= 1
+        return fetch_activity_calories(token, source_id)
 
     for page in range(1, max_pages + 1):
         items = _pull_page(token, page=page, per_page=per_page, after_epoch=after_epoch)
@@ -185,7 +205,10 @@ def sync_strava(
             break
 
         for it in items:
-            source_id = str(it.get("id"))
+            if not it.get("id"):
+                skipped += 1
+                continue
+            source_id = str(it["id"])
             sport = _strava_type_to_sport(it.get("type") or "")
             start_time = _parse_start_time(it.get("start_date") or it.get("start_date_local") or "")
             duration_s = int(it.get("elapsed_time") or 0)
@@ -206,10 +229,18 @@ def sync_strava(
                 start_time=start_time,
                 duration_s=duration_s,
                 distance_m=distance_m if distance_m > 0 else None,
-                kcal=kcal,
+                kcal=kcal if kcal and kcal > 0 else None,
+                calories=it.get("calories") if isinstance(it.get("calories"), (int, float)) else None,
             )
             try:
-                c, u, _ = _upsert_activity(db, user.id, "strava", source_id, payload)
+                c, u, _ = _upsert_activity(
+                    db,
+                    user.id,
+                    "strava",
+                    source_id,
+                    payload,
+                    fetch_missing_calories=partial(fetch_missing_calories, source_id) if sport == "strength" else None,
+                )
                 if c:
                     created += 1
                 elif u:
