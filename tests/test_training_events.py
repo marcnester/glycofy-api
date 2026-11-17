@@ -355,3 +355,84 @@ def test_workout_fuel_can_be_logged_retried_and_cleared():
         client.post("/auth/signup", json={"email": "other-fuel@example.com", "password": "a-secure-password-123"})
         assert client.put(log_url, json={"carbs_g": 60}).status_code == 404
     app.dependency_overrides.clear()
+
+
+def test_workout_reversal_restores_exact_saved_meal_and_ingredient_portions():
+    from datetime import UTC, datetime, timedelta
+
+    from app.models import User
+
+    with _client() as client:
+        email = "restore-portions@example.com"
+        client.post("/auth/signup", json={"email": email, "password": "a-secure-password-123"})
+        with _test_db() as db:
+            db.query(User).filter(User.email == email).one().weight_kg = 70
+            db.commit()
+
+        day = datetime.now(UTC).date() + timedelta(days=3)
+        path = f"/v1/plan/{day}"
+        rows = (
+            ("Cooked white rice", 150.25, 195.2, 4.1, 42.2, 0.4),
+            ("Cooked chicken breast", 150.5, 250.4, 46.1, 0, 5.4),
+            ("Olive oil", 10.25, 92.3, 0, 0, 10.25),
+        )
+        ingredients = [
+            {
+                "name": name,
+                "qty": qty,
+                "unit": "g",
+                "kcal": kcal,
+                "protein_g": protein,
+                "carbs_g": carbs,
+                "fat_g": fat,
+                "meta": {"nutrition_basis": "usda_fooddata_central"},
+            }
+            for name, qty, kcal, protein, carbs, fat in rows
+        ]
+        workout = client.post(
+            "/v1/training-events",
+            json={"workout_date": str(day), "sport": "Ride", "duration_min": 75, "intensity": "easy"},
+        )
+        assert workout.status_code == 201
+        workout_path = f"/v1/training-events/{workout.json()['id']}"
+        existing = client.post(
+            path,
+            json={
+                "source": "llm",
+                "meals": [
+                    {
+                        "meal_type": slot,
+                        "title": title,
+                        "kcal": 537.9,
+                        "protein_g": 50.2,
+                        "carbs_g": 42.2,
+                        "fat_g": 16.05,
+                        "ingredients": ingredients,
+                    }
+                    for slot, title in (
+                        ("breakfast", "Rice and Chicken Breakfast"),
+                        ("lunch", "Rice and Chicken Lunch"),
+                        ("snack", "Rice and Chicken Snack"),
+                    )
+                ],
+            },
+        )
+        assert existing.status_code == 200
+        original = client.get(path).json()
+        for _ in range(2):
+            hard = client.patch(workout_path, json={"duration_min": 120, "intensity": "hard"})
+            assert hard.json()["meal_plan_update"]["adjusted_meals"] == 3
+            fitted = client.get(path).json()["meals"]
+            assert all(meal["carbs_g"] > 42.2 for meal in fitted)
+            easy = client.patch(workout_path, json={"duration_min": 75, "intensity": "easy"})
+            assert easy.json()["meal_plan_update"]["adjusted_meals"] == 3
+            restored = client.get(path).json()
+            assert restored["totals"] == original["totals"]
+            for before, after, hard_meal in zip(original["meals"], restored["meals"], fitted, strict=True):
+                assert after["ingredients"] == before["ingredients"]
+                for key in ("carbs_g", "kcal", "protein_g", "fat_g"):
+                    assert after[key] == before[key]
+                assert after["meta"]["training_carb_change"]["grams"] == round(
+                    before["carbs_g"] - hard_meal["carbs_g"], 1
+                )
+    app.dependency_overrides.clear()

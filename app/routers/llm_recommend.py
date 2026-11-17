@@ -3253,6 +3253,7 @@ def _apply_recipe_to_planmeal(pm: PlanMeal, rec: Recipe) -> None:
             "total_time_min",
             "training_replan",
             "training_replan_target",
+            "training_replan_origin",
             "training_carb_change",
         }
     }
