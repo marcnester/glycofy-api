@@ -11,6 +11,7 @@ from app.models import Plan, PlanMeal, User
 from app.services.training_nutrition import (
     MACROS,
     TrainingNutritionResult,
+    WorkoutInput,
     allocate_meal_targets,
     athlete_profile_baseline,
     calculate_heuristic_nutrition,
@@ -86,6 +87,30 @@ def _update_meal(meal: PlanMeal, target: dict[str, float], *, heuristic: bool) -
     return "adjusted"
 
 
+def _changed_workouts(before: TrainingNutritionResult, after: TrainingNutritionResult) -> list[WorkoutInput]:
+    old = {(row.reason, row.workout_id): row for row in before.workout_inputs}
+    new = {(row.reason, row.workout_id): row for row in after.workout_inputs}
+    return [
+        row
+        for key, row in (old | new).items()
+        if old.get(key) != new.get(key)
+        and (row.reason != "before_early_workout" or before.dinner_carbs_g != after.dinner_carbs_g)
+    ]
+
+
+def _meal_workout_reasons(workouts: list[WorkoutInput], slot: str) -> list[dict[str, str | None]]:
+    cross_day = {
+        "before_early_workout": "dinner",
+        "after_late_workout": "breakfast",
+        "after_late_activity": "breakfast",
+    }
+    relevant = [row for row in workouts if cross_day.get(row.reason, slot) == slot]
+    return [
+        {"reason": row.reason, "sport": row.sport, "date": row.date, "start_time": row.start_time}
+        for row in relevant or workouts
+    ]
+
+
 @contextmanager
 def replan_training_changes(
     db: Session,
@@ -133,6 +158,7 @@ def replan_training_changes(
     db.flush()
     for plan in plans:
         after = nutrition(plan)
+        workouts = _changed_workouts(before[plan.date], after)
         weights = {meal.meal_type: _macros(meal) for meal in plan.meals}
         old_targets = allocate_meal_targets(before[plan.date], weights)
         new_targets = allocate_meal_targets(after, weights)
@@ -147,8 +173,15 @@ def replan_training_changes(
             base = (meal.meta or {}).get("training_replan_target", weights[slot])
             target = {key: round(max(0.0, base[key] + delta[key]), 1) for key in MACROS}
             status = _update_meal(meal, target, heuristic=plan.source == "heuristic")
+            actual_carbs = round(float(meal.carbs_g or 0) - weights[slot]["carbs_g"], 1)
+            meta = {key: value for key, value in (meal.meta or {}).items() if key != "training_carb_change"}
+            if status == "adjusted" and actual_carbs:
+                meta["training_carb_change"] = {
+                    "grams": actual_carbs,
+                    "workouts": _meal_workout_reasons(workouts, slot),
+                }
             meal.meta = {
-                **(meal.meta or {}),
+                **meta,
                 "training_replan": status,
                 "training_replan_target": target,
             }

@@ -1113,6 +1113,34 @@
     return true;
   }
 
+  function renderTrainingCarbChange(card, macros, change) {
+    card.querySelector('.meal-training-change')?.remove();
+    if (!macros || !Number.isFinite(change?.grams) || change.grams === 0) return;
+
+    const note = document.createElement('p');
+    note.className = 'meal-training-change';
+    const amount = document.createElement('strong');
+    const grams = Math.abs(change.grams).toLocaleString(undefined, { maximumFractionDigits: 1 });
+    amount.textContent = `${change.grams > 0 ? '+' : '−'}${grams} g carbs`;
+    note.append(amount);
+
+    const reasons = {
+      before_early_workout: 'Fueling before',
+      after_late_workout: 'Recovery after',
+      after_late_activity: 'Recovery after',
+      recovery: 'Recovery after',
+      logged_fuel: 'Fuel logged for',
+      session: 'Training update for',
+    };
+    const workouts = (Array.isArray(change.workouts) ? change.workouts : []).map(workout => {
+      const date = formatDateForChip(workout.date);
+      const time = workout.start_time?.slice(11, 16);
+      return `${reasons[workout.reason] || 'Training update for'} ${workout.sport} on ${date}${time ? ` at ${time}` : ''}`;
+    });
+    note.append(` · ${[...new Set(workouts)].join('; ') || 'Training update'}`);
+    macros.after(note);
+  }
+
   function renderMeals(plan) {
     const meals = plan?.meals || [];
     const sorted = meals
@@ -1188,6 +1216,8 @@
             macrosEl.textContent = '';
           }
         }
+
+        renderTrainingCarbChange(card, macrosEl, ff ? null : base.meta?.training_carb_change);
 
         // ingredients + instructions
         if (bodyEl) {
@@ -1362,6 +1392,7 @@
               : ''
           }
         `;
+        renderTrainingCarbChange(card, card.querySelector('.meal__macros'), ff ? null : m.meta?.training_carb_change);
         mealsRoot.appendChild(card);
       }
     }

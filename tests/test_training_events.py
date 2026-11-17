@@ -282,12 +282,31 @@ def test_moving_early_workout_updates_only_affected_unlocked_meals():
             if meal["carbs_g"] != original["carbs_g"]
         ]
         assert changes == ["dinner"]
+        dinner = next(meal for meal in after["meals"] if meal["meal_type"] == "dinner")
+        assert dinner["meta"]["training_carb_change"] == {
+            "grams": 35,
+            "workouts": [
+                {
+                    "reason": "before_early_workout",
+                    "sport": "Ride",
+                    "date": days[1].isoformat(),
+                    "start_time": started.astimezone(tz).isoformat(),
+                }
+            ],
+        }
+        assert all("training_carb_change" not in meal["meta"] for meal in after["meals"] if meal is not dinner)
 
         moved = client.patch(f'/v1/training-events/{created.json()["id"]}', json={"workout_date": days[3].isoformat()})
         assert moved.status_code == 200
         moved_start = datetime.fromisoformat(moved.json()["start_time"])
         assert moved_start.astimezone(tz).hour == 7
-        assert get_plan(days[0])["totals"] == before[days[0]]["totals"]
+        restored = get_plan(days[0])
+        assert restored["totals"] == before[days[0]]["totals"]
+        restored_dinner = next(meal for meal in restored["meals"] if meal["meal_type"] == "dinner")
+        assert restored_dinner["meta"]["training_carb_change"] == {
+            **dinner["meta"]["training_carb_change"],
+            "grams": -35,
+        }
         assert get_plan(days[2])["totals"]["carbs_g"] > before[days[2]]["totals"]["carbs_g"]
         assert get_plan(days[3]) == locked
         assert get_plan(days[4]) == before[days[4]]
@@ -322,6 +341,11 @@ def test_workout_fuel_can_be_logged_retried_and_cleared():
         assert after["workout_fuel"] == {"carbs_g": 60, "kcal": 240}
         assert abs(after["totals"]["carbs_g"] - (before["totals"]["carbs_g"] - 60)) < 1
         assert abs(after["totals"]["kcal"] - (before["totals"]["kcal"] - 240)) < 1
+        for meal, original in zip(after["meals"], before["meals"], strict=True):
+            change = meal["meta"]["training_carb_change"]
+            assert change["grams"] == round(meal["carbs_g"] - original["carbs_g"], 1) < 0
+            assert [(row["reason"], row["sport"]) for row in change["workouts"]] == [("logged_fuel", "Ride")]
+
         assert client.put(log_url, json={"carbs_g": 60}).json()["meal_plan_update"]["adjusted_meals"] == 0
         assert client.get(endpoint).json() == after
 

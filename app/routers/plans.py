@@ -413,7 +413,16 @@ def _extract_recipe_ingredients(recipe: Recipe) -> list[Any]:
     return []
 
 
+def _clear_training_replan(meal: PlanMeal) -> None:
+    meal.meta = {
+        key: value
+        for key, value in (meal.meta or {}).items()
+        if key not in {"training_replan", "training_replan_target", "training_carb_change"}
+    }
+
+
 def _apply_recipe_to_meal(meal: PlanMeal, recipe: Recipe) -> None:
+    _clear_training_replan(meal)
     meal.meal_type = _safe_meal_type(getattr(recipe, "meal_type", None) or meal.meal_type)
     meal.title = getattr(recipe, "title", None) or meal.title or meal.meal_type.title()
     meal.kcal = getattr(recipe, "kcal", None)
@@ -644,6 +653,7 @@ async def generate_meal_plan_llm(
 
 
 def _apply_ai_idea_to_meal(meal: PlanMeal, ai: AIIdeaPayload, slot: str) -> None:
+    _clear_training_replan(meal)
     slot_norm = _safe_meal_type(slot or meal.meal_type or "snack")
 
     title = (ai.title or "").strip() or (ai.description or "").strip().split("\n")[0] or slot_norm.title()
@@ -1241,13 +1251,6 @@ def apply_recommendations(
             db.add(meal)
             db.flush()
             meals_by_slot[slot] = meal
-
-        if it.recipe_id is not None or it.pick_id is not None or it.ai_idea is not None or it.new_recipe is not None:
-            meal.meta = {
-                key: value
-                for key, value in (meal.meta or {}).items()
-                if key not in {"training_replan", "training_replan_target"}
-            }
 
         # Determine effective recipe id (recipe_id or pick_id)
         effective_recipe_id: int | None = None

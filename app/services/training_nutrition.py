@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
@@ -56,6 +56,16 @@ class NutritionAdjustment:
 
 
 @dataclass(frozen=True)
+class WorkoutInput:
+    workout_id: int
+    reason: str
+    sport: str
+    date: str
+    start_time: str | None = field(compare=False)
+    values: tuple[Any, ...]
+
+
+@dataclass(frozen=True)
 class TrainingNutritionResult:
     baseline: MacroTargets
     training: TrainingContext
@@ -65,6 +75,7 @@ class TrainingNutritionResult:
 
     dinner_carbs_g: float = 0.0
     breakfast_carbs_g: float = 0.0
+    workout_inputs: tuple[WorkoutInput, ...] = ()
 
     @property
     def meal_targets(self) -> MacroTargets:
@@ -75,7 +86,9 @@ class TrainingNutritionResult:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {"policy_version": FUELING_POLICY_VERSION, **asdict(self), "meal_targets": asdict(self.meal_targets)}
+        data = asdict(self)
+        data.pop("workout_inputs")
+        return {"policy_version": FUELING_POLICY_VERSION, **data, "meal_targets": asdict(self.meal_targets)}
 
     def cache_fingerprint(self) -> dict[str, Any]:
         return self.to_dict()
@@ -164,16 +177,16 @@ def _safe_float(value: Any) -> float:
 
 
 def _activity_duration_s(activity: Activity) -> float:
-    for field in ("duration_s", "moving_time_s", "elapsed_time"):
-        value = _safe_float(getattr(activity, field, None))
+    for attribute in ("duration_s", "moving_time_s", "elapsed_time"):
+        value = _safe_float(getattr(activity, attribute, None))
         if value > 0:
             return value
     return 0.0
 
 
 def _activity_distance_m(activity: Activity) -> float:
-    for field in ("distance_m", "distance"):
-        value = _safe_float(getattr(activity, field, None))
+    for attribute in ("distance_m", "distance"):
+        value = _safe_float(getattr(activity, attribute, None))
         if value > 0:
             return value
     return 0.0
@@ -572,7 +585,8 @@ def calculate_training_nutrition(
     upcoming = [
         row for row in planned if row.workout_date >= today and (row.start_time is None or row.start_time >= now_naive)
     ]
-    result = _apply_planned_fueling(result, user, [row for row in upcoming if row.workout_date == plan_date])
+    same_day = [row for row in upcoming if row.workout_date == plan_date]
+    result = _apply_planned_fueling(result, user, same_day)
 
     def local_time(utc_time: datetime) -> datetime:
         return utc_time.replace(tzinfo=UTC).astimezone(tz)
@@ -613,14 +627,40 @@ def calculate_training_nutrition(
         kcal=round(result.final.kcal + 4 * added_carbs, 1),
         carbs_g=round(result.final.carbs_g + added_carbs, 1),
     )
-    during_carbs = round(
-        sum(
-            float(row.during_carbs_g or 0)
-            for row in activities
-            if row.during_carbs_g and day_start <= local_time(row.start_time) < day_end
-        ),
-        1,
-    )
+    fueled = [row for row in activities if row.during_carbs_g and day_start <= local_time(row.start_time) < day_end]
+    during_carbs = round(sum(float(row.during_carbs_g or 0) for row in fueled), 1)
+    workout_inputs = []
+    for reason, rows in (("session", same_day), ("before_early_workout", early), ("after_late_workout", late)):
+        for row in rows:
+            start = local_time(row.start_time).isoformat() if row.start_time else None
+            workout_inputs.append(
+                WorkoutInput(
+                    row.id,
+                    reason,
+                    row.sport,
+                    row.workout_date.isoformat(),
+                    start,
+                    (row.duration_min, row.intensity) if reason == "session" else (),
+                )
+            )
+    for reason, rows in (("recovery", recent), ("after_late_activity", late_completed), ("logged_fuel", fueled)):
+        for row in rows:
+            start = local_time(row.start_time)
+            values = {
+                "recovery": (row.duration_s, row.kcal, row.distance_m, row.source_provider or row.provider),
+                "after_late_activity": (),
+                "logged_fuel": (row.during_carbs_g,),
+            }
+            workout_inputs.append(
+                WorkoutInput(
+                    row.id,
+                    reason,
+                    row.sport or "Workout",
+                    start.date().isoformat(),
+                    start.isoformat(),
+                    values[reason],
+                )
+            )
     rationale = result.rationale
     if dinner_carbs:
         rationale += (
@@ -651,6 +691,7 @@ def calculate_training_nutrition(
         ),
         dinner_carbs_g=dinner_carbs,
         breakfast_carbs_g=breakfast_carbs,
+        workout_inputs=tuple(workout_inputs),
         rationale=rationale,
     )
 
