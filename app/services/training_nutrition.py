@@ -7,10 +7,15 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models import Activity, PlannedWorkout, User
-from app.services.workout_reconciliation import reconcile_planned_workouts, reconciliation_activity_window
+from app.models import Activity, EnergyTarget, PlannedWorkout, User
+from app.services.workout_reconciliation import (
+    reconcile_planned_workouts,
+    reconciliation_activity_window,
+    user_timezone,
+)
 
-FUELING_POLICY_VERSION = "2026-09-14.1"
+FUELING_POLICY_VERSION = "2026-11-16.1"
+MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,9 @@ class TrainingContext:
     planned_sports: tuple[str, ...] = ()
     planned_intensity: str | None = None
     next_workout_at: str | None = None
+    next_morning_workouts: int = 0
+    prior_evening_workouts: int = 0
+    during_carbs_g: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -55,16 +63,48 @@ class TrainingNutritionResult:
     final: MacroTargets
     rationale: tuple[str, ...]
 
+    dinner_carbs_g: float = 0.0
+    breakfast_carbs_g: float = 0.0
+
+    @property
+    def meal_targets(self) -> MacroTargets:
+        # Count logged fuel once while keeping carbohydrate available for meals.
+        credit = min(self.training.during_carbs_g, max(0.0, self.final.carbs_g - self.baseline.carbs_g * 0.5))
+        return replace(
+            self.final, kcal=round(self.final.kcal - 4 * credit, 1), carbs_g=round(self.final.carbs_g - credit, 1)
+        )
+
     def to_dict(self) -> dict[str, Any]:
-        return {"policy_version": FUELING_POLICY_VERSION, **asdict(self)}
+        return {"policy_version": FUELING_POLICY_VERSION, **asdict(self), "meal_targets": asdict(self.meal_targets)}
 
     def cache_fingerprint(self) -> dict[str, Any]:
-        return {
-            "policy_version": FUELING_POLICY_VERSION,
-            "training": asdict(self.training),
-            "adjustment": asdict(self.adjustment),
-            "final": asdict(self.final),
+        return self.to_dict()
+
+
+def allocate_meal_targets(
+    nutrition: TrainingNutritionResult,
+    weights: dict[str, dict[str, float]],
+) -> dict[str, dict[str, float]]:
+    """Distribute daily targets and reserve cross-day fuel for the relevant meals."""
+    targets = asdict(nutrition.meal_targets)
+    reserved = {
+        slot: min(grams, targets["carbs_g"] * 0.25)
+        for slot, grams in (("breakfast", nutrition.breakfast_carbs_g), ("dinner", nutrition.dinner_carbs_g))
+        if slot in weights
+    }
+    carbs = sum(reserved.values())
+    targets["carbs_g"] -= carbs
+    targets["kcal"] -= 4 * carbs
+    totals = {key: sum(max(0.0, row[key]) for row in weights.values()) for key in MACROS}
+    allocated: dict[str, dict[str, float]] = {}
+    for slot, row in weights.items():
+        allocated[slot] = {
+            key: value * max(0.0, row[key]) / totals[key] if totals[key] else value / len(weights)
+            for key, value in targets.items()
         }
+        allocated[slot]["carbs_g"] += reserved.get(slot, 0.0)
+        allocated[slot]["kcal"] += 4 * reserved.get(slot, 0.0)
+    return allocated
 
 
 def athlete_profile_baseline(user: User, plan_date: date) -> MacroTargets:
@@ -494,50 +534,149 @@ def calculate_training_nutrition(
     now: datetime | None = None,
 ) -> TrainingNutritionResult:
     now_utc = now or datetime.now(UTC)
-    now_naive = now_utc.replace(tzinfo=None) if now_utc.tzinfo else now_utc
-    plan_day_end = datetime.combine(plan_date, time.max)
-    window_end = min(plan_day_end, now_naive)
-    window_start = plan_day_end - timedelta(hours=window_hours)
+    now_utc = now_utc.replace(tzinfo=UTC) if now_utc.tzinfo is None else now_utc.astimezone(UTC)
+    now_naive = now_utc.replace(tzinfo=None)
+    tz = user_timezone(user)
+    day_start = datetime.combine(plan_date, time.min, tz)
+    day_end = datetime.combine(plan_date + timedelta(days=1), time.min, tz)
+    window_start = (day_end - timedelta(hours=window_hours)).astimezone(UTC).replace(tzinfo=None)
+    window_end = day_end.astimezone(UTC).replace(tzinfo=None)
+    previous_day = plan_date - timedelta(days=1)
+    next_day = plan_date + timedelta(days=1)
 
-    if window_start > window_end:
-        activities: list[Activity] = []
-    else:
-        activities = (
-            db.query(Activity)
-            .filter(
-                Activity.user_id == user.id,
-                Activity.start_time >= window_start,
-                Activity.start_time <= window_end,
-            )
-            .order_by(Activity.start_time.asc())
-            .all()
+    planned = (
+        db.query(PlannedWorkout)
+        .filter(
+            PlannedWorkout.user_id == user.id,
+            PlannedWorkout.workout_date.between(previous_day, next_day),
         )
-    recovery_result = calculate_from_activities(
-        baseline=baseline,
-        user=user,
-        activities=activities,
-        window_hours=window_hours,
+        .order_by(PlannedWorkout.start_time, PlannedWorkout.id)
+        .all()
     )
-    planned_query = db.query(PlannedWorkout).filter(
-        PlannedWorkout.user_id == user.id,
-        PlannedWorkout.workout_date == plan_date,
-    )
-    if plan_date == now_naive.date():
-        planned_query = planned_query.filter(
-            (PlannedWorkout.start_time.is_(None)) | (PlannedWorkout.start_time >= now_naive)
-        )
-    planned = planned_query.order_by(PlannedWorkout.start_time, PlannedWorkout.id).all()
-    match_start, match_end = reconciliation_activity_window(plan_date, plan_date)
-    matching_activities = (
+    match_start, match_end = reconciliation_activity_window(previous_day, next_day)
+    activities = (
         db.query(Activity)
         .filter(
             Activity.user_id == user.id,
-            Activity.start_time >= match_start,
-            Activity.start_time < match_end,
+            Activity.start_time >= min(match_start, window_start),
+            Activity.start_time < max(match_end, window_end),
             Activity.start_time <= now_naive,
         )
-        .order_by(Activity.start_time.asc())
+        .order_by(Activity.start_time)
         .all()
     )
-    planned, _ = reconcile_planned_workouts(planned, matching_activities, user, now=now_naive)
-    return _apply_planned_fueling(recovery_result, user, planned)
+    recent = [activity for activity in activities if window_start <= activity.start_time < window_end]
+    result = calculate_from_activities(baseline=baseline, user=user, activities=recent, window_hours=window_hours)
+    planned, _ = reconcile_planned_workouts(planned, activities, user, now=now_naive)
+    today = now_utc.astimezone(tz).date()
+    upcoming = [
+        row for row in planned if row.workout_date >= today and (row.start_time is None or row.start_time >= now_naive)
+    ]
+    result = _apply_planned_fueling(result, user, [row for row in upcoming if row.workout_date == plan_date])
+
+    def local_time(utc_time: datetime) -> datetime:
+        return utc_time.replace(tzinfo=UTC).astimezone(tz)
+
+    early = [
+        row
+        for row in upcoming
+        if row.workout_date == next_day
+        and row.start_time is not None
+        and local_time(row.start_time).hour < 10
+        and (row.duration_min >= 90 or row.intensity in {"hard", "race"} or row.priority == "key")
+    ]
+    late = [
+        row
+        for row in upcoming
+        if row.workout_date == previous_day
+        and row.start_time is not None
+        and row.duration_min >= 60
+        and local_time(row.start_time + timedelta(minutes=row.duration_min))
+        >= datetime.combine(previous_day, time(20), tz)
+    ]
+    late_completed = [
+        row
+        for row in recent
+        if local_time(row.start_time).date() == previous_day
+        and _activity_duration_s(row) >= 3600
+        and local_time(row.start_time + timedelta(seconds=_activity_duration_s(row)))
+        >= datetime.combine(previous_day, time(20), tz)
+    ]
+    weight = _safe_float(getattr(user, "weight_kg", None))
+    dinner_carbs = min(50.0, weight * 0.5) if early and plan_date >= today else 0.0
+    breakfast_carbs = min(40.0, weight * 0.4) if late or late_completed else 0.0
+    # Completed sessions already contribute to recovery. Reserve some of that
+    # carbohydrate for breakfast without adding a second recovery allowance.
+    added_carbs = dinner_carbs + (breakfast_carbs if late and not late_completed else 0.0)
+    final = replace(
+        result.final,
+        kcal=round(result.final.kcal + 4 * added_carbs, 1),
+        carbs_g=round(result.final.carbs_g + added_carbs, 1),
+    )
+    during_carbs = round(
+        sum(
+            float(row.during_carbs_g or 0)
+            for row in activities
+            if row.during_carbs_g and day_start <= local_time(row.start_time) < day_end
+        ),
+        1,
+    )
+    rationale = result.rationale
+    if dinner_carbs:
+        rationale += (
+            f"Reserved {dinner_carbs:.0f} g carbohydrate for dinner before an early key or demanding workout.",
+        )
+    if breakfast_carbs:
+        rationale += (f"Reserved {breakfast_carbs:.0f} g carbohydrate for breakfast after late training.",)
+    if during_carbs:
+        rationale += (f"Logged {during_carbs:g} g carbohydrate during training on this day.",)
+    return replace(
+        result,
+        final=final,
+        adjustment=replace(
+            result.adjustment,
+            kcal=round(result.adjustment.kcal + 4 * added_carbs, 1),
+            carbs_g=round(result.adjustment.carbs_g + added_carbs, 1),
+        ),
+        training=replace(
+            result.training,
+            next_workout_at=(
+                local_time(datetime.fromisoformat(result.training.next_workout_at)).isoformat()
+                if result.training.next_workout_at
+                else None
+            ),
+            next_morning_workouts=len(early),
+            prior_evening_workouts=len(late) + len(late_completed),
+            during_carbs_g=during_carbs,
+        ),
+        dinner_carbs_g=dinner_carbs,
+        breakfast_carbs_g=breakfast_carbs,
+        rationale=rationale,
+    )
+
+
+def calculate_heuristic_nutrition(
+    *, db: Session, user: User, plan_date: date, now: datetime | None = None
+) -> TrainingNutritionResult:
+    nutrition = calculate_training_nutrition(
+        db=db, user=user, plan_date=plan_date, baseline=athlete_profile_baseline(user, plan_date), now=now
+    )
+    target = db.query(EnergyTarget).filter(EnergyTarget.user_id == user.id, EnergyTarget.date == plan_date).first()
+    if not target or not (target.target_kcal or target.tdee_kcal):
+        return nutrition
+
+    # The legacy explicit energy target already includes training. Reserve
+    # cross-day carbs within that budget and still credit logged workout fuel.
+    kcal = float(target.target_kcal or target.tdee_kcal)
+    explicit = MacroTargets(
+        kcal=kcal,
+        protein_g=max(100.0, round(kcal * 0.30 / 4)),
+        carbs_g=round(kcal * 0.45 / 4),
+        fat_g=round(kcal * 0.25 / 9),
+    )
+    return replace(
+        nutrition,
+        baseline=explicit,
+        final=explicit,
+        adjustment=NutritionAdjustment(0, 0, 0, 0),
+    )

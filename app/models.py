@@ -211,6 +211,7 @@ class Activity(Base):
     duration_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
     distance_m: Mapped[float | None] = mapped_column(Float, nullable=True)
     avg_hr: Mapped[float | None] = mapped_column(Float, nullable=True)
+    during_carbs_g: Mapped[float | None] = mapped_column(Float, nullable=True)
     kcal: Mapped[float | None] = mapped_column(Float, nullable=True)
     sport: Mapped[str | None] = mapped_column(String, nullable=True)
     source_provider: Mapped[str | None] = mapped_column(Text, nullable=True)

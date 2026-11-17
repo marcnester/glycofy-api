@@ -431,3 +431,97 @@ def test_implausible_device_calories_are_bounded_before_fueling():
 
     assert result.training.exercise_kcal == 14 * 70
     assert result.final.carbs_g <= 8 * 70
+
+
+def test_late_planned_workout_reserves_next_morning_recovery_in_athlete_timezone():
+    from app.services.training_nutrition import MACROS, allocate_meal_targets
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    user = _user()
+    user.timezone = "America/Los_Angeles"
+    with Session(engine) as db:
+        db.add(user)
+        db.flush()
+        db.add(
+            PlannedWorkout(
+                user_id=user.id,
+                workout_date=date(2026, 7, 24),
+                start_time=datetime(2026, 7, 25, 2),
+                sport="Ride",
+                duration_min=120,
+                intensity="hard",
+            )
+        )
+        db.flush()
+        result = calculate_training_nutrition(
+            db=db,
+            user=user,
+            plan_date=date(2026, 7, 25),
+            baseline=BASELINE,
+            now=datetime(2026, 7, 24, 16, tzinfo=UTC),
+        )
+    assert result.training.prior_evening_workouts == 1
+    assert result.breakfast_carbs_g == 28
+    targets = allocate_meal_targets(result, {"breakfast": dict.fromkeys(MACROS, 1), "dinner": dict.fromkeys(MACROS, 1)})
+    assert targets["breakfast"]["carbs_g"] == 158
+    assert targets["dinner"]["carbs_g"] == 130
+
+
+def test_training_replan_adjusts_verified_ingredients_and_flags_unverified_meal():
+    from app.models import PlanItem, PlanMeal
+    from app.services.training_replan import _update_meal
+
+    rice = PlanItem(
+        name="Cooked white rice",
+        qty=150,
+        unit="g",
+        kcal=195,
+        protein_g=4,
+        carbs_g=42,
+        fat_g=0.4,
+        meta={"nutrition_basis": "usda_fooddata_central"},
+    )
+    chicken = PlanItem(
+        name="Cooked chicken breast",
+        qty=150,
+        unit="g",
+        kcal=250,
+        protein_g=46,
+        carbs_g=0,
+        fat_g=5.4,
+        meta={"nutrition_basis": "usda_fooddata_central"},
+    )
+    oil = PlanItem(
+        name="Olive oil",
+        qty=10,
+        unit="g",
+        kcal=90,
+        protein_g=0,
+        carbs_g=0,
+        fat_g=10,
+        meta={"nutrition_basis": "usda_fooddata_central"},
+    )
+    meal = PlanMeal(
+        meal_type="dinner",
+        title="Chicken rice bowl",
+        kcal=535,
+        protein_g=50,
+        carbs_g=42,
+        fat_g=15.8,
+        items=[rice, chicken, oil],
+    )
+    assert (
+        _update_meal(meal, {"kcal": 675, "protein_g": 50, "carbs_g": 77, "fat_g": 15.8}, heuristic=False) == "adjusted"
+    )
+    assert 70 <= meal.carbs_g <= 84
+    assert rice.qty > 150
+    assert meal.title == "Chicken rice bowl"
+    assert meal.kcal == round(sum(item.kcal for item in meal.items), 1)
+
+    unverified = PlanMeal(meal_type="dinner", title="Legacy pasta", kcal=500)
+    assert (
+        _update_meal(unverified, {"kcal": 640, "protein_g": 50, "carbs_g": 77, "fat_g": 15.8}, heuristic=False)
+        == "review"
+    )
+    assert unverified.kcal == 500

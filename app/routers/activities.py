@@ -1,15 +1,18 @@
 # app/routers/activities.py
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth_utils import get_current_user
 from app.db import get_db
 from app.models import Activity, User
+from app.services.training_replan import lock_training_changes, replan_training_changes
+from app.services.workout_reconciliation import activity_local_date
 
 router = APIRouter()
 
@@ -54,6 +57,7 @@ def _to_dict(a: Activity) -> dict[str, Any]:
         "distance_m": a.distance_m,
         "avg_hr": getattr(a, "avg_hr", None),
         "kcal": a.kcal,
+        "during_carbs_g": a.during_carbs_g,
         "created_at": _safe_iso(a.created_at),
     }
 
@@ -105,6 +109,30 @@ def list_activities(
         "total": total,
         "items": [_to_dict(a) for a in items],
     }
+
+
+class WorkoutFuelIn(BaseModel):
+    carbs_g: float | None = Field(ge=0, le=2000, allow_inf_nan=False)
+
+
+@router.put("/{activity_id}/fuel")
+def log_workout_fuel(
+    activity_id: int,
+    payload: WorkoutFuelIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    lock_training_changes(db, user)
+    activity = db.query(Activity).filter(Activity.user_id == user.id, Activity.id == activity_id).first()
+    if activity is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    activity_end = activity.start_time + timedelta(seconds=max(0, activity.duration_s or 0))
+    if activity_end > datetime.now(UTC).replace(tzinfo=None):
+        raise HTTPException(status_code=422, detail="Fuel can be logged for completed workouts")
+    with replan_training_changes(db, user, [activity_local_date(activity, user)]) as replan:
+        activity.during_carbs_g = payload.carbs_g
+    db.commit()
+    return {**_to_dict(activity), "meal_plan_update": replan}
 
 
 # Final URL: GET /activities/csv

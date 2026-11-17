@@ -27,6 +27,7 @@ from app.observability import record_security_event
 from app.rate_limit import AUTH_LIMITER, client_key
 from app.redirects import safe_return_path
 from app.services.strava_client import fetch_activity_calories as _fetch_detail_calories
+from app.services.training_replan import lock_training_changes, replan_training_changes
 
 # Router for OAuth endpoints (mounted at /oauth/strava)
 router = APIRouter(tags=["oauth/strava"])
@@ -838,18 +839,6 @@ def sync_strava(
             dt = datetime.utcnow() - timedelta(days=30 * months)
         after_ts = int(dt.replace(tzinfo=UTC).timestamp())
 
-    deleted = 0
-    if replace:
-        deleted = (
-            db.query(Activity)
-            .filter(
-                Activity.user_id == user.id,
-                Activity.source_provider == "strava",
-            )
-            .delete(synchronize_session=False)
-        )
-        db.commit()
-
     try:
         raw_items = _fetch_all_strava_activities(token, after_ts=after_ts)
     except HTTPException:
@@ -875,6 +864,7 @@ def sync_strava(
         except Exception:
             pass
 
+    mapped_items: dict[str, dict[str, Any]] = {}
     for act in raw_items:
         # 1) Map the feed item
         mapped = _map_strava_activity_basic(act)
@@ -897,43 +887,58 @@ def sync_strava(
                 weight_kg=weight_kg,
             )
 
-        # 4) Upsert into DB
-        existing: Activity | None = (
-            db.query(Activity)
-            .filter(
-                Activity.user_id == user.id,
-                Activity.source_provider == "strava",
-                Activity.source_id == mapped["source_id"],
-            )
-            .first()
-        )
+        mapped_items[mapped["source_id"]] = mapped
 
-        if existing:
-            # Back-fill provider if missing and update other fields
-            if not getattr(existing, "provider", None):
-                existing.provider = "strava"
-            existing.sport = mapped["sport"]
-            existing.start_time = mapped["start_time"]
-            existing.duration_s = mapped["duration_s"]
-            existing.kcal = mapped["kcal"]
-            existing.distance_m = mapped["distance_m"]
-            existing.created_at = existing.created_at or mapped["created_at"]
-            updated += 1
-        else:
-            row = Activity(
-                user_id=user.id,
-                provider="strava",  # ← REQUIRED (NOT NULL)
-                sport=mapped["sport"],
-                start_time=mapped["start_time"],
-                duration_s=mapped["duration_s"],
-                kcal=mapped["kcal"],
-                distance_m=mapped["distance_m"],
-                source_provider="strava",
-                source_id=mapped["source_id"],
-                created_at=mapped["created_at"],
+    deleted = 0
+    lock_training_changes(db, user)
+    with replan_training_changes(db, user) as replan:
+        if replace:
+            existing_rows = (
+                db.query(Activity).filter(Activity.user_id == user.id, Activity.source_provider == "strava").all()
             )
-            db.add(row)
-            created += 1
+            for row in existing_rows:
+                if row.source_id not in mapped_items:
+                    db.delete(row)
+                    deleted += 1
+
+        for mapped in mapped_items.values():
+            # 4) Upsert into DB
+            existing: Activity | None = (
+                db.query(Activity)
+                .filter(
+                    Activity.user_id == user.id,
+                    Activity.source_provider == "strava",
+                    Activity.source_id == mapped["source_id"],
+                )
+                .first()
+            )
+
+            if existing:
+                # Back-fill provider if missing and update other fields
+                if not getattr(existing, "provider", None):
+                    existing.provider = "strava"
+                existing.sport = mapped["sport"]
+                existing.start_time = mapped["start_time"]
+                existing.duration_s = mapped["duration_s"]
+                existing.kcal = mapped["kcal"]
+                existing.distance_m = mapped["distance_m"]
+                existing.created_at = existing.created_at or mapped["created_at"]
+                updated += 1
+            else:
+                row = Activity(
+                    user_id=user.id,
+                    provider="strava",  # ← REQUIRED (NOT NULL)
+                    sport=mapped["sport"],
+                    start_time=mapped["start_time"],
+                    duration_s=mapped["duration_s"],
+                    kcal=mapped["kcal"],
+                    distance_m=mapped["distance_m"],
+                    source_provider="strava",
+                    source_id=mapped["source_id"],
+                    created_at=mapped["created_at"],
+                )
+                db.add(row)
+                created += 1
 
     acct.updated_at = datetime.utcnow()
     db.add(acct)
@@ -947,4 +952,5 @@ def sync_strava(
         "created": created,
         "updated": updated,
         "detail_kcal_fetches": DETAIL_KCAL_FETCH_CAP - detail_budget,
+        "meal_plan_update": replan,
     }

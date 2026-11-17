@@ -146,18 +146,67 @@
 
   function updatePaging(){ if(elPage) elPage.textContent=String(page); const max=Math.max(1,Math.ceil(total/(pageSize||10))||1); if(elPrev) elPrev.disabled=page<=1; if(elNext) elNext.disabled=page>=max; }
 
-  function renderActivityTable(items){
+  function renderActivityTable(items, saveFuel){
     if(!elRows) return; elRows.innerHTML='';
     if(!Array.isArray(items)||items.length===0){
-      const tr=document.createElement('tr'); const td=document.createElement('td'); td.colSpan=5; td.textContent='No activities found.'; tr.appendChild(td); elRows.appendChild(tr); return;
+      const tr=document.createElement('tr'); const td=document.createElement('td'); td.colSpan=6; td.textContent='No activities found.'; tr.appendChild(td); elRows.appendChild(tr); return;
     }
     for(const a of items){
       const tr=document.createElement('tr');
       const d=(a.start_time||a.date||new Date()).toString().slice(0,10);
       const values=[d,normalizeSport(a),fmtMin(a.duration_s??a.duration_sec??a.elapsed_sec??null),a.kcal!=null?Math.round(a.kcal):'—',fmtKm(a.distance_m??a.distance??null)];
       values.forEach((value)=>{const td=document.createElement('td');td.textContent=String(value);tr.appendChild(td);});
+      const fuelCell = document.createElement('td');
+      const editor = document.createElement('details');
+      const toggle = document.createElement('summary');
+      const fuelLabel = (grams) => grams == null ? 'Log fuel' : `${grams} g carbs`;
+      toggle.textContent = fuelLabel(a.during_carbs_g);
+      const form = document.createElement('form');
+      const label = document.createElement('label');
+      label.textContent = 'Carbs consumed during workout (g)';
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.min = '0';
+      input.max = '2000';
+      input.step = 'any';
+      input.value = a.during_carbs_g ?? '';
+      input.placeholder = 'Leave blank to clear';
+      label.appendChild(input);
+      const save = document.createElement('button');
+      save.type = 'submit';
+      save.className = 'btn';
+      save.textContent = 'Save fuel';
+      const status = document.createElement('div');
+      status.setAttribute('role', 'status');
+      form.append(label, save);
+      editor.append(toggle, form);
+      fuelCell.append(editor, status);
+      tr.appendChild(fuelCell);
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        save.disabled = true;
+        status.textContent = '';
+        try {
+          const saved = await saveFuel(a.id, input.value === '' ? null : input.valueAsNumber);
+          toggle.textContent = fuelLabel(saved.during_carbs_g);
+          status.textContent = 'Fuel log saved.' + mealUpdateText(saved.meal_plan_update);
+          editor.open = false;
+          toggle.focus();
+        } catch (error) {
+          status.textContent = error.message || 'Could not save workout fuel.';
+        } finally {
+          save.disabled = false;
+        }
+      });
       elRows.appendChild(tr);
     }
+  }
+
+  function mealUpdateText(update) {
+    if (!update) return '';
+    const { adjusted_meals: adjusted, meals_to_review: review } = update;
+    const updated = adjusted ? ` ${adjusted} meal portion${adjusted === 1 ? '' : 's'} updated.` : '';
+    return updated + (review ? ` ${review} meal${review === 1 ? '' : 's'} to review in Plan.` : '');
   }
 
   // ---------- Robust donut (circle stroke-dasharray) ----------
@@ -323,7 +372,12 @@
         const data=await fetchJSON(`/activities?${qs}`);
         const items=Array.isArray(data)?data:(data.items||[]);
         total = typeof data.total==='number'?data.total:items.length;
-        renderActivityTable(items); updatePaging();
+        renderActivityTable(items, (id, carbs_g) => fetchJSON(`/activities/${encodeURIComponent(id)}/fuel`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ carbs_g }),
+        }));
+        updatePaging();
       }catch(e){ setErr(e?.message||'Failed to load activities.'); }
     }
 
@@ -400,11 +454,11 @@
         const updating=editingTrainingId!=null;
         if(trainingNotice) trainingNotice.textContent=updating?'Saving changes…':'Adding workout…';
         const endpoint=updating?`/v1/training-events/${encodeURIComponent(editingTrainingId)}`:'/v1/training-events';
-        await fetchJSON(endpoint,{method:updating?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        const saved = await fetchJSON(endpoint,{method:updating?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
         prepareManualTrainingForm();
         closeAddTraining();
         await Promise.all([loadTrainingEvents(),loadCoverage()]);
-        if(trainingNotice) trainingNotice.textContent=updating?'Workout updated.':'Workout added.';
+        if(trainingNotice) trainingNotice.textContent=(updating?'Workout updated.':'Workout added.') + mealUpdateText(saved.meal_plan_update);
       }catch(e){ if(trainingNotice) trainingNotice.textContent=e?.message||(editingTrainingId!=null?'Could not update workout.':'Could not add workout.'); }
     }
 
@@ -434,7 +488,7 @@
           });
         }
         if(confirm){
-          if(trainingCsvStatus) trainingCsvStatus.textContent=`Imported ${data.imported||0}, updated ${data.updated||0}, unchanged ${data.unchanged||0}. ${data.skipped_past||0} completed rows skipped.`;
+          if(trainingCsvStatus) trainingCsvStatus.textContent=`Imported ${data.imported||0}, updated ${data.updated||0}, unchanged ${data.unchanged||0}. ${data.skipped_past||0} completed rows skipped.` + mealUpdateText(data.meal_plan_update);
           if(trainingCsvImport) trainingCsvImport.hidden=true;
           await Promise.all([loadTrainingEvents(),loadCoverage()]);
         }else{
@@ -546,7 +600,7 @@
       try{
         const res=await fetchJSON(`/sync/strava?replace=${full?'true':'false'}`,{method:'POST'});
         const msg=(res && (res.created!=null || res.updated!=null)) ? `Sync complete — created ${res.created||0}, updated ${res.updated||0}` : 'Sync complete';
-        showStatus(msg,'ok'); await loadPage(); await loadSummary(); await refreshStravaBadge();
+        showStatus(msg + mealUpdateText(res?.meal_plan_update),'ok'); await loadPage(); await loadSummary(); await refreshStravaBadge();
       }catch(e){ showStatus(e?.message||'Sync failed','err'); }
       finally{ elSyncBtn&&(elSyncBtn.disabled=false); elFullSyncBtn&&(elFullSyncBtn.disabled=false); setTimeout(hideStatus,3500); }
     }
