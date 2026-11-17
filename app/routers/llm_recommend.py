@@ -3246,7 +3246,15 @@ def _apply_recipe_to_planmeal(pm: PlanMeal, rec: Recipe) -> None:
     prior_meta = {
         key: value
         for key, value in (pm.meta or {}).items()
-        if key not in {"prep_time_min", "cook_time_min", "total_time_min", "training_replan", "training_replan_target"}
+        if key
+        not in {
+            "prep_time_min",
+            "cook_time_min",
+            "total_time_min",
+            "training_replan",
+            "training_replan_target",
+            "training_carb_change",
+        }
     }
     pm.meta = {**prior_meta, **timing}
     # Set macros if present
