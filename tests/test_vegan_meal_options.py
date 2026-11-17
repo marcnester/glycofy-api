@@ -1,5 +1,5 @@
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -35,7 +35,8 @@ def test_weekly_planner_saves_all_verified_restricted_meals(monkeypatch, diet, e
     monkeypatch.setattr(llm_recommend, "_parallel_week_recommendations", unexpected_generation)
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
-    week = date(2026, 11, 16)
+    today = datetime.now(UTC).date()
+    week = today + timedelta(days=7 - today.weekday())
     slots = ("breakfast", "lunch", "dinner", "snack", "snack_2")
 
     with Session(engine) as db:
