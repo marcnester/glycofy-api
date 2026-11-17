@@ -25,7 +25,13 @@ from app.models import GroceryApproval, GroceryPreference, Plan, PlanItem, PlanM
 from app.routers.plan_models import EnergyTarget, UserPreference
 from app.services.instacart import InstacartError, create_products_link
 from app.services.purchase_ingredients import purchase_ingredient
-from app.services.training_nutrition import athlete_profile_baseline, calculate_training_nutrition
+from app.services.training_nutrition import (
+    MACROS,
+    allocate_meal_targets,
+    athlete_profile_baseline,
+    calculate_heuristic_nutrition,
+    calculate_training_nutrition,
+)
 
 router = APIRouter()
 
@@ -319,6 +325,25 @@ def _plan_to_dict(plan: Plan, preference: UserPreference | None = None) -> dict[
 _HEURISTIC_INGREDIENT_NAMES = {"protein (lean)", "complex carbs", "fats (healthy)"}
 
 
+def _plan_with_training(
+    db: Session, user: User, plan: Plan, preference: UserPreference | None = None
+) -> dict[str, Any]:
+    day = plan.date
+    data = _plan_to_dict(plan, preference)
+    nutrition = calculate_training_nutrition(
+        db=db, user=user, plan_date=day, baseline=athlete_profile_baseline(user, day)
+    )
+    data["workout_fuel"] = {
+        "carbs_g": nutrition.training.during_carbs_g,
+        "kcal": round(nutrition.training.during_carbs_g * 4, 1),
+    }
+    data["cross_day_fueling"] = {
+        "dinner_carbs_g": nutrition.dinner_carbs_g,
+        "breakfast_carbs_g": nutrition.breakfast_carbs_g,
+    }
+    return data
+
+
 def _display_ingredients_for_meal(meal: PlanMeal) -> list[Any]:
     """Use linked recipe ingredients for plans created before AI item persistence was fixed."""
     items = list(getattr(meal, "items", []) or [])
@@ -562,27 +587,8 @@ class ApplyRecommendationsIn(BaseModel):
 
 
 def _seed_plan_heuristic(db: Session, user: User, day: date_cls) -> dict[str, Any]:
-    target: EnergyTarget | None = (
-        db.query(EnergyTarget).filter(EnergyTarget.user_id == user.id, EnergyTarget.date == day).first()
-    )
-    if target and (target.target_kcal or target.tdee_kcal):
-        kcal = float(target.target_kcal or target.tdee_kcal)
-        # Legacy explicit energy targets do not include a complete macro
-        # prescription, so retain the historical athlete-oriented split.
-        p = max(100.0, round(kcal * 0.30 / 4))
-        c = round(kcal * 0.45 / 4)
-        f = round(kcal * 0.25 / 9)
-    else:
-        nutrition = calculate_training_nutrition(
-            db=db,
-            user=user,
-            plan_date=day,
-            baseline=athlete_profile_baseline(user, day),
-        )
-        kcal = nutrition.final.kcal
-        p = nutrition.final.protein_g
-        c = nutrition.final.carbs_g
-        f = nutrition.final.fat_g
+    nutrition = calculate_heuristic_nutrition(db=db, user=user, plan_date=day)
+    totals = {key: getattr(nutrition.meal_targets, key) for key in MACROS}
 
     splits = {
         "breakfast": 0.25,
@@ -591,13 +597,11 @@ def _seed_plan_heuristic(db: Session, user: User, day: date_cls) -> dict[str, An
         "snack": 0.15,
     }
 
+    weights = {slot: dict.fromkeys(MACROS, fraction) for slot, fraction in splits.items()}
+    allocated = allocate_meal_targets(nutrition, weights)
     meals: list[dict[str, Any]] = []
-    for mt in ["breakfast", "lunch", "dinner", "snack"]:
-        frac = splits[mt]
-        mkcal = round(kcal * frac)
-        mp = round(p * frac)
-        mc = round(c * frac)
-        mf = round(f * frac)
+    for mt, macros in allocated.items():
+        mkcal, mp, mc, mf = (round(macros[key]) for key in MACROS)
         meals.append(
             {
                 "meal_type": mt,
@@ -618,7 +622,7 @@ def _seed_plan_heuristic(db: Session, user: User, day: date_cls) -> dict[str, An
         )
 
     return {
-        "totals": {"kcal": kcal, "protein_g": p, "carbs_g": c, "fat_g": f},
+        "totals": totals,
         "meals": meals,
         "source": "heuristic",
     }
@@ -781,7 +785,7 @@ async def get_plan(
     plan = db.query(Plan).filter(Plan.user_id == user.id, Plan.date == day).first()
     if plan:
         preference = db.query(UserPreference).filter(UserPreference.user_id == user.id).first()
-        return _plan_to_dict(plan, preference)
+        return _plan_with_training(db, user, plan, preference)
 
     if not create_if_missing:
         raise HTTPException(status_code=404, detail="Plan not found")
@@ -850,7 +854,7 @@ async def get_plan(
 
     db.commit()
     db.refresh(new_plan)
-    return _plan_to_dict(new_plan)
+    return _plan_with_training(db, user, new_plan)
 
 
 @router.post("/{date}", response_model=dict[str, Any])
@@ -868,10 +872,12 @@ async def create_or_replace_plan(
     day = _parse_iso_date(date)
 
     if replace:
-        existing = db.query(Plan).filter(Plan.user_id == user.id, Plan.date == day).first()
+        existing = db.query(Plan).filter(Plan.user_id == user.id, Plan.date == day).with_for_update().first()
         if existing:
+            if existing.locked:
+                raise HTTPException(status_code=409, detail="Plan is locked")
             db.delete(existing)
-            db.commit()
+            db.flush()
 
     if payload.meals:
         seed = {
@@ -1235,6 +1241,13 @@ def apply_recommendations(
             db.add(meal)
             db.flush()
             meals_by_slot[slot] = meal
+
+        if it.recipe_id is not None or it.pick_id is not None or it.ai_idea is not None or it.new_recipe is not None:
+            meal.meta = {
+                key: value
+                for key, value in (meal.meta or {}).items()
+                if key not in {"training_replan", "training_replan_target"}
+            }
 
         # Determine effective recipe id (recipe_id or pick_id)
         effective_recipe_id: int | None = None

@@ -179,3 +179,33 @@ def test_scheduled_sync_preserves_and_recovers_strength_calories(monkeypatch):
 
         assert fetched == ["6"]
         assert {row.source_id: row.kcal for row in db.query(Activity).all()} == {"9": 716, "6": 310}
+
+
+def test_full_strava_sync_preserves_logged_workout_fuel(monkeypatch):
+    with _db() as db:
+        started = datetime.utcnow() - timedelta(hours=3)
+        user = _linked_user(db, updated_at=started)
+        _activity(db, user, started)
+        logged = db.query(Activity).one()
+        logged.during_carbs_g = 80
+        activity_id = logged.id
+        db.commit()
+        monkeypatch.setattr(oauth_strava, "_configured", lambda: True)
+
+        def incoming(*_args, **_kwargs):
+            return [
+                {
+                    "id": "activity-1",
+                    "type": "Ride",
+                    "start_date": started.isoformat() + "Z",
+                    "elapsed_time": 4200,
+                    "calories": 600,
+                }
+            ]
+
+        monkeypatch.setattr(oauth_strava, "_fetch_all_strava_activities", incoming)
+        oauth_strava.sync_strava(replace=True, months=6, db=db, user=user)
+        activity = db.query(Activity).one()
+        assert activity.id == activity_id
+        assert activity.duration_s == 4200
+        assert activity.during_carbs_g == 80

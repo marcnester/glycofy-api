@@ -6,6 +6,7 @@ import io
 import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
@@ -15,7 +16,12 @@ from app.config import settings
 from app.db import get_db
 from app.models import Activity, PlannedWorkout, User
 from app.routers.auth import get_current_user
-from app.services.workout_reconciliation import reconcile_planned_workouts, reconciliation_activity_window
+from app.services.training_replan import lock_training_changes, replan_training_changes
+from app.services.workout_reconciliation import (
+    reconcile_planned_workouts,
+    reconciliation_activity_window,
+    user_timezone,
+)
 
 router = APIRouter(prefix="/v1/training-events", tags=["training-events"])
 _CSV_MAX_BYTES = 1_000_000
@@ -71,11 +77,12 @@ def _event_dict(event: PlannedWorkout) -> dict:
     }
 
 
-def _normalized_fields(payload: TrainingEventCreate | TrainingEventUpdate) -> dict:
+def _normalized_fields(payload: TrainingEventCreate | TrainingEventUpdate, user: User) -> dict:
     fields = payload.model_dump(exclude_unset=True)
     start_time = fields.get("start_time")
-    if start_time and start_time.tzinfo:
-        fields["start_time"] = start_time.astimezone(UTC).replace(tzinfo=None)
+    if start_time:
+        localized = start_time if start_time.tzinfo else start_time.replace(tzinfo=user_timezone(user))
+        fields["start_time"] = localized.astimezone(UTC).replace(tzinfo=None)
     return fields
 
 
@@ -136,24 +143,28 @@ def _csv_intensity(row: dict[str, str], title: str) -> str:
         return "moderate"
 
 
-def _csv_start_time(row: dict[str, str], workout_date: date) -> datetime | None:
+def _csv_start_time(row: dict[str, str], workout_date: date, timezone: ZoneInfo) -> datetime | None:
     raw = _first(row, "StartTimePlanned", "PlannedStartTime", "StartTime", "ScheduledTime")
     if not raw:
         return None
     try:
         parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        return parsed.astimezone(UTC).replace(tzinfo=None) if parsed.tzinfo else parsed
+        localized = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone)
+        return localized.astimezone(UTC).replace(tzinfo=None)
     except ValueError:
         for fmt in ("%H:%M", "%I:%M %p", "%I:%M%p"):
             try:
                 parsed_time = datetime.strptime(raw, fmt).time()
-                return datetime.combine(workout_date, parsed_time)
+                localized = datetime.combine(workout_date, parsed_time, timezone)
+                return localized.astimezone(UTC).replace(tzinfo=None)
             except ValueError:
                 continue
     return None
 
 
-def _parse_trainingpeaks_csv(contents: bytes, today: date | None = None) -> tuple[list[dict], list[str], int]:
+def _parse_trainingpeaks_csv(
+    contents: bytes, today: date | None = None, timezone: ZoneInfo = ZoneInfo("UTC")
+) -> tuple[list[dict], list[str], int]:
     if len(contents) > _CSV_MAX_BYTES:
         raise HTTPException(status_code=413, detail="CSV must be 1 MB or smaller")
     try:
@@ -166,7 +177,7 @@ def _parse_trainingpeaks_csv(contents: bytes, today: date | None = None) -> tupl
     rows: list[dict] = []
     errors: list[str] = []
     skipped_past = 0
-    current_day = today or datetime.now(UTC).date()
+    current_day = today or datetime.now(timezone).date()
     for line_number, row in enumerate(reader, start=2):
         try:
             workout_date = _csv_date(_first(row, "WorkoutDay", "WorkoutDate", "PlannedDate", "Date"))
@@ -196,7 +207,7 @@ def _parse_trainingpeaks_csv(contents: bytes, today: date | None = None) -> tupl
             rows.append(
                 {
                     "workout_date": workout_date,
-                    "start_time": _csv_start_time(row, workout_date),
+                    "start_time": _csv_start_time(row, workout_date, timezone),
                     "sport": sport,
                     "duration_min": duration_min,
                     "intensity": intensity,
@@ -253,15 +264,17 @@ def create_training_event(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    lock_training_changes(db, user)
     event = PlannedWorkout(
         user_id=user.id,
         source="manual",
-        **_normalized_fields(payload),
+        **_normalized_fields(payload, user),
     )
-    db.add(event)
+    with replan_training_changes(db, user, [event.workout_date]) as replan:
+        db.add(event)
     db.commit()
     db.refresh(event)
-    return _event_dict(event)
+    return {**_event_dict(event), "meal_plan_update": replan}
 
 
 @router.get("/context/{plan_date}")
@@ -312,8 +325,10 @@ def training_context(
         state = "complete"
         title = "Training-aware meal planning is ready"
         message = (
-            f"Glycofy can use {recent} recent completed workout{'s' if recent != 1 else ''} for recovery and "
-            f"{planned} upcoming workout{'s' if planned != 1 else ''} for fueling over this period."
+            f"{recent} completed workout{'s' if recent != 1 else ''} in the last three days and "
+            f"{planned} scheduled workout{'s' if planned != 1 else ''} in this period "
+            "without a matching completed activity. "
+            "Glycofy calculates recovery and fueling for each plan day."
         )
     elif recent:
         state = "missing_future"
@@ -378,32 +393,36 @@ async def import_trainingpeaks_csv(
     if not confirm:
         return result
 
+    lock_training_changes(db, user)
     imported = updated = unchanged = 0
-    for external_id, fields in unique_rows.items():
-        event = (
-            db.query(PlannedWorkout)
-            .filter(
-                PlannedWorkout.user_id == user.id,
-                PlannedWorkout.source == "trainingpeaks_csv",
-                PlannedWorkout.external_id == external_id,
-            )
-            .first()
+    existing_events = (
+        db.query(PlannedWorkout)
+        .filter(
+            PlannedWorkout.user_id == user.id,
+            PlannedWorkout.source == "trainingpeaks_csv",
+            PlannedWorkout.external_id.in_(unique_rows),
         )
-        if event is None:
-            db.add(PlannedWorkout(user_id=user.id, **fields))
-            imported += 1
-            continue
-        changed = False
-        for field, value in fields.items():
-            if getattr(event, field) != value:
+        .all()
+    )
+    by_external_id = {event.external_id: event for event in existing_events}
+    affected_dates = {fields["workout_date"] for fields in unique_rows.values()}
+    affected_dates.update(event.workout_date for event in existing_events)
+    with replan_training_changes(db, user, affected_dates) as replan:
+        for external_id, fields in unique_rows.items():
+            event = by_external_id.get(external_id)
+            if event is None:
+                db.add(PlannedWorkout(user_id=user.id, **fields))
+                imported += 1
+                continue
+            changed = {field: value for field, value in fields.items() if getattr(event, field) != value}
+            for field, value in changed.items():
                 setattr(event, field, value)
-                changed = True
-        if changed:
-            updated += 1
-        else:
-            unchanged += 1
+            if changed:
+                updated += 1
+            else:
+                unchanged += 1
     db.commit()
-    return {**result, "imported": imported, "updated": updated, "unchanged": unchanged}
+    return {**result, "imported": imported, "updated": updated, "unchanged": unchanged, "meal_plan_update": replan}
 
 
 def _owned_event(db: Session, user_id: int, event_id: int) -> PlannedWorkout:
@@ -420,14 +439,27 @@ def update_training_event(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    lock_training_changes(db, user)
     event = _owned_event(db, user.id, event_id)
     if event.source != "manual":
         raise HTTPException(status_code=409, detail="Only manually entered workouts can be edited")
-    for field, value in _normalized_fields(payload).items():
-        setattr(event, field, value)
+    fields = _normalized_fields(payload, user)
+    required_fields = {"workout_date", "sport", "duration_min", "intensity", "priority"}
+    if any(fields.get(field, True) is None for field in required_fields):
+        raise HTTPException(
+            status_code=422, detail="Workout date, sport, duration, intensity, and priority are required"
+        )
+    new_date = fields.get("workout_date", event.workout_date)
+    if new_date != event.workout_date and event.start_time is not None and "start_time" not in fields:
+        local_start = event.start_time.replace(tzinfo=UTC).astimezone(user_timezone(user))
+        new_start = datetime.combine(new_date, local_start.timetz())
+        fields["start_time"] = new_start.astimezone(UTC).replace(tzinfo=None)
+    with replan_training_changes(db, user, [event.workout_date, new_date]) as replan:
+        for field, value in fields.items():
+            setattr(event, field, value)
     db.commit()
     db.refresh(event)
-    return _event_dict(event)
+    return {**_event_dict(event), "meal_plan_update": replan}
 
 
 @router.delete("/{event_id}", status_code=204)
@@ -436,9 +468,11 @@ def delete_training_event(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    lock_training_changes(db, user)
     event = _owned_event(db, user.id, event_id)
     if event.source not in {"manual", "trainingpeaks_csv"}:
         raise HTTPException(status_code=409, detail="Imported training events must be changed at their source")
-    db.delete(event)
+    with replan_training_changes(db, user, [event.workout_date]):
+        db.delete(event)
     db.commit()
     return Response(status_code=204)

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Activity, OAuthAccount, User
 from app.services.strava_client import STRAVA_API_BASE, fetch_activity_calories, refresh_access_token
+from app.services.training_replan import lock_training_changes, replan_training_changes
 
 
 def _now_epoch() -> int:
@@ -139,8 +140,6 @@ def _upsert_activity(
             **fields,
         )
         db.add(act)
-        db.commit()
-        db.refresh(act)
         return True, False, act
 
     updated = False
@@ -150,8 +149,6 @@ def _upsert_activity(
             updated = True
     if updated:
         db.add(act)
-        db.commit()
-        db.refresh(act)
     return False, updated, act
 
 
@@ -204,6 +201,7 @@ def sync_strava(
         if not items:
             break
 
+        incoming = []
         for it in items:
             if not it.get("id"):
                 skipped += 1
@@ -232,7 +230,11 @@ def sync_strava(
                 kcal=kcal if kcal and kcal > 0 else None,
                 calories=it.get("calories") if isinstance(it.get("calories"), (int, float)) else None,
             )
-            try:
+            incoming.append((source_id, sport, payload))
+
+        lock_training_changes(db, user)
+        with replan_training_changes(db, user):
+            for source_id, sport, payload in incoming:
                 c, u, _ = _upsert_activity(
                     db,
                     user.id,
@@ -247,9 +249,7 @@ def sync_strava(
                     updated += 1
                 else:
                     skipped += 1
-            except Exception:
-                db.rollback()
-                raise
+        db.commit()
 
         if len(items) < per_page:
             break

@@ -42,7 +42,7 @@ def sport_family(value: str | None) -> str:
     return _SPORT_FAMILIES.get(normalized, normalized)
 
 
-def _user_timezone(user: User) -> ZoneInfo:
+def user_timezone(user: User) -> ZoneInfo:
     try:
         return ZoneInfo(str(user.timezone or "UTC"))
     except ZoneInfoNotFoundError:
@@ -53,7 +53,7 @@ def activity_local_date(activity: Activity, user: User) -> date:
     started = activity.start_time
     if started.tzinfo is None:
         started = started.replace(tzinfo=UTC)
-    return started.astimezone(_user_timezone(user)).date()
+    return started.astimezone(user_timezone(user)).date()
 
 
 def _duration_minutes(activity: Activity) -> float:

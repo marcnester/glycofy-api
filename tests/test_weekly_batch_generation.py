@@ -203,7 +203,9 @@ def test_preferred_snacks_split_existing_daily_targets_without_adding_calories()
 
 def test_training_targets_replace_prior_plan_totals_instead_of_ratcheting_them():
     final = llm_recommend.MacroTargets(kcal=3120, protein_g=163, carbs_g=454, fat_g=73)
-    nutrition = SimpleNamespace(final=final)
+    from app.services.training_nutrition import calculate_from_activities
+
+    nutrition = calculate_from_activities(baseline=final, user=SimpleNamespace(), activities=[])
 
     def allocated(prior_kcal: float):
         meals = [

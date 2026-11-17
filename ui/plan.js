@@ -1035,15 +1035,8 @@
 
   async function runAIForDate(d, updateUI) {
     const iso = isoDate(d);
-    // Always ensure plan & unlock for that day
-    try {
-      await ensurePlan(iso);
-      await lockToggleAPI(iso, false);
-    } catch (e) {
-      console.warn('runAIForDate: ensure/lock failed', iso, e);
-    }
-
     const plan = await ensurePlan(iso);
+    if (plan?.locked) throw new Error('Unlock this day to update its meals.');
     const rec = await llmRecommendAll(iso, plan);
     const itemsArr = normalizeItemsArray(rec);
     const applicableSlots = new Set(
@@ -1075,7 +1068,7 @@
 
     const applied = await applyRecommendationsRobust(iso, itemsArr);
     if (updateUI) {
-      CURRENT_PLAN = applied;
+      CURRENT_PLAN = await loadPlan(iso) || applied;
       renderPlan(CURRENT_PLAN);
     }
   }
@@ -1382,6 +1375,32 @@
     if (dlCsv) dlCsv.href = `/v1/plan/${d}/grocery.csv`;
     if (groceryListLink) groceryListLink.href = `/ui/grocery.html?start=${encodeURIComponent(d)}`;
 
+    const fuelSummary = $('workout-fuel-summary');
+    const mealUpdate = $('training-meal-update');
+    if (fuelSummary) {
+      const fuel = plan?.workout_fuel;
+      fuelSummary.hidden = !(fuel?.carbs_g > 0);
+      fuelSummary.textContent = fuel?.carbs_g > 0
+        ? `Workout fuel logged separately from meals · ${fmt(fuel.carbs_g)} g carbs · ${fmt(fuel.kcal)} kcal`
+        : '';
+    }
+    if (mealUpdate) {
+      const reviews = (plan?.meals || []).filter(meal => meal.meta?.training_replan === 'review');
+      const adjusted = (plan?.meals || []).some(meal => meal.meta?.training_replan === 'adjusted');
+      const crossDay = plan?.locked ? null : plan?.cross_day_fueling;
+      const timing = [
+        crossDay?.dinner_carbs_g > 0 ? 'Carb focus at dinner for an early workout tomorrow.' : '',
+        crossDay?.breakfast_carbs_g > 0 ? 'Carb focus at breakfast for recovery from late training.' : '',
+      ];
+      const reviewAction = plan?.locked ? 'Unlock this day to refresh its meals.' : 'Use Plan Today to refresh the day.';
+      const status = [
+        ...timing,
+        adjusted ? 'Meal portions adjusted after a training update.' : '',
+        reviews.length ? `Review ${reviews.map(meal => meal.title || meal.meal_type).join(', ')} after the training change. ${reviewAction}` : '',
+      ].filter(Boolean);
+      mealUpdate.hidden = !status.length;
+      mealUpdate.textContent = status.join(' ');
+    }
     if (renderUnplannedState(plan, d)) return;
 
     renderTotals(plan);
@@ -1442,7 +1461,7 @@
       setDate(d);
       const next = !(CURRENT_PLAN?.locked);
       const plan = await lockToggleAPI(d, next);
-      renderPlan(plan);
+      renderPlan(await loadPlan(d) || plan);
       flash(next ? 'Plan locked.' : 'Plan unlocked.');
     });
   }
@@ -1505,19 +1524,18 @@
         `Planning your week with AI (${prettyStart} – ${prettyEnd})…`
       );
       try {
-        // 1) Ensure each day's plan exists, unlock it, and build weekly payload
+        // 1) Prepare unlocked days for weekly planning
         if (busyMsg) {
           busyMsg.textContent = `Preparing your AI week plan (${prettyStart} – ${prettyEnd})…`;
         }
         // Prepare all seven days concurrently. Previously this made up to 21
-        // serial API requests (ensure, unlock, ensure again) before AI work
-        // even began. Reuse the loaded plan and unlock only when necessary.
+        // serial API requests before AI work began.
         const preparedDays = await Promise.all(
           days.map(async (d) => {
             const iso = isoDate(d);
             try {
-              let plan = await ensurePlan(iso);
-              if (plan?.locked) plan = await lockToggleAPI(iso, false);
+              const plan = await ensurePlan(iso);
+              if (plan?.locked) return null;
               const meals = buildMealTargetsFromPlan(plan);
               if (!meals.length) return null;
               return { date: iso, totals: plan?.totals || null, meals };
@@ -1530,7 +1548,7 @@
         const weeklyDaysPayload = preparedDays.filter(Boolean);
 
         if (!weeklyDaysPayload.length) {
-          throw new Error('No meals found to plan for the week.');
+          throw new Error('There are no unlocked days with meals to plan this week.');
         }
 
         // 2) Start a resumable background job and poll lightweight status.
@@ -1693,6 +1711,10 @@
       }
 
       if (isSwap) {
+        if (CURRENT_PLAN?.locked) {
+          flash('Unlock this day to swap a meal.', 'error');
+          return;
+        }
         const d = getCurrentDate();
         setDate(d);
         const meal = (CURRENT_PLAN?.meals || []).find(
@@ -1707,7 +1729,6 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ signal: 'swap' }),
           }).catch((error) => console.warn('Could not record swap preference', error));
-          if (CURRENT_PLAN?.locked) await lockToggleAPI(d, false);
           await ensurePlan(d);
           const rec = await llmRecommendOne(d, meal);
 
@@ -1733,7 +1754,7 @@
           extractFreeformForSlot(normSlot, item);
 
           const applied = await applyRecommendationsRobust(d, [item]);
-          CURRENT_PLAN = applied;
+          CURRENT_PLAN = await loadPlan(d) || applied;
           renderPlan(CURRENT_PLAN);
           flash(`Swapped ${normSlot} with AI suggestion.`);
         } catch (err) {

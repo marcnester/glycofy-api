@@ -5,7 +5,7 @@ from app.models import PlanMeal, Recipe
 from app.routers import plans
 from app.routers.llm_recommend import _apply_recipe_to_planmeal, _recipe_has_complete_cooking_guidance
 from app.routers.plans import AIIdeaPayload, LLMNewRecipe, _apply_ai_idea_to_meal, _apply_recipe_to_meal
-from app.services.training_nutrition import MacroTargets
+from app.services.training_nutrition import MacroTargets, calculate_from_activities
 
 
 def test_ai_cooking_steps_take_priority_over_description_and_persist_time():
@@ -173,22 +173,13 @@ def test_catalog_recipe_rejects_undersized_legacy_main_protein():
 
 
 def test_empty_plan_estimate_uses_same_profile_training_target_as_ai(monkeypatch):
-    class QueryStub:
-        def filter(self, *_args):
-            return self
-
-        def first(self):
-            return None
-
     expected = MacroTargets(kcal=2587.0, protein_g=163.0, carbs_g=320.0, fat_g=73.0)
     monkeypatch.setattr(
         plans,
-        "calculate_training_nutrition",
-        lambda **_kwargs: SimpleNamespace(final=expected),
+        "calculate_heuristic_nutrition",
+        lambda **kwargs: calculate_from_activities(baseline=expected, user=kwargs["user"], activities=[]),
     )
-    db = SimpleNamespace(query=lambda *_args: QueryStub())
-
-    seed = plans._seed_plan_heuristic(db, SimpleNamespace(id=1), date(2026, 10, 19))
+    seed = plans._seed_plan_heuristic(SimpleNamespace(), SimpleNamespace(id=1), date(2026, 10, 19))
 
     assert seed["totals"] == {
         "kcal": expected.kcal,

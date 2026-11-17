@@ -16,6 +16,7 @@ from app.config import settings
 from app.db import get_db
 from app.deps import get_current_user  # <- FIX: import from app.deps
 from app.models import Activity, OAuthAccount, User
+from app.services.training_replan import lock_training_changes, replan_training_changes
 
 router = APIRouter()
 
@@ -228,15 +229,17 @@ def strava_sync(
 
     # Upsert
     created = updated = skipped = 0
-    for s in items:
-        fields = _map_strava_to_activity_fields(s)
-        status_str, _obj = _upsert_activity(db, user.id, fields)
-        if status_str == "created":
-            created += 1
-        elif status_str == "updated":
-            updated += 1
-        else:
-            skipped += 1
+    lock_training_changes(db, user)
+    with replan_training_changes(db, user) as replan:
+        for s in items:
+            fields = _map_strava_to_activity_fields(s)
+            status_str, _obj = _upsert_activity(db, user.id, fields)
+            if status_str == "created":
+                created += 1
+            elif status_str == "updated":
+                updated += 1
+            else:
+                skipped += 1
     db.commit()
 
     return {
@@ -245,6 +248,7 @@ def strava_sync(
         "created": created,
         "updated": updated,
         "skipped": skipped,
+        "meal_plan_update": replan,
     }
 
 

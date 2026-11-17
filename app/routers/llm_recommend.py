@@ -50,6 +50,7 @@ from app.services.meal_quality import (
 from app.services.training_nutrition import (
     MacroTargets,
     TrainingNutritionResult,
+    allocate_meal_targets,
     athlete_profile_baseline,
     calculate_training_nutrition,
 )
@@ -344,31 +345,9 @@ def _apply_nutrition_targets(
     meals: list[MealTarget],
     nutrition: TrainingNutritionResult,
 ) -> list[MealTarget]:
-    final = nutrition.final
-    # Incoming meal values describe only how the day should be distributed.
-    # They may come from an older generated plan and therefore must never be
-    # treated as the athlete's current baseline. Allocate the stable absolute
-    # profile/training target across the requested slots by their proportions;
-    # otherwise repeated planning can ratchet a high day upward or preserve an
-    # under-fueled day indefinitely.
-    totals = {name: sum(max(0.0, _safe_float(getattr(meal, name, 0.0))) for meal in meals) for name in _MACROS}
-    return [
-        MealTarget(
-            slot=meal.slot,
-            **{
-                name: (
-                    max(
-                        0.0,
-                        _safe_float(getattr(final, name, 0.0)) * _safe_float(getattr(meal, name, 0.0)) / totals[name],
-                    )
-                    if totals[name] > 0
-                    else 0.0
-                )
-                for name in _MACROS
-            },
-        )
-        for meal in meals
-    ]
+    weights = {meal.slot: {key: _safe_float(getattr(meal, key)) for key in _MACROS} for meal in meals}
+    allocated = allocate_meal_targets(nutrition, weights)
+    return [MealTarget(slot=meal.slot, **allocated[meal.slot]) for meal in meals]
 
 
 def _score_recipe_vs_target(rec: Recipe, tgt: MealTarget) -> tuple[float, dict[str, float]]:
@@ -3178,7 +3157,9 @@ def _coerce_ai_instructions_to_text(steps: Any) -> str:
 
 
 def _get_or_create_plan(db: Session, user_id: int, day: date) -> Plan:
-    plan = db.query(Plan).filter(Plan.user_id == user_id, Plan.date == day).first()
+    plan = (
+        db.query(Plan).filter(Plan.user_id == user_id, Plan.date == day).populate_existing().with_for_update().first()
+    )
     if plan:
         return plan
     plan = Plan(user_id=user_id, date=day, locked=False, source="heuristic")
@@ -3265,7 +3246,7 @@ def _apply_recipe_to_planmeal(pm: PlanMeal, rec: Recipe) -> None:
     prior_meta = {
         key: value
         for key, value in (pm.meta or {}).items()
-        if key not in {"prep_time_min", "cook_time_min", "total_time_min"}
+        if key not in {"prep_time_min", "cook_time_min", "total_time_min", "training_replan", "training_replan_target"}
     }
     pm.meta = {**prior_meta, **timing}
     # Set macros if present
@@ -4314,13 +4295,16 @@ def _batch_week_recommendations(
         "target. Do not overshoot protein to reach calories or carbohydrate; use a carbohydrate or fat source that matches "
         "the remaining target instead. A day's training object can describe upcoming training. On those days, favor "
         "digestible carbohydrate before the workout and carbohydrate plus protein afterward, using next_workout_at "
-        "for timing. Each snack has a preferred_time: create a distinct, practical snack for that eating occasion, "
+        "for timing. If next_morning_workouts is positive, favor digestible carbs at dinner. If prior_evening_workouts "
+        "is positive, favor carbs at breakfast. During-workout carbs are already accounted for in each meal target. "
+        "Each snack has a preferred_time: create a distinct, practical snack for that eating occasion, "
         "describe its timing purpose in the reason, and never merge multiple snack slots. Mention the workout in "
         "the reason without making medical claims. Never repeat a meal title "
         "during the week. Within each day, do not "
         "repeat a protein_item or carb_item across breakfast, lunch, and dinner. Across adjacent days, vary main "
         "proteins. Use no protein_group more than twice for the same slot during the week when alternatives exist. "
         "Every food, seasoning, oil, and sauce named in the instructions must also appear as a measured ingredient. "
+        "Keep ingredient amounts in the ingredient list so quantities can be adjusted independently of the directions. "
         "Every meal needs realistic prep_time_min, cook_time_min, and total_time_min values. Total time must include "
         "required chilling, soaking, marinating, and resting; never label overnight food as ready in minutes. Use cook_time_min=0 "
         "for assembly-only food and do not inflate simple meals (a wrap is usually 5–7 minutes total). Total time "

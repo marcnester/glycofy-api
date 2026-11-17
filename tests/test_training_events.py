@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -18,6 +20,13 @@ def _client():
 
     app.dependency_overrides[get_db] = override_db
     return TestClient(app)
+
+
+@contextmanager
+def _test_db():
+    override = app.dependency_overrides[get_db]
+    with contextmanager(override)() as db:
+        yield db
 
 
 def test_manual_training_event_crud_is_owner_scoped():
@@ -225,4 +234,100 @@ def test_manual_duration_accepts_exact_minutes_and_short_sessions():
             assert changed.json()["duration_min"] == minutes
         for minutes in (0, -1, 1441, 36.5):
             assert client.patch(f"/v1/training-events/{event_id}", json={"duration_min": minutes}).status_code == 422
+    app.dependency_overrides.clear()
+
+
+def test_moving_early_workout_updates_only_affected_unlocked_meals():
+    from datetime import UTC, date, datetime, time, timedelta
+    from zoneinfo import ZoneInfo
+
+    from app.models import User
+
+    with _client() as client:
+        client.post("/auth/signup", json={"email": "cross-day@example.com", "password": "a-secure-password-123"})
+        with _test_db() as db:
+            user = db.query(User).filter(User.email == "cross-day@example.com").one()
+            user.weight_kg = 70
+            user.timezone = "America/Los_Angeles"
+            db.commit()
+
+        tz = ZoneInfo("America/Los_Angeles")
+        first = datetime.now(tz).date() + timedelta(days=3)
+        days = [first + timedelta(days=offset) for offset in range(5)]
+
+        def get_plan(day: date, *, create: bool = False) -> dict:
+            response = client.get(f"/v1/plan/{day}?create_if_missing={str(create).lower()}")
+            assert response.status_code == 200
+            return response.json()
+
+        before = {day: get_plan(day, create=True) for day in days}
+        client.post(f"/v1/plan/{days[3]}/lock")
+        locked = get_plan(days[3])
+        started = datetime.combine(days[1], time(7), tz).astimezone(UTC)
+        created = client.post(
+            "/v1/training-events",
+            json={
+                "workout_date": days[1].isoformat(),
+                "start_time": started.isoformat(),
+                "sport": "Ride",
+                "intensity": "hard",
+                "duration_min": 120,
+            },
+        )
+        assert created.status_code == 201
+        after = get_plan(days[0])
+        changes = [
+            meal["meal_type"]
+            for meal, original in zip(after["meals"], before[days[0]]["meals"], strict=True)
+            if meal["carbs_g"] != original["carbs_g"]
+        ]
+        assert changes == ["dinner"]
+
+        moved = client.patch(f'/v1/training-events/{created.json()["id"]}', json={"workout_date": days[3].isoformat()})
+        assert moved.status_code == 200
+        moved_start = datetime.fromisoformat(moved.json()["start_time"])
+        assert moved_start.astimezone(tz).hour == 7
+        assert get_plan(days[0])["totals"] == before[days[0]]["totals"]
+        assert get_plan(days[2])["totals"]["carbs_g"] > before[days[2]]["totals"]["carbs_g"]
+        assert get_plan(days[3]) == locked
+        assert get_plan(days[4]) == before[days[4]]
+    app.dependency_overrides.clear()
+
+
+def test_workout_fuel_can_be_logged_retried_and_cleared():
+    from datetime import UTC, datetime, time
+
+    from app.models import User
+
+    with _client() as client:
+        client.post("/auth/signup", json={"email": "fuel@example.com", "password": "a-secure-password-123"})
+        now = datetime.now(UTC).replace(tzinfo=None)
+        day = now.date()
+        with _test_db() as db:
+            user = db.query(User).filter(User.email == "fuel@example.com").one()
+            user.weight_kg = 70
+            activity = Activity(user_id=user.id, start_time=datetime.combine(day, time.min), duration_s=0, sport="Ride")
+            db.add(activity)
+            db.commit()
+            activity_id = activity.id
+
+        endpoint = f"/v1/plan/{day}"
+        before = client.get(f"{endpoint}?create_if_missing=true").json()
+        log_url = f"/activities/{activity_id}/fuel"
+        assert client.put(log_url, json={"carbs_g": -5}).status_code == 422
+        result = client.put(log_url, json={"carbs_g": 60})
+        assert result.status_code == 200
+        assert result.json()["meal_plan_update"]["adjusted_meals"] == 4
+        after = client.get(endpoint).json()
+        assert after["workout_fuel"] == {"carbs_g": 60, "kcal": 240}
+        assert abs(after["totals"]["carbs_g"] - (before["totals"]["carbs_g"] - 60)) < 1
+        assert abs(after["totals"]["kcal"] - (before["totals"]["kcal"] - 240)) < 1
+        assert client.put(log_url, json={"carbs_g": 60}).json()["meal_plan_update"]["adjusted_meals"] == 0
+        assert client.get(endpoint).json() == after
+
+        assert client.put(log_url, json={"carbs_g": None}).status_code == 200
+        assert abs(client.get(endpoint).json()["totals"]["carbs_g"] - before["totals"]["carbs_g"]) < 1
+        client.post("/auth/logout")
+        client.post("/auth/signup", json={"email": "other-fuel@example.com", "password": "a-secure-password-123"})
+        assert client.put(log_url, json={"carbs_g": 60}).status_code == 404
     app.dependency_overrides.clear()
