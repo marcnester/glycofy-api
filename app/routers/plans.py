@@ -32,6 +32,13 @@ from app.services.training_nutrition import (
     calculate_heuristic_nutrition,
     calculate_training_nutrition,
 )
+from app.services.training_replan import (
+    apply_fueling_adjustment,
+    fueling_adjustment_preview,
+    fueling_adjustment_targets,
+    lock_training_changes,
+)
+from app.services.workout_reconciliation import user_timezone
 
 router = APIRouter()
 
@@ -342,6 +349,15 @@ def _plan_with_training(
         "breakfast_carbs_g": nutrition.breakfast_carbs_g,
     }
     data["nutrition_targets"] = nutrition.target_explanation()
+    if not plan.locked and plan.source != "heuristic" and day >= datetime.now(user_timezone(user)).date():
+        review_targets = fueling_adjustment_targets(plan, nutrition)
+        meals_by_id = {meal.id: meal for meal in plan.meals}
+        for row in data["meals"]:
+            preview = fueling_adjustment_preview(meals_by_id[row["id"]], review_targets.get(row["meal_type"]))
+            if preview:
+                row["fueling_adjustment"] = {
+                    key: value for key, value in preview.items() if key not in {"item_macros", "meal_macros"}
+                }
     return data
 
 
@@ -995,7 +1011,7 @@ def lock_toggle(
     user: User = Depends(get_current_user),
 ):
     day = _parse_iso_date(date)
-    plan = db.query(Plan).filter(Plan.user_id == user.id, Plan.date == day).first()
+    plan = db.query(Plan).filter(Plan.user_id == user.id, Plan.date == day).with_for_update().first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     plan.locked = bool(lock)
@@ -1096,6 +1112,42 @@ async def regenerate_plan(
 # ---------------------------
 # Assign a recipe to a specific meal
 # ---------------------------
+
+
+class FuelingAdjustmentApproval(BaseModel):
+    token: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+@router.post("/{date}/meals/{meal_id}/fueling-adjustment")
+def approve_fueling_adjustment(
+    date: str,
+    approval: FuelingAdjustmentApproval,
+    meal_id: int = Path(..., ge=1),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    day = _parse_iso_date(date)
+    lock_training_changes(db, user)
+    plan = db.query(Plan).filter(Plan.user_id == user.id, Plan.date == day).with_for_update().first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    if plan.locked or plan.source == "heuristic" or day < datetime.now(user_timezone(user)).date():
+        raise HTTPException(status_code=409, detail="This plan is no longer editable.")
+    meal = next((row for row in plan.meals if row.id == meal_id), None)
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found in this plan")
+    nutrition = calculate_training_nutrition(
+        db=db, user=user, plan_date=day, baseline=athlete_profile_baseline(user, day)
+    )
+    current_target = fueling_adjustment_targets(plan, nutrition).get(meal.meal_type)
+    preview = fueling_adjustment_preview(meal, current_target)
+    if not preview or preview["token"] != approval.token:
+        raise HTTPException(status_code=409, detail="This adjustment has changed. Review the latest plan.")
+    apply_fueling_adjustment(meal, preview)
+    plan.totals = _aggregate_totals(plan.meals)
+    plan.updated_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/{date}/meals/{meal_id}/assign_recipe/{recipe_id}", response_model=dict[str, Any])

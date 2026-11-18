@@ -1,9 +1,12 @@
 """Adjust saved meal portions when training inputs change."""
 
+import hashlib
+import json
 import re
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
+from math import isfinite
 
 from sqlalchemy.orm import Session
 
@@ -45,6 +48,132 @@ def _restore_portions(meal: PlanMeal, portions: dict) -> None:
         item.updated_at = datetime.utcnow()
 
 
+_FIXED_QUANTITY = re.compile(r"\d\s*(?:g|grams?|kg|mg|ml|liters?|oz|lb|cups?|tbsp|tsp)\b", re.I)
+
+
+def _training_weights(plan: Plan) -> tuple[dict, dict]:
+    origins = {}
+    weights = {}
+    for meal in plan.meals:
+        origin = (meal.meta or {}).get("training_replan_origin")
+        if origin and origin["portions"]["items"].keys() == {str(item.id) for item in meal.items}:
+            origins[meal.meal_type] = origin
+            weights[meal.meal_type] = origin["weights"]
+        else:
+            weights[meal.meal_type] = _macros(meal)
+    return origins, weights
+
+
+def _target_from_origin(origin: dict, prescription: dict[str, float]) -> dict[str, float]:
+    return {
+        key: round(max(0.0, origin["target"][key] + prescription[key] - origin["prescription"][key]), 1)
+        for key in MACROS
+    }
+
+
+def fueling_adjustment_targets(plan: Plan, nutrition: TrainingNutritionResult) -> dict:
+    origins, weights = _training_weights(plan)
+    return {
+        slot: _target_from_origin(origins[slot], {key: round(value, 6) for key, value in target.items()})
+        for slot, target in allocate_meal_targets(nutrition, weights).items()
+        if slot in origins
+    }
+
+
+def fueling_adjustment_preview(meal: PlanMeal, current_target: dict | None) -> dict | None:
+    """Choose one measured carb portion already on the meal's grocery list."""
+    meta = meal.meta or {}
+    origin = meta.get("training_replan_origin")
+    target = meta.get("training_replan_target")
+    if (
+        meta.get("training_replan") != "review"
+        or not origin
+        or not target
+        or target != current_target
+        or (meal.feedback and meal.feedback.outcome in {"eaten", "substituted", "skipped"})
+        or _FIXED_QUANTITY.search(meal.instructions or "")
+    ):
+        return None
+    portions = _meal_portions(meal)
+    if portions["items"].keys() != origin["portions"]["items"].keys():
+        return None
+    if any(value is None or not isfinite(value) or value < 0 for value in portions["macros"].values()):
+        return None
+    current = _macros(meal)
+    gap = target["carbs_g"] - current["carbs_g"]
+    if abs(gap) < 1:
+        return None
+
+    best = None
+    best_error = abs(gap)
+    for item in meal.items:
+        values = {key: getattr(item, key) for key in MACROS}
+        if (
+            item.unit not in {"g", "gram", "grams"}
+            or not item.qty
+            or not isfinite(item.qty)
+            or item.qty < 1
+            or (item.meta or {}).get("nutrition_basis") != "usda_fooddata_central"
+            or any(value is None or not isfinite(value) or value < 0 for value in values.values())
+            or values["carbs_g"] < 1
+        ):
+            continue
+        ratio = max(0.5, min(2, 1 + gap / values["carbs_g"]))
+        qty = max(1.0, round(item.qty * ratio, 1))
+        scaled = {key: round(value * qty / item.qty, 1) for key, value in values.items()}
+        totals = {key: round(current[key] + scaled[key] - values[key], 1) for key in MACROS}
+        # Keep a carb correction from pushing calories or other macros far
+        # beyond the current portion or planned target.
+        if any(
+            not max(0, min(current[key], target[key] - margin))
+            <= totals[key]
+            <= max(current[key], target[key]) + margin
+            for key, margin in (("kcal", max(50, target["kcal"] * 0.15)), ("protein_g", 10), ("fat_g", 5))
+        ):
+            continue
+        error = abs(totals["carbs_g"] - target["carbs_g"])
+        change = round(totals["carbs_g"] - current["carbs_g"], 1)
+        if error >= best_error or abs(change) < 1:
+            continue
+        best_error = error
+        best = {
+            "ingredient_id": item.id,
+            "ingredient": item.name,
+            "current_qty_g": item.qty,
+            "proposed_qty_g": qty,
+            "current_carbs_g": current["carbs_g"],
+            "target_carbs_g": target["carbs_g"],
+            "proposed_carbs_g": totals["carbs_g"],
+            "change_carbs_g": change,
+            "item_macros": scaled,
+            "meal_macros": totals,
+        }
+    if best is None:
+        return None
+    # Bind approval to the exact current portions, target and recipe directions.
+    payload = [meal.id, portions, origin, target, meal.instructions, best]
+    best["token"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return best
+
+
+def apply_fueling_adjustment(meal: PlanMeal, preview: dict) -> None:
+    item = next(item for item in meal.items if item.id == preview["ingredient_id"])
+    item.qty = preview["proposed_qty_g"]
+    item.updated_at = datetime.utcnow()
+    for key in MACROS:
+        setattr(item, key, preview["item_macros"][key])
+        setattr(meal, key, preview["meal_macros"][key])
+    meta = meal.meta or {}
+    meal.meta = {
+        **meta,
+        "training_replan": "adjusted",
+        "training_carb_change": {
+            "grams": preview["change_carbs_g"],
+            "workouts": meta.get("training_replan_workouts", []),
+        },
+    }
+
+
 def _update_meal(meal: PlanMeal, target: dict[str, float], *, heuristic: bool) -> str:
     original = _macros(meal)
     if heuristic and not meal.recipe_id and meal.title == meal.meal_type.title():
@@ -58,7 +187,7 @@ def _update_meal(meal: PlanMeal, target: dict[str, float], *, heuristic: bool) -
 
     # Older directions can hard-code ingredient amounts. Review those meals
     # rather than giving the cook two conflicting sets of quantities.
-    if re.search(r"\d\s*(?:g|grams?|kg|mg|ml|liters?|oz|lb|cups?|tbsp|tsp)\b", meal.instructions or "", re.I):
+    if _FIXED_QUANTITY.search(meal.instructions or ""):
         return "review"
 
     ingredients = []
@@ -175,16 +304,7 @@ def replan_training_changes(
     for plan in plans:
         after = nutrition(plan)
         workouts = _changed_workouts(before[plan.date], after)
-        origins = {}
-        weights = {}
-        for meal in plan.meals:
-            origin = (meal.meta or {}).get("training_replan_origin")
-            if origin and origin["portions"]["items"].keys() == {str(item.id) for item in meal.items}:
-                origins[meal.meal_type] = origin
-                weights[meal.meal_type] = origin["weights"]
-            else:
-                weights[meal.meal_type] = _macros(meal)
-
+        origins, weights = _training_weights(plan)
         old_targets = allocate_meal_targets(before[plan.date], weights)
         new_targets = allocate_meal_targets(after, weights)
         changed = False
@@ -201,7 +321,11 @@ def replan_training_changes(
             if restoring and all(abs(value) < 1e-6 for value in delta.values()):
                 continue
 
-            meta = {key: value for key, value in (meal.meta or {}).items() if key != "training_carb_change"}
+            meta = {
+                key: value
+                for key, value in (meal.meta or {}).items()
+                if key not in {"training_carb_change", "training_replan_workouts"}
+            }
             previous_carbs = float(meal.carbs_g or 0)
             if restoring and origin is not None:
                 # A second fit can land on different gram amounts. Restore the
@@ -224,12 +348,11 @@ def replan_training_changes(
                         "target": meta.get("training_replan_target", weights[slot]),
                         "portions": _meal_portions(meal),
                     }
-                target = {
-                    key: round(max(0.0, origin["target"][key] + prescription[key] - origin["prescription"][key]), 1)
-                    for key in MACROS
-                }
+                target = _target_from_origin(origin, prescription)
                 status = _update_meal(meal, target, heuristic=plan.source == "heuristic")
                 meta["training_replan_origin"] = origin
+            if status == "review":
+                meta["training_replan_workouts"] = _meal_workout_reasons(workouts, slot)
             actual_carbs = round(float(meal.carbs_g or 0) - previous_carbs, 1)
             if status == "adjusted" and actual_carbs:
                 meta["training_carb_change"] = {
