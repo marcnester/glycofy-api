@@ -561,3 +561,118 @@ def test_reviewed_fueling_portion_requires_approval_and_restores_exactly():
         assert restored_again["carbs_g"] == pending["carbs_g"]
         assert restored_again["meta"]["training_replan_target"] == pending["meta"]["training_replan_target"]
     app.dependency_overrides.clear()
+
+
+def test_fueling_side_reuses_grocery_item_and_disappears_on_reversal():
+    from datetime import UTC, datetime, time, timedelta
+
+    from app.models import User
+
+    with _client() as client:
+        email = "fueling-side@example.com"
+        assert client.post("/auth/signup", json={"email": email, "password": "a-secure-password-123"}).is_success
+        with _test_db() as db:
+            user = db.query(User).filter_by(email=email).one()
+            user.weight_kg = 70
+            user.timezone = "UTC"
+            db.commit()
+
+        day = datetime.now(UTC).date() + timedelta(days=3)
+        next_day = day + timedelta(days=1)
+        path = f"/v1/plan/{day}"
+        ride = client.post(
+            "/v1/training-events",
+            json={
+                "workout_date": str(next_day),
+                "start_time": datetime.combine(next_day, time(7), UTC).isoformat(),
+                "sport": "Ride",
+                "duration_min": 75,
+                "intensity": "easy",
+            },
+        )
+        assert ride.status_code == 201
+        ride_path = f"/v1/training-events/{ride.json()['id']}"
+        assert client.post(
+            path,
+            json={
+                "source": "llm",
+                "meals": [
+                    {
+                        "meal_type": "dinner",
+                        "title": "Chicken and rice",
+                        "instructions": "Serve the chicken with 180 g of cooked rice.",
+                        "kcal": 540,
+                        "protein_g": 48,
+                        "carbs_g": 56.3,
+                        "fat_g": 13,
+                        "ingredients": [{"name": "Chicken breast", "qty": 150, "unit": "g"}],
+                    }
+                ],
+            },
+        ).is_success
+        donor_path = f"/v1/plan/{next_day}"
+        assert client.post(
+            donor_path,
+            json={
+                "source": "llm",
+                "meals": [
+                    {
+                        "meal_type": "snack",
+                        "title": "Banana",
+                        "kcal": 89,
+                        "protein_g": 1.1,
+                        "carbs_g": 23,
+                        "fat_g": 0.3,
+                        "ingredients": [
+                            {
+                                "name": "Banana",
+                                "qty": 100,
+                                "unit": "g",
+                                "kcal": 89,
+                                "protein_g": 1.1,
+                                "carbs_g": 23,
+                                "fat_g": 0.3,
+                                "meta": {"nutrition_basis": "usda_fooddata_central"},
+                            }
+                        ],
+                    }
+                ],
+            },
+        ).is_success
+        assert client.post(f"{donor_path}/lock").is_success
+        donor = client.get(donor_path).json()["meals"]
+        original = client.get(path).json()["meals"][0]
+        grocery_url = f"/v1/plan/grocery-list/week?start={day}"
+        original_groceries = client.get(grocery_url).json()["items"]
+        assert client.patch(ride_path, json={"duration_min": 120, "intensity": "hard"}).is_success
+        pending = client.get(path).json()["meals"][0]
+        preview = pending["fueling_adjustment"]
+        assert preview["kind"] == "side"
+        assert preview["ingredient"] == "Banana"
+        assert preview["change_carbs_g"] == 35
+        assert pending["ingredients"] == original["ingredients"]
+        endpoint = f"{path}/meals/{pending['id']}/fueling-adjustment"
+        approval = {"token": preview["token"]}
+        assert client.post(f"{path}/lock").is_success
+        assert client.post(endpoint, json=approval).status_code == 409
+        assert client.get(path).json()["meals"][0]["ingredients"] == original["ingredients"]
+        assert client.post(f"{path}/lock?lock=false").is_success
+        assert client.post(endpoint, json=approval).is_success
+        applied = client.get(path).json()["meals"][0]
+        assert applied["ingredients"][:-1] == original["ingredients"]
+        side = applied["ingredients"][-1]
+        assert side["meta"]["fueling_side"] is True
+        assert side["qty"] == preview["proposed_qty_g"]
+        assert applied["carbs_g"] == preview["proposed_carbs_g"]
+        assert applied["instructions"] == original["instructions"]
+        assert client.get(grocery_url).json()["items"] != original_groceries
+        assert client.post(endpoint, json=approval).status_code == 409
+        assert client.patch(ride_path, json={"duration_min": 75, "intensity": "easy"}).is_success
+        restored = client.get(path).json()["meals"][0]
+        assert restored["ingredients"] == original["ingredients"]
+        for macro in ("carbs_g", "protein_g", "fat_g", "kcal"):
+            assert restored[macro] == original[macro]
+        assert restored["meta"]["training_carb_change"]["grams"] == -35
+        assert client.get(grocery_url).json()["items"] == original_groceries
+        assert client.get(donor_path).json()["meals"] == donor
+    app.dependency_overrides.clear()

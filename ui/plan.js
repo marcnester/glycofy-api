@@ -532,6 +532,7 @@
           amount,
           unit,
           displayAmount: it.display_amount || '',
+          fuelingSide: it.meta?.fueling_side === true,
         });
         continue;
       }
@@ -1156,19 +1157,22 @@
     const description = document.createElement('p');
     review.append(description);
     if (!preview) {
-      description.textContent = 'No verified portion change is available for this meal.';
+      description.textContent = 'No verified portion change or side is available for this meal.';
       return;
     }
 
     const amount = value => Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 });
     const signed = preview.change_carbs_g > 0 ? '+' : '−';
-    description.textContent = `Adjust ${preview.ingredient} from ${amount(preview.current_qty_g)} g to ${amount(preview.proposed_qty_g)} g. This ingredient is already in your meal and grocery list.`;
+    const side = preview.kind === 'side';
+    description.textContent = side
+      ? `Serve ${amount(preview.proposed_qty_g)} g of ${preview.ingredient} on the side. It’s already on your grocery list.`
+      : `Adjust ${preview.ingredient} from ${amount(preview.current_qty_g)} g to ${amount(preview.proposed_qty_g)} g. This ingredient is already in your meal and grocery list.`;
     const carbs = document.createElement('p');
     carbs.textContent = `Meal carbs: ${amount(preview.current_carbs_g)} g → ${amount(preview.proposed_carbs_g)} g (${signed}${amount(Math.abs(preview.change_carbs_g))} g). Target: ${amount(preview.target_carbs_g)} g.`;
     const apply = document.createElement('button');
     apply.className = 'btn';
     apply.type = 'button';
-    apply.textContent = 'Apply portion change';
+    apply.textContent = side ? 'Add side' : 'Apply portion change';
     review.append(carbs, apply);
 
     apply.addEventListener('click', async () => {
@@ -1312,7 +1316,7 @@
 
               const nameSpan = document.createElement('span');
               nameSpan.className = 'meal-ingredient-name';
-              nameSpan.textContent = it.name || 'Item';
+              nameSpan.textContent = it.fuelingSide ? `Side: ${it.name}` : (it.name || 'Item');
 
               const amt =
                 it.amount ||
@@ -1431,7 +1435,7 @@
                   qty || unit
                     ? ` <span class="muted">(${escapeHtml(qty)} ${escapeHtml(unit)})</span>`
                     : '';
-                return `<li><span>${escapeHtml(it.name || 'Item')}${suffix}</span></li>`;
+                return `<li><span>${escapeHtml(it.fuelingSide ? `Side: ${it.name}` : (it.name || 'Item'))}${suffix}</span></li>`;
               })
               .join('')}
           </ul>

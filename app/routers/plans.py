@@ -24,6 +24,7 @@ from app.db import get_db
 from app.models import GroceryApproval, GroceryPreference, Plan, PlanItem, PlanMeal, Recipe, User
 from app.routers.plan_models import EnergyTarget, UserPreference
 from app.services.instacart import InstacartError, create_products_link
+from app.services.meal_quality import text_violates_exclusions
 from app.services.purchase_ingredients import purchase_ingredient
 from app.services.training_nutrition import (
     MACROS,
@@ -336,6 +337,27 @@ def _plan_to_dict(plan: Plan, preference: UserPreference | None = None) -> dict[
 _HEURISTIC_INGREDIENT_NAMES = {"protein (lean)", "complex carbs", "fats (healthy)"}
 
 
+def _fueling_grocery_items(db: Session, user: User, day: date_cls, preference: UserPreference | None) -> list[PlanItem]:
+    # Match the standard grocery list opened from this plan day.
+    plans = (
+        db.query(Plan)
+        .filter(Plan.user_id == user.id, Plan.date.between(day, day + timedelta(days=6)))
+        .order_by(Plan.date)
+        .all()
+    )
+    exclusions = preference.exclusions_list() if preference else []
+    if preference:
+        for values in (preference.allergies, preference.banned_ingredients):
+            if isinstance(values, list):
+                exclusions.extend(str(value) for value in values)
+    return [
+        item
+        for plan in plans
+        for _, item in _iter_items(plan)
+        if not (item.meta or {}).get("fueling_side") and not text_violates_exclusions(item.name, exclusions)
+    ]
+
+
 def _plan_with_training(
     db: Session, user: User, plan: Plan, preference: UserPreference | None = None
 ) -> dict[str, Any]:
@@ -353,34 +375,46 @@ def _plan_with_training(
         "breakfast_carbs_g": nutrition.breakfast_carbs_g,
     }
     data["nutrition_targets"] = nutrition.target_explanation()
-    if not plan.locked and plan.source != "heuristic" and day >= datetime.now(user_timezone(user)).date():
+    if (
+        not plan.locked
+        and plan.source != "heuristic"
+        and day >= datetime.now(user_timezone(user)).date()
+        and any((meal.meta or {}).get("training_replan") == "review" for meal in plan.meals)
+    ):
         review_targets = fueling_adjustment_targets(plan, nutrition)
+        grocery_items = _fueling_grocery_items(db, user, day, preference)
         meals_by_id = {meal.id: meal for meal in plan.meals}
         for row in data["meals"]:
-            preview = fueling_adjustment_preview(meals_by_id[row["id"]], review_targets.get(row["meal_type"]))
+            preview = fueling_adjustment_preview(
+                meals_by_id[row["id"]], review_targets.get(row["meal_type"]), grocery_items
+            )
             if preview:
                 row["fueling_adjustment"] = {
-                    key: value for key, value in preview.items() if key not in {"item_macros", "meal_macros"}
+                    key: value
+                    for key, value in preview.items()
+                    if key not in {"item_macros", "meal_macros", "source_meta"}
                 }
     return data
 
 
 def _display_ingredients_for_meal(meal: PlanMeal) -> list[Any]:
     """Use linked recipe ingredients for plans created before AI item persistence was fixed."""
-    items = list(getattr(meal, "items", []) or [])
+    all_items = list(getattr(meal, "items", []) or [])
+    sides = [item for item in all_items if (getattr(item, "meta", None) or {}).get("fueling_side")]
+    items = [item for item in all_items if not (getattr(item, "meta", None) or {}).get("fueling_side")]
     names = {str(getattr(item, "name", "")).strip().lower() for item in items}
     if names and not names.issubset(_HEURISTIC_INGREDIENT_NAMES):
         # Some early AI plans appended real ingredients without removing the
         # three synthetic macro placeholders. Never show those as food.
         return [
             item for item in items if str(getattr(item, "name", "")).strip().lower() not in _HEURISTIC_INGREDIENT_NAMES
-        ]
+        ] + sides
 
     recipe = getattr(meal, "recipe", None)
     recipe_ingredients = _extract_recipe_ingredients(recipe) if recipe is not None else []
     if not recipe_ingredients:
-        return items
-    return [item if isinstance(item, dict) else {"name": str(item).strip()} for item in recipe_ingredients]
+        return all_items
+    return [item if isinstance(item, dict) else {"name": str(item).strip()} for item in recipe_ingredients] + sides
 
 
 _GENERIC_MEAL_TITLES = {"breakfast", "lunch", "dinner", "snack", "meal"}
@@ -1151,10 +1185,12 @@ def approve_fueling_adjustment(
         db=db, user=user, plan_date=day, baseline=athlete_profile_baseline(user, day)
     )
     current_target = fueling_adjustment_targets(plan, nutrition).get(meal.meal_type)
-    preview = fueling_adjustment_preview(meal, current_target)
+    preference = db.query(UserPreference).filter(UserPreference.user_id == user.id).first()
+    grocery_items = _fueling_grocery_items(db, user, day, preference)
+    preview = fueling_adjustment_preview(meal, current_target, grocery_items)
     if not preview or preview["token"] != approval.token:
         raise HTTPException(status_code=409, detail="This adjustment has changed. Review the latest plan.")
-    apply_fueling_adjustment(meal, preview)
+    apply_fueling_adjustment(db, meal, preview)
     plan.totals = _aggregate_totals(plan.meals)
     plan.updated_at = datetime.utcnow()
     db.commit()
