@@ -294,6 +294,9 @@ def test_moving_early_workout_updates_only_affected_unlocked_meals():
                 }
             ],
         }
+        audit = after["nutrition_targets"]
+        assert audit["dinner_carbs_g"] == 35
+        assert audit["cross_day_sessions"] == dinner["meta"]["training_carb_change"]["workouts"]
         assert all("training_carb_change" not in meal["meta"] for meal in after["meals"] if meal is not dinner)
 
         moved = client.patch(f'/v1/training-events/{created.json()["id"]}', json={"workout_date": days[3].isoformat()})
@@ -308,7 +311,10 @@ def test_moving_early_workout_updates_only_affected_unlocked_meals():
             "grams": -35,
         }
         assert get_plan(days[2])["totals"]["carbs_g"] > before[days[2]]["totals"]["carbs_g"]
-        assert get_plan(days[3]) == locked
+        locked_after = get_plan(days[3])
+        assert locked_after.pop("nutrition_targets")["training"]["planned_workout_count"] == 1
+        assert locked.pop("nutrition_targets")["training"]["planned_workout_count"] == 0
+        assert locked_after == locked
         assert get_plan(days[4]) == before[days[4]]
     app.dependency_overrides.clear()
 
@@ -339,6 +345,9 @@ def test_workout_fuel_can_be_logged_retried_and_cleared():
         assert result.json()["meal_plan_update"]["adjusted_meals"] == 4
         after = client.get(endpoint).json()
         assert after["workout_fuel"] == {"carbs_g": 60, "kcal": 240}
+        audit = after["nutrition_targets"]
+        assert audit["workout_fuel_credit_g"] == 60
+        assert audit["meal_targets"]["carbs_g"] == audit["final"]["carbs_g"] - 60
         assert abs(after["totals"]["carbs_g"] - (before["totals"]["carbs_g"] - 60)) < 1
         assert abs(after["totals"]["kcal"] - (before["totals"]["kcal"] - 240)) < 1
         for meal, original in zip(after["meals"], before["meals"], strict=True):

@@ -45,6 +45,8 @@ class TrainingContext:
     next_morning_workouts: int = 0
     prior_evening_workouts: int = 0
     during_carbs_g: float = 0.0
+    reported_energy_count: int = 0
+    estimated_energy_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -78,9 +80,13 @@ class TrainingNutritionResult:
     workout_inputs: tuple[WorkoutInput, ...] = ()
 
     @property
-    def meal_targets(self) -> MacroTargets:
+    def workout_fuel_credit_g(self) -> float:
         # Count logged fuel once while keeping carbohydrate available for meals.
-        credit = min(self.training.during_carbs_g, max(0.0, self.final.carbs_g - self.baseline.carbs_g * 0.5))
+        return min(self.training.during_carbs_g, max(0.0, self.final.carbs_g - self.baseline.carbs_g * 0.5))
+
+    @property
+    def meal_targets(self) -> MacroTargets:
+        credit = self.workout_fuel_credit_g
         return replace(
             self.final, kcal=round(self.final.kcal - 4 * credit, 1), carbs_g=round(self.final.carbs_g - credit, 1)
         )
@@ -88,10 +94,26 @@ class TrainingNutritionResult:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data.pop("workout_inputs")
+        data["training"].pop("reported_energy_count")
+        data["training"].pop("estimated_energy_count")
         return {"policy_version": FUELING_POLICY_VERSION, **data, "meal_targets": asdict(self.meal_targets)}
 
     def cache_fingerprint(self) -> dict[str, Any]:
         return self.to_dict()
+
+    def target_explanation(self) -> dict[str, Any]:
+        data = self.to_dict()
+        data["training"].update(
+            reported_energy_count=self.training.reported_energy_count,
+            estimated_energy_count=self.training.estimated_energy_count,
+        )
+        data["workout_fuel_credit_g"] = round(self.workout_fuel_credit_g, 1)
+        data["cross_day_sessions"] = [
+            {"reason": row.reason, "sport": row.sport, "date": row.date, "start_time": row.start_time}
+            for row in self.workout_inputs
+            if row.reason in {"before_early_workout", "after_late_workout", "after_late_activity"}
+        ]
+        return data
 
 
 def allocate_meal_targets(
@@ -489,6 +511,8 @@ def calculate_from_activities(
         distance_km=round(distance_km, 2),
         sports=tuple(sorted(sports)),
         latest_activity_at=latest.isoformat() if latest else None,
+        reported_energy_count=confidence_levels.count("high"),
+        estimated_energy_count=confidence_levels.count("medium") + confidence_levels.count("low"),
     )
 
     if not activity_rows or weight_kg <= 0 or duration_min <= 0:
