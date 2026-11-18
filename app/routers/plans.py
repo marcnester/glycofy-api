@@ -341,6 +341,7 @@ def _plan_with_training(
         "dinner_carbs_g": nutrition.dinner_carbs_g,
         "breakfast_carbs_g": nutrition.breakfast_carbs_g,
     }
+    data["nutrition_targets"] = nutrition.target_explanation()
     return data
 
 
