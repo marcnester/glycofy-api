@@ -240,6 +240,7 @@ def apply_fueling_adjustment(db: Session, meal: PlanMeal, preview: dict) -> None
         item = PlanItem(
             name=preview["ingredient"],
             unit="g",
+            created_at=datetime.utcnow(),
             meta={**preview["source_meta"], "fueling_side": True},
         )
         meal.items.append(item)
