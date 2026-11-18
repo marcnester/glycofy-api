@@ -539,4 +539,25 @@ def test_reviewed_fueling_portion_requires_approval_and_restores_exactly():
         }
         assert restored["meta"]["training_carb_change"]["grams"] == -35
         assert "fueling_adjustment" not in restored
+
+        # Leave an earlier training review unapproved before making the
+        # second ride edit, as can happen on a real weekly plan.
+        assert (
+            client.post(
+                "/v1/training-events",
+                json={"workout_date": str(dinner_day), "sport": "Ride", "duration_min": 90, "intensity": "hard"},
+            ).status_code
+            == 201
+        )
+        pending = client.get(path).json()["meals"][0]
+        assert pending["meta"]["training_replan"] == "review"
+        assert pending["ingredients"] == original["ingredients"]
+        assert client.patch(ride_path, json={"duration_min": 120, "intensity": "hard"}).is_success
+        next_preview = client.get(path).json()["meals"][0]["fueling_adjustment"]
+        assert client.post(endpoint, json={"token": next_preview["token"]}).is_success
+        assert client.patch(ride_path, json={"duration_min": 75, "intensity": "easy"}).is_success
+        restored_again = client.get(path).json()["meals"][0]
+        assert restored_again["ingredients"] == pending["ingredients"]
+        assert restored_again["carbs_g"] == pending["carbs_g"]
+        assert restored_again["meta"]["training_replan_target"] == pending["meta"]["training_replan_target"]
     app.dependency_overrides.clear()

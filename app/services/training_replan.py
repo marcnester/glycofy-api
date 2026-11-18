@@ -85,9 +85,11 @@ def fueling_adjustment_preview(meal: PlanMeal, current_target: dict | None) -> d
     meta = meal.meta or {}
     origin = meta.get("training_replan_origin")
     target = meta.get("training_replan_target")
+    review_origin = meta.get("training_review_origin")
     if (
         meta.get("training_replan") != "review"
         or not origin
+        or not review_origin
         or not target
         or target != current_target
         or (meal.feedback and meal.feedback.outcome in {"eaten", "substituted", "skipped"})
@@ -95,7 +97,7 @@ def fueling_adjustment_preview(meal: PlanMeal, current_target: dict | None) -> d
     ):
         return None
     portions = _meal_portions(meal)
-    if portions["items"].keys() != origin["portions"]["items"].keys():
+    if portions != review_origin["portions"]:
         return None
     if any(value is None or not isfinite(value) or value < 0 for value in portions["macros"].values()):
         return None
@@ -151,7 +153,7 @@ def fueling_adjustment_preview(meal: PlanMeal, current_target: dict | None) -> d
     if best is None:
         return None
     # Bind approval to the exact current portions, target and recipe directions.
-    payload = [meal.id, portions, origin, target, meal.instructions, best]
+    payload = [meal.id, portions, review_origin, target, meal.instructions, best]
     best["token"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     return best
 
@@ -163,9 +165,11 @@ def apply_fueling_adjustment(meal: PlanMeal, preview: dict) -> None:
     for key in MACROS:
         setattr(item, key, preview["item_macros"][key])
         setattr(meal, key, preview["meal_macros"][key])
-    meta = meal.meta or {}
+    meta = dict(meal.meta or {})
+    review_origin = meta.pop("training_review_origin")
     meal.meta = {
         **meta,
+        "training_replan_origin": review_origin,
         "training_replan": "adjusted",
         "training_carb_change": {
             "grams": preview["change_carbs_g"],
@@ -324,7 +328,7 @@ def replan_training_changes(
             meta = {
                 key: value
                 for key, value in (meal.meta or {}).items()
-                if key not in {"training_carb_change", "training_replan_workouts"}
+                if key not in {"training_carb_change", "training_replan_workouts", "training_review_origin"}
             }
             previous_carbs = float(meal.carbs_g or 0)
             if restoring and origin is not None:
@@ -341,10 +345,11 @@ def replan_training_changes(
                 meta.pop("training_replan_origin")
                 status = "adjusted"
             else:
+                old_prescription = {key: round(value, 6) for key, value in old_targets[slot].items()}
                 if not origin:
                     origin = {
                         "weights": weights[slot],
-                        "prescription": {key: round(value, 6) for key, value in old_targets[slot].items()},
+                        "prescription": old_prescription,
                         "target": meta.get("training_replan_target", weights[slot]),
                         "portions": _meal_portions(meal),
                     }
@@ -352,6 +357,14 @@ def replan_training_changes(
                 status = _update_meal(meal, target, heuristic=plan.source == "heuristic")
                 meta["training_replan_origin"] = origin
             if status == "review":
+                # An older review can remain pending when a new edit is made.
+                # Approval must restore to the state before this specific edit.
+                meta["training_review_origin"] = {
+                    "weights": weights[slot],
+                    "prescription": old_prescription,
+                    "target": _target_from_origin(origin, old_prescription),
+                    "portions": _meal_portions(meal),
+                }
                 meta["training_replan_workouts"] = _meal_workout_reasons(workouts, slot)
             actual_carbs = round(float(meal.carbs_g or 0) - previous_carbs, 1)
             if status == "adjusted" and actual_carbs:
