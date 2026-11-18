@@ -265,7 +265,11 @@ def _plan_to_dict(plan: Plan, preference: UserPreference | None = None) -> dict[
                 "recipe_id": getattr(m, "recipe_id", None),
                 # WHY BUTTON FIX: return persisted AI explanation to the UI.
                 "meta": {
-                    **{key: value for key, value in (m.meta or {}).items() if key != "training_replan_origin"},
+                    **{
+                        key: value
+                        for key, value in (m.meta or {}).items()
+                        if key not in {"training_replan_origin", "training_review_origin"}
+                    },
                     **({"needs_regeneration": True} if _meal_needs_regeneration(m) else {}),
                 },
                 "feedback": (
@@ -434,7 +438,14 @@ def _clear_training_replan(meal: PlanMeal) -> None:
     meal.meta = {
         key: value
         for key, value in (meal.meta or {}).items()
-        if key not in {"training_replan", "training_replan_target", "training_carb_change", "training_replan_origin"}
+        if key
+        not in {
+            "training_replan",
+            "training_replan_target",
+            "training_carb_change",
+            "training_replan_origin",
+            "training_review_origin",
+        }
     }
 
 
