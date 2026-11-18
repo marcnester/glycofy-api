@@ -1141,6 +1141,63 @@
     macros.after(note);
   }
 
+  function renderFuelingAdjustment(card, macros, meal, plan) {
+    card.querySelector('.meal-fueling-adjustment')?.remove();
+    if (!macros || plan.locked || meal?.meta?.training_replan !== 'review') return;
+
+    const review = document.createElement('details');
+    review.className = 'meal-fueling-adjustment';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Review fueling adjustment';
+    review.append(summary);
+    macros.after(review);
+
+    const preview = meal.fueling_adjustment;
+    const description = document.createElement('p');
+    review.append(description);
+    if (!preview) {
+      description.textContent = 'No verified portion change is available for this meal.';
+      return;
+    }
+
+    const amount = value => Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 });
+    const signed = preview.change_carbs_g > 0 ? '+' : '−';
+    description.textContent = `Adjust ${preview.ingredient} from ${amount(preview.current_qty_g)} g to ${amount(preview.proposed_qty_g)} g. This ingredient is already in your meal and grocery list.`;
+    const carbs = document.createElement('p');
+    carbs.textContent = `Meal carbs: ${amount(preview.current_carbs_g)} g → ${amount(preview.proposed_carbs_g)} g (${signed}${amount(Math.abs(preview.change_carbs_g))} g). Target: ${amount(preview.target_carbs_g)} g.`;
+    const apply = document.createElement('button');
+    apply.className = 'btn';
+    apply.type = 'button';
+    apply.textContent = 'Apply portion change';
+    review.append(carbs, apply);
+
+    apply.addEventListener('click', async () => {
+      apply.disabled = true;
+      try {
+        const response = await fetch(`/v1/plan/${encodeURIComponent(plan.date)}/meals/${meal.id}/fueling-adjustment`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: preview.token }),
+        });
+        if (response.status === 409) {
+          const fresh = await loadPlan(plan.date);
+          if (fresh && CURRENT_PLAN?.date === plan.date) renderPlan(fresh);
+          flash('This fueling adjustment has changed. Check the current meal card.', 'error');
+          return;
+        }
+        if (!response.ok) throw new Error('Could not apply the fueling adjustment.');
+        const fresh = await loadPlan(plan.date);
+        if (fresh && CURRENT_PLAN?.date === plan.date) renderPlan(fresh);
+        flash('Fueling adjustment applied.');
+      } catch (error) {
+        flash(error.message || 'Could not apply the fueling adjustment.', 'error');
+      } finally {
+        apply.disabled = false;
+      }
+    });
+  }
+
   function renderMeals(plan) {
     const meals = plan?.meals || [];
     const sorted = meals
@@ -1218,6 +1275,7 @@
         }
 
         renderTrainingCarbChange(card, macrosEl, ff ? null : base.meta?.training_carb_change);
+        renderFuelingAdjustment(card, macrosEl, ff ? null : base, plan);
 
         // ingredients + instructions
         if (bodyEl) {
@@ -1393,6 +1451,7 @@
           }
         `;
         renderTrainingCarbChange(card, card.querySelector('.meal__macros'), ff ? null : m.meta?.training_carb_change);
+        renderFuelingAdjustment(card, card.querySelector('.meal__macros'), ff ? null : m, plan);
         mealsRoot.appendChild(card);
       }
     }
@@ -1483,7 +1542,7 @@
         crossDay?.dinner_carbs_g > 0 ? 'Carb focus at dinner for an early workout tomorrow.' : '',
         crossDay?.breakfast_carbs_g > 0 ? 'Carb focus at breakfast for recovery from late training.' : '',
       ];
-      const reviewAction = plan?.locked ? 'Unlock this day to refresh its meals.' : 'Use Plan Today to refresh the day.';
+      const reviewAction = plan?.locked ? 'Unlock this day to refresh its meals.' : 'Open Review fueling adjustment on the meal card.';
       const status = [
         ...timing,
         adjusted ? 'Meal portions adjusted after a training update.' : '',

@@ -445,3 +445,98 @@ def test_workout_reversal_restores_exact_saved_meal_and_ingredient_portions():
                     before["carbs_g"] - hard_meal["carbs_g"], 1
                 )
     app.dependency_overrides.clear()
+
+
+def test_reviewed_fueling_portion_requires_approval_and_restores_exactly():
+    from datetime import UTC, datetime, time, timedelta
+
+    from app.models import User
+
+    with _client() as client:
+        email = "review-fueling@example.com"
+        assert client.post("/auth/signup", json={"email": email, "password": "a-secure-password-123"}).is_success
+        with _test_db() as db:
+            user = db.query(User).filter_by(email=email).one()
+            user.weight_kg = 70
+            user.timezone = "UTC"
+            db.commit()
+
+        dinner_day = datetime.now(UTC).date() + timedelta(days=3)
+        ride_day = dinner_day + timedelta(days=1)
+        ride = {
+            "workout_date": str(ride_day),
+            "start_time": datetime.combine(ride_day, time(7), UTC).isoformat(),
+            "sport": "Ride",
+            "duration_min": 75,
+            "intensity": "easy",
+        }
+        created = client.post("/v1/training-events", json=ride)
+        assert created.status_code == 201
+        ride_path = f"/v1/training-events/{created.json()['id']}"
+        path = f"/v1/plan/{dinner_day}"
+        assert client.post(
+            path,
+            json={
+                "source": "llm",
+                "meals": [
+                    {
+                        "meal_type": "dinner",
+                        "title": "Chicken and rice",
+                        "instructions": "Serve the warmed chicken with cooked rice.",
+                        "kcal": 540,
+                        "protein_g": 48,
+                        "carbs_g": 56.3,
+                        "fat_g": 13,
+                        "ingredients": [
+                            {
+                                "name": "Cooked white rice",
+                                "qty": 200.25,
+                                "unit": "g",
+                                "kcal": 260,
+                                "protein_g": 5.4,
+                                "carbs_g": 56.3,
+                                "fat_g": 0.6,
+                                "meta": {"nutrition_basis": "usda_fooddata_central"},
+                            },
+                            {"name": "Chicken breast", "qty": 150, "unit": "g"},
+                        ],
+                    }
+                ],
+            },
+        ).is_success
+        original = client.get(path).json()["meals"][0]
+        assert client.patch(ride_path, json={"duration_min": 120, "intensity": "hard"}).is_success
+        reviewed = client.get(path).json()["meals"][0]
+        assert reviewed["ingredients"] == original["ingredients"]
+        assert reviewed["carbs_g"] == original["carbs_g"]
+        preview = reviewed["fueling_adjustment"]
+        assert preview["ingredient"] == "Cooked white rice"
+        assert preview["change_carbs_g"] == 35
+        assert preview["proposed_carbs_g"] == 91.3
+        endpoint = f"{path}/meals/{reviewed['id']}/fueling-adjustment"
+        approval = {"token": preview["token"]}
+        assert client.post(f"{path}/lock").is_success
+        locked = client.get(path).json()["meals"][0]
+        assert "fueling_adjustment" not in locked
+        assert client.post(endpoint, json=approval).status_code == 409
+        assert client.get(path).json()["meals"][0] == locked
+        assert client.post(f"{path}/lock?lock=false").is_success
+
+        assert client.post(endpoint, json={"token": "0" * 64}).status_code == 409
+        assert client.post(endpoint, json=approval).is_success
+        applied = client.get(path).json()["meals"][0]
+        assert applied["carbs_g"] == preview["proposed_carbs_g"]
+        assert applied["ingredients"][0]["qty"] == preview["proposed_qty_g"]
+        assert applied["ingredients"][1] == original["ingredients"][1]
+        assert applied["meta"]["training_carb_change"]["workouts"][0]["reason"] == "before_early_workout"
+        assert client.post(endpoint, json=approval).status_code == 409
+
+        assert client.patch(ride_path, json={"duration_min": 75, "intensity": "easy"}).is_success
+        restored = client.get(path).json()["meals"][0]
+        assert restored["ingredients"] == original["ingredients"]
+        assert {key: restored[key] for key in ("kcal", "protein_g", "carbs_g", "fat_g")} == {
+            key: original[key] for key in ("kcal", "protein_g", "carbs_g", "fat_g")
+        }
+        assert restored["meta"]["training_carb_change"]["grams"] == -35
+        assert "fueling_adjustment" not in restored
+    app.dependency_overrides.clear()
