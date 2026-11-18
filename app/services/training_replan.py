@@ -10,7 +10,7 @@ from math import isfinite
 
 from sqlalchemy.orm import Session
 
-from app.models import Plan, PlanMeal, User
+from app.models import Plan, PlanItem, PlanMeal, User
 from app.services.training_nutrition import (
     MACROS,
     TrainingNutritionResult,
@@ -39,10 +39,13 @@ def _meal_portions(meal: PlanMeal) -> dict:
     }
 
 
-def _restore_portions(meal: PlanMeal, portions: dict) -> None:
+def _restore_portions(meal: PlanMeal, portions: dict, *, side_item_id: int | None = None) -> None:
     for key, value in portions["macros"].items():
         setattr(meal, key, value)
-    for item in meal.items:
+    for item in list(meal.items):
+        if item.id == side_item_id:
+            meal.items.remove(item)
+            continue
         for key, value in portions["items"][str(item.id)].items():
             setattr(item, key, value)
         item.updated_at = datetime.utcnow()
@@ -56,7 +59,9 @@ def _training_weights(plan: Plan) -> tuple[dict, dict]:
     weights = {}
     for meal in plan.meals:
         origin = (meal.meta or {}).get("training_replan_origin")
-        if origin and origin["portions"]["items"].keys() == {str(item.id) for item in meal.items}:
+        if origin and origin["portions"]["items"].keys() == {
+            str(item.id) for item in meal.items if item.id != origin.get("side_item_id")
+        }:
             origins[meal.meal_type] = origin
             weights[meal.meal_type] = origin["weights"]
         else:
@@ -80,7 +85,80 @@ def fueling_adjustment_targets(plan: Plan, nutrition: TrainingNutritionResult) -
     }
 
 
-def fueling_adjustment_preview(meal: PlanMeal, current_target: dict | None) -> dict | None:
+# These are simple sides that can be served as listed without changing the
+# original recipe. Match the saved ingredient and its preparation state.
+_SIDE_PORTION_LIMITS = {
+    "apple": 200,
+    "banana": 180,
+    "blueberries": 180,
+    "grapes": 180,
+    "orange": 200,
+    "pear": 200,
+    "strawberries": 200,
+    "cooked white rice": 200,
+    "cooked brown rice": 200,
+    "white rice cooked": 200,
+    "brown rice cooked": 200,
+}
+
+
+def _fits_review_target(totals: dict, current: dict, target: dict) -> bool:
+    return all(
+        max(0, min(current[key], target[key] - margin)) <= totals[key] <= max(current[key], target[key]) + margin
+        for key, margin in (("kcal", max(50, target["kcal"] * 0.15)), ("protein_g", 10), ("fat_g", 5))
+    )
+
+
+def _side_preview(candidates: Iterable[PlanItem], current: dict, target: dict) -> dict | None:
+    gap = target["carbs_g"] - current["carbs_g"]
+    if gap < 1:
+        return None
+    best = None
+    best_error = gap
+    for item in candidates:
+        name = re.sub(r"[^a-z0-9]+", " ", item.name.lower()).strip()
+        limit = _SIDE_PORTION_LIMITS.get(name)
+        values = {key: getattr(item, key) for key in MACROS}
+        if (
+            not limit
+            or item.unit not in {"g", "gram", "grams"}
+            or not item.qty
+            or not isfinite(item.qty)
+            or item.qty < 1
+            or (item.meta or {}).get("nutrition_basis") != "usda_fooddata_central"
+            or any(value is None or not isfinite(value) or value < 0 for value in values.values())
+            or values["carbs_g"] < 1
+        ):
+            continue
+        qty = round(min(limit, item.qty * gap / values["carbs_g"]), 1)
+        if qty < 15:
+            continue
+        macros = {key: round(value * qty / item.qty, 1) for key, value in values.items()}
+        totals = {key: round(current[key] + macros[key], 1) for key in MACROS}
+        error = abs(target["carbs_g"] - totals["carbs_g"])
+        if error >= best_error or macros["carbs_g"] < 1 or not _fits_review_target(totals, current, target):
+            continue
+        best_error = error
+        best = {
+            "kind": "side",
+            "ingredient_id": item.id,
+            "ingredient": item.name,
+            "current_qty_g": 0,
+            "proposed_qty_g": qty,
+            "current_carbs_g": current["carbs_g"],
+            "target_carbs_g": target["carbs_g"],
+            "proposed_carbs_g": totals["carbs_g"],
+            "change_carbs_g": macros["carbs_g"],
+            "item_macros": macros,
+            "meal_macros": totals,
+            "source_meta": item.meta,
+        }
+    return best
+
+
+def fueling_adjustment_preview(
+    meal: PlanMeal, current_target: dict | None, grocery_items: Iterable[PlanItem] = ()
+) -> dict | None:
     """Choose one measured carb portion already on the meal's grocery list."""
     meta = meal.meta or {}
     origin = meta.get("training_replan_origin")
@@ -93,7 +171,6 @@ def fueling_adjustment_preview(meal: PlanMeal, current_target: dict | None) -> d
         or not target
         or target != current_target
         or (meal.feedback and meal.feedback.outcome in {"eaten", "substituted", "skipped"})
-        or _FIXED_QUANTITY.search(meal.instructions or "")
     ):
         return None
     portions = _meal_portions(meal)
@@ -108,7 +185,8 @@ def fueling_adjustment_preview(meal: PlanMeal, current_target: dict | None) -> d
 
     best = None
     best_error = abs(gap)
-    for item in meal.items:
+    resizable_items = [] if _FIXED_QUANTITY.search(meal.instructions or "") else meal.items
+    for item in resizable_items:
         values = {key: getattr(item, key) for key in MACROS}
         if (
             item.unit not in {"g", "gram", "grams"}
@@ -126,12 +204,7 @@ def fueling_adjustment_preview(meal: PlanMeal, current_target: dict | None) -> d
         totals = {key: round(current[key] + scaled[key] - values[key], 1) for key in MACROS}
         # Keep a carb correction from pushing calories or other macros far
         # beyond the current portion or planned target.
-        if any(
-            not max(0, min(current[key], target[key] - margin))
-            <= totals[key]
-            <= max(current[key], target[key]) + margin
-            for key, margin in (("kcal", max(50, target["kcal"] * 0.15)), ("protein_g", 10), ("fat_g", 5))
-        ):
+        if not _fits_review_target(totals, current, target):
             continue
         error = abs(totals["carbs_g"] - target["carbs_g"])
         change = round(totals["carbs_g"] - current["carbs_g"], 1)
@@ -151,6 +224,8 @@ def fueling_adjustment_preview(meal: PlanMeal, current_target: dict | None) -> d
             "meal_macros": totals,
         }
     if best is None:
+        best = _side_preview(grocery_items, current, target)
+    if best is None:
         return None
     # Bind approval to the exact current portions, target and recipe directions.
     payload = [meal.id, portions, review_origin, target, meal.instructions, best]
@@ -158,15 +233,26 @@ def fueling_adjustment_preview(meal: PlanMeal, current_target: dict | None) -> d
     return best
 
 
-def apply_fueling_adjustment(meal: PlanMeal, preview: dict) -> None:
-    item = next(item for item in meal.items if item.id == preview["ingredient_id"])
+def apply_fueling_adjustment(db: Session, meal: PlanMeal, preview: dict) -> None:
+    meta = dict(meal.meta or {})
+    review_origin = dict(meta.pop("training_review_origin"))
+    if preview.get("kind") == "side":
+        item = PlanItem(
+            name=preview["ingredient"],
+            unit="g",
+            meta={**preview["source_meta"], "fueling_side": True},
+        )
+        meal.items.append(item)
+    else:
+        item = next(item for item in meal.items if item.id == preview["ingredient_id"])
     item.qty = preview["proposed_qty_g"]
     item.updated_at = datetime.utcnow()
     for key in MACROS:
         setattr(item, key, preview["item_macros"][key])
         setattr(meal, key, preview["meal_macros"][key])
-    meta = dict(meal.meta or {})
-    review_origin = meta.pop("training_review_origin")
+    if preview.get("kind") == "side":
+        db.flush()
+        review_origin["side_item_id"] = item.id
     meal.meta = {
         **meta,
         "training_replan_origin": review_origin,
@@ -320,6 +406,9 @@ def replan_training_changes(
             prescription = {key: round(value, 6) for key, value in new_targets[slot].items()}
             delta = {key: new_targets[slot][key] - old_targets[slot][key] for key in MACROS}
             restoring = origin is not None and prescription == origin["prescription"]
+            if origin and origin.get("side_item_id") and not restoring:
+                # Keep the approved side as served until its baseline returns.
+                continue
             if not restoring and abs(delta["kcal"]) < 4 and all(abs(delta[key]) < 1 for key in MACROS[1:]):
                 continue
             if restoring and all(abs(value) < 1e-6 for value in delta.values()):
@@ -340,7 +429,7 @@ def replan_training_changes(
                     meal.meta = meta
                     changed = True
                     continue
-                _restore_portions(meal, origin["portions"])
+                _restore_portions(meal, origin["portions"], side_item_id=origin.get("side_item_id"))
                 target = origin["target"]
                 meta.pop("training_replan_origin")
                 status = "adjusted"
