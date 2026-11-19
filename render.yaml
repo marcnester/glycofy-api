@@ -3,7 +3,7 @@ services:
     name: glycofy-api
     runtime: image
     image:
-      url: ghcr.io/marcnester/glycofy-api@sha256:6f0957412c97fcbb6a7077aca6e6495f97ba149db8cc1d348139ed89d1ea9ee1
+      url: ghcr.io/marcnester/glycofy-api@sha256:b6f52b97bef784fe8bc628a8042d95c3b4a32ec6dd8f224bdeb2818e618b7694
     plan: 1c-2g
     region: oregon
     preDeployCommand: alembic upgrade head
