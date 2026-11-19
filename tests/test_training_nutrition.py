@@ -327,6 +327,13 @@ def test_completed_strava_strength_replaces_matching_future_manual_estimate():
         )
 
     assert result.training.activity_count == 1
+    audit = result.target_explanation()["inputs"]
+    assert audit["scheduled"][0]["status"] == "completed"
+    assert audit["scheduled"][0]["sport"] == "Strength"
+    assert audit["scheduled"][0]["matched_sport"] == "WeightTraining"
+    assert audit["completed"][0]["exercise_kcal"] == 628
+    assert audit["completed"][0]["energy_source"] == "reported"
+    assert "input_audit" not in result.cache_fingerprint()
     assert result.training.exercise_kcal == 628
     assert result.training.duration_min == 89
     assert result.training.planned_workout_count == 0
