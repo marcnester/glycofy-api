@@ -1462,79 +1462,118 @@
   }
 
   function renderNutritionTargets(plan) {
-    const details = $('nutrition-target-details');
+    const panel = $('nutrition-target-details');
     const breakdown = $('nutrition-target-breakdown');
-    if (!details || !breakdown) return;
+    if (!panel || !breakdown) return;
     const targets = plan?.nutrition_targets;
-    details.hidden = !targets || !plan?.meals?.length;
-    details.open = false;
+    panel.hidden = !targets || !plan?.meals?.length;
+    panel.open = false;
     breakdown.replaceChildren();
-    if (details.hidden) return;
+    if (panel.hidden) return;
 
     const amount = value => Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 });
-    const macros = row => `${amount(row.kcal)} kcal · ${amount(row.carbs_g)} g carbs · ${amount(row.protein_g)} g protein · ${amount(row.fat_g)} g fat`;
+    const rounded = value => Math.round(Number(value)).toLocaleString();
+    const macros = row => `${rounded(row.kcal)} kcal · ${rounded(row.carbs_g)} g carbs · ${rounded(row.protein_g)} g protein · ${rounded(row.fat_g)} g fat`;
+    const sportName = value => ({
+      HighIntensityIntervalTraining: 'HIIT',
+      WeightTraining: 'Strength',
+      'Cycling (Virtual)': 'Indoor cycling',
+      VirtualRide: 'Indoor cycling',
+      Running: 'Run',
+    })[value] || value || 'Workout';
+    const localDateTime = value => {
+      if (!value) return '';
+      const date = new Date(`${value.slice(0, 10)}T12:00:00`);
+      const day = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return `${day}, ${value.slice(11, 16)}`;
+    };
+    const appendRow = (parent, label, value) => {
+      const row = document.createElement('p');
+      const heading = document.createElement('strong');
+      heading.textContent = label;
+      row.append(heading, document.createElement('br'), value);
+      parent.append(row);
+    };
     const context = targets.training;
-    const completed = context.activity_count;
-    const planned = context.planned_workout_count;
-    const rows = [
-      ['Profile baseline', macros(targets.baseline)],
-      ['Daily target with training', macros(targets.final)],
-      ['Target for meals', macros(targets.meal_targets)],
-      ['Training considered', `${completed} completed in the ${context.window_hours}-hour recovery window · ${planned} remaining planned session(s) for this day`],
-    ];
     const inputs = targets.inputs;
-    if (inputs) {
-      const matched = inputs.scheduled.filter(row => row.status === 'completed');
-      const past = inputs.scheduled.filter(row => row.status === 'past_unmatched');
-      rows.push(['Scheduled sessions for this day', `${inputs.scheduled.length} total · ${matched.length} matched to completed activities · ${planned} remaining`]);
-      if (matched.length) rows.push(['Completed scheduled sessions', matched.map(row => `${row.sport} → ${row.matched_sport || 'completed activity'}`).join(', ')]);
-      if (past.length) rows.push(['Past sessions awaiting a match', past.map(row => row.sport).join(', ')]);
-      const localDateTime = value => {
-        const date = value.slice(0, 10);
-        const time = value.slice(11, 16);
-        return `${date} ${time}`;
-      };
-      rows.push(['Recovery window in your time zone', `${localDateTime(inputs.recovery_start)} to ${localDateTime(inputs.recovery_end)}. Includes imported completed activities within this window.`]);
-      for (const session of inputs.completed) {
-        rows.push(['Completed activity used', `${session.sport} · ${localDateTime(session.start_time)} · ${amount(session.duration_min)} min · ${amount(session.exercise_kcal)} kcal (${session.energy_source}, ${session.provider})`]);
-      }
-      rows.push(['How matched sessions are counted', 'Completed activities replace their matched planned sessions in the calculation.']);
+    const completed = context.activity_count;
+    const remaining = context.planned_workout_count;
+    const matched = (inputs?.scheduled || []).filter(row => row.status === 'completed');
+    const unmatched = (inputs?.scheduled || []).filter(row => row.status === 'past_unmatched');
+
+    appendRow(breakdown, 'Daily nutrition target', macros(targets.final));
+    const summary = document.createElement('p');
+    const sources = [];
+    if (completed) sources.push(`${completed} completed workout${completed === 1 ? '' : 's'}`);
+    if (remaining) sources.push(`${remaining} upcoming session${remaining === 1 ? '' : 's'} today`);
+    summary.textContent = sources.length ? `Based on ${sources.join(' and ')}.` : 'Based on your athlete profile.';
+    if (matched.length) {
+      summary.append(` Today’s ${matched.map(row => sportName(row.sport)).join(' and ')} ${matched.length === 1 ? 'session is' : 'sessions are'} accounted for in your completed training.`);
     }
-    if (planned > 0 && context.planned_duration_min > 0) {
-      rows.push(['Scheduled training estimate', `${amount(context.planned_duration_min)} min · ${context.planned_sports.join(', ')} · peak intensity: ${context.planned_intensity}`]);
+    if (unmatched.length) {
+      summary.append(` ${unmatched.length} past planned session${unmatched.length === 1 ? ' is' : 's are'} awaiting a completed activity match.`);
     }
-    if (completed > 0) {
-      const reported = context.reported_energy_count;
-      const estimated = context.estimated_energy_count;
-      const missing = completed - reported - estimated;
-      rows.push(['Completed workout energy', [
-        `${reported} reported`, `${estimated} estimated`, ...(missing > 0 ? [`${missing} unavailable`] : []),
-      ].join(' · ')]);
-    }
+    breakdown.append(summary);
+
     if (context.during_carbs_g > 0) {
-      rows.push(['Fuel during training', `${amount(context.during_carbs_g)} g carbs logged · ${amount(targets.workout_fuel_credit_g)} g counted toward the daily target`]);
+      appendRow(breakdown, 'Fuel during training', `${amount(context.during_carbs_g)} g carbs logged · ${amount(targets.workout_fuel_credit_g)} g counted toward your daily target`);
     }
-    for (const [slot, grams, reasons] of [
+    const mealTargetDiffers = ['kcal', 'carbs_g', 'protein_g', 'fat_g'].some(
+      key => Math.abs(targets.final[key] - targets.meal_targets[key]) >= 0.05
+    );
+    if (mealTargetDiffers) appendRow(breakdown, 'Target for meals', macros(targets.meal_targets));
+
+    for (const [label, grams, reasons] of [
       ['Dinner before training', targets.dinner_carbs_g, ['before_early_workout']],
       ['Breakfast for recovery', targets.breakfast_carbs_g, ['after_late_workout', 'after_late_activity']],
     ]) {
       if (!(grams > 0)) continue;
-      const sessions = targets.cross_day_sessions.filter(row => reasons.includes(row.reason))
-        .map(row => `${row.sport} (${row.date}${row.start_time ? ` at ${row.start_time.slice(11, 16)}` : ''})`);
-      rows.push([slot, `${amount(grams)} g carbs set aside in the target${sessions.length ? ` · ${sessions.join(', ')}` : ''}`]);
+      const sessions = (targets.cross_day_sessions || []).filter(row => reasons.includes(row.reason))
+        .map(row => `${sportName(row.sport)} · ${row.start_time ? localDateTime(row.start_time) : row.date}`);
+      appendRow(breakdown, label, `${amount(grams)} g carbs reserved${sessions.length ? ` for ${sessions.join(', ')}` : ''}`);
     }
-    for (const [label, value] of rows) {
-      const row = document.createElement('p');
-      const heading = document.createElement('strong');
-      heading.textContent = `${label}: `;
-      row.append(heading, value);
-      breakdown.append(row);
+
+    const calculation = document.createElement('details');
+    calculation.className = 'nutrition-calculation-details';
+    const toggle = document.createElement('summary');
+    toggle.textContent = 'Calculation details';
+    calculation.append(toggle);
+    appendRow(calculation, 'Profile baseline', macros(targets.baseline));
+    const adjustment = targets.adjustment;
+    const signed = value => `${value >= 0 ? '+' : '−'}${amount(Math.abs(value))}`;
+    appendRow(calculation, 'Training adjustment', `${signed(adjustment.kcal)} kcal · ${signed(adjustment.carbs_g)} g carbs · ${signed(adjustment.protein_g)} g protein · ${signed(adjustment.fat_g)} g fat`);
+    if (inputs) {
+      appendRow(calculation, 'Recovery window', `${localDateTime(inputs.recovery_start)} to ${localDateTime(inputs.recovery_end)} in your time zone`);
+      const list = document.createElement('ul');
+      for (const session of inputs.completed || []) {
+        const row = document.createElement('li');
+        const provider = session.provider === 'strava' ? 'Strava' : session.provider;
+        row.textContent = `${sportName(session.sport)} · ${localDateTime(session.start_time)} · ${amount(session.duration_min)} min · ${amount(session.exercise_kcal)} kcal (${session.energy_source}, ${provider})`;
+        list.append(row);
+      }
+      if (list.childElementCount) calculation.append(list);
+      if (matched.length) {
+        const matching = document.createElement('p');
+        matching.textContent = 'Completed activities replace their matched planned sessions in the calculation.';
+        calculation.append(matching);
+      }
+    } else if (completed) {
+      appendRow(calculation, 'Completed training', `${completed} workouts in the ${context.window_hours}-hour recovery window · ${context.reported_energy_count || 0} with reported energy · ${context.estimated_energy_count || 0} estimated`);
     }
+    if (remaining > 0 && context.planned_duration_min > 0) {
+      appendRow(calculation, 'Upcoming training today', `${amount(context.planned_duration_min)} min · ${context.planned_sports.map(sportName).join(', ')} · ${context.planned_intensity} peak intensity`);
+    }
+    const version = document.createElement('small');
+    version.className = 'muted';
+    version.textContent = `Rules version ${targets.policy_version}`;
+    calculation.append(version);
+    breakdown.append(calculation);
+
     const note = document.createElement('p');
     note.className = 'muted';
     note.textContent = plan.locked
-      ? `These recommendations reflect current training. Your locked meals are unchanged. Rules version: ${targets.policy_version}.`
-      : `These are current recommendations. Meal cards show the portions actually saved. Rules version: ${targets.policy_version}.`;
+      ? 'Your saved meals are locked. These targets reflect your current training.'
+      : 'Meal cards show your saved portions. Review any flagged meals to apply a fueling change.';
     breakdown.append(note);
   }
 
