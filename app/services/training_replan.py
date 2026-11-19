@@ -406,7 +406,13 @@ def replan_training_changes(
             origin = origins.get(slot)
             prescription = {key: round(value, 6) for key, value in new_targets[slot].items()}
             delta = {key: new_targets[slot][key] - old_targets[slot][key] for key in MACROS}
-            restoring = origin is not None and prescription == origin["prescription"]
+            restoring = origin is not None and (
+                prescription == origin["prescription"]
+                or (
+                    origin.get("training_fingerprint") is not None
+                    and after.cache_fingerprint() == origin["training_fingerprint"]
+                )
+            )
             if origin and origin.get("side_item_id") and not restoring:
                 # Keep the approved side as served until its baseline returns.
                 continue
@@ -438,6 +444,7 @@ def replan_training_changes(
                 old_prescription = {key: round(value, 6) for key, value in old_targets[slot].items()}
                 if not origin:
                     origin = {
+                        "training_fingerprint": before[plan.date].cache_fingerprint(),
                         "weights": weights[slot],
                         "prescription": old_prescription,
                         "target": meta.get("training_replan_target", weights[slot]),
@@ -450,6 +457,7 @@ def replan_training_changes(
                 # An older review can remain pending when a new edit is made.
                 # Approval must restore to the state before this specific edit.
                 meta["training_review_origin"] = {
+                    "training_fingerprint": before[plan.date].cache_fingerprint(),
                     "weights": weights[slot],
                     "prescription": old_prescription,
                     "target": _target_from_origin(origin, old_prescription),
