@@ -1480,8 +1480,26 @@
       ['Profile baseline', macros(targets.baseline)],
       ['Daily target with training', macros(targets.final)],
       ['Target for meals', macros(targets.meal_targets)],
-      ['Training considered', `${completed} completed in the ${context.window_hours}-hour recovery window · ${planned} scheduled on this day`],
+      ['Training considered', `${completed} completed in the ${context.window_hours}-hour recovery window · ${planned} remaining planned session(s) for this day`],
     ];
+    const inputs = targets.inputs;
+    if (inputs) {
+      const matched = inputs.scheduled.filter(row => row.status === 'completed');
+      const past = inputs.scheduled.filter(row => row.status === 'past_unmatched');
+      rows.push(['Scheduled sessions for this day', `${inputs.scheduled.length} total · ${matched.length} matched to completed activities · ${planned} remaining`]);
+      if (matched.length) rows.push(['Completed scheduled sessions', matched.map(row => `${row.sport} → ${row.matched_sport || 'completed activity'}`).join(', ')]);
+      if (past.length) rows.push(['Past sessions awaiting a match', past.map(row => row.sport).join(', ')]);
+      const localDateTime = value => {
+        const date = value.slice(0, 10);
+        const time = value.slice(11, 16);
+        return `${date} ${time}`;
+      };
+      rows.push(['Recovery window in your time zone', `${localDateTime(inputs.recovery_start)} to ${localDateTime(inputs.recovery_end)}. Includes imported completed activities within this window.`]);
+      for (const session of inputs.completed) {
+        rows.push(['Completed activity used', `${session.sport} · ${localDateTime(session.start_time)} · ${amount(session.duration_min)} min · ${amount(session.exercise_kcal)} kcal (${session.energy_source}, ${session.provider})`]);
+      }
+      rows.push(['How matched sessions are counted', 'Completed activities replace their matched planned sessions in the calculation.']);
+    }
     if (planned > 0 && context.planned_duration_min > 0) {
       rows.push(['Scheduled training estimate', `${amount(context.planned_duration_min)} min · ${context.planned_sports.join(', ')} · peak intensity: ${context.planned_intensity}`]);
     }

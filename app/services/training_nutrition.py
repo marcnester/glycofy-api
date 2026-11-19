@@ -78,6 +78,7 @@ class TrainingNutritionResult:
     dinner_carbs_g: float = 0.0
     breakfast_carbs_g: float = 0.0
     workout_inputs: tuple[WorkoutInput, ...] = ()
+    input_audit: dict[str, Any] = field(default_factory=dict, compare=False)
 
     @property
     def workout_fuel_credit_g(self) -> float:
@@ -94,6 +95,7 @@ class TrainingNutritionResult:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data.pop("workout_inputs")
+        data.pop("input_audit")
         data["training"].pop("reported_energy_count")
         data["training"].pop("estimated_energy_count")
         return {"policy_version": FUELING_POLICY_VERSION, **data, "meal_targets": asdict(self.meal_targets)}
@@ -107,6 +109,7 @@ class TrainingNutritionResult:
             reported_energy_count=self.training.reported_energy_count,
             estimated_energy_count=self.training.estimated_energy_count,
         )
+        data["inputs"] = self.input_audit
         data["workout_fuel_credit_g"] = round(self.workout_fuel_credit_g, 1)
         data["cross_day_sessions"] = [
             {"reason": row.reason, "sport": row.sport, "date": row.date, "start_time": row.start_time}
@@ -604,7 +607,8 @@ def calculate_training_nutrition(
     )
     recent = [activity for activity in activities if window_start <= activity.start_time < window_end]
     result = calculate_from_activities(baseline=baseline, user=user, activities=recent, window_hours=window_hours)
-    planned, _ = reconcile_planned_workouts(planned, activities, user, now=now_naive)
+    scheduled_today = [row for row in planned if row.workout_date == plan_date]
+    planned, matches = reconcile_planned_workouts(planned, activities, user, now=now_naive)
     today = now_utc.astimezone(tz).date()
     upcoming = [
         row for row in planned if row.workout_date >= today and (row.start_time is None or row.start_time >= now_naive)
@@ -694,8 +698,40 @@ def calculate_training_nutrition(
         rationale += (f"Reserved {breakfast_carbs:.0f} g carbohydrate for breakfast after late training.",)
     if during_carbs:
         rationale += (f"Logged {during_carbs:g} g carbohydrate during training on this day.",)
+    input_audit = {
+        "recovery_start": (day_end - timedelta(hours=window_hours)).isoformat(),
+        "recovery_end": day_end.isoformat(),
+        "latest_completed_start": max((local_time(row.start_time).isoformat() for row in recent), default=None),
+        "completed": [
+            {
+                "sport": row.sport or "Workout",
+                "start_time": local_time(row.start_time).isoformat(),
+                "duration_min": round(_activity_duration_s(row) / 60, 1),
+                "exercise_kcal": round(_estimate_activity_kcal(row, weight)[0], 1),
+                "energy_source": (
+                    "reported"
+                    if _safe_float(row.kcal) > 0
+                    else "estimated" if _estimate_activity_kcal(row, weight)[0] > 0 else "unavailable"
+                ),
+                "provider": row.source_provider or row.provider or "activity",
+            }
+            for row in recent
+        ],
+        "scheduled": [
+            {
+                "sport": row.sport,
+                "date": row.workout_date.isoformat(),
+                "start_time": local_time(row.start_time).isoformat() if row.start_time else None,
+                "duration_min": row.duration_min,
+                "status": ("completed" if row.id in matches else "remaining" if row in same_day else "past_unmatched"),
+                "matched_sport": matches[row.id].sport if row.id in matches else None,
+            }
+            for row in scheduled_today
+        ],
+    }
     return replace(
         result,
+        input_audit=input_audit,
         final=final,
         adjustment=replace(
             result.adjustment,
