@@ -643,6 +643,10 @@ def test_fueling_side_reuses_grocery_item_and_disappears_on_reversal():
         donor = client.get(donor_path).json()["meals"]
         original = client.get(path).json()["meals"][0]
         grocery_url = f"/v1/plan/grocery-list/week?start={day}"
+        assert client.put(
+            "/v1/plan/grocery-list/preferences",
+            json={"ingredient_key": "banana", "in_pantry": True, "package_quantity": 100, "package_unit": "g"},
+        ).is_success
         original_groceries = client.get(grocery_url).json()["items"]
         assert client.patch(ride_path, json={"duration_min": 120, "intensity": "hard"}).is_success
         pending = client.get(path).json()["meals"][0]
@@ -650,6 +654,14 @@ def test_fueling_side_reuses_grocery_item_and_disappears_on_reversal():
         assert preview["kind"] == "side"
         assert preview["ingredient"] == "Banana"
         assert preview["change_carbs_g"] == 35
+        shopping = preview["shopping_impact"]
+        assert shopping["quantity_change_g"] == preview["proposed_qty_g"]
+        assert shopping["in_pantry"] is True
+        assert shopping["start"] == str(day)
+        assert shopping["end"] == str(day + timedelta(days=6))
+        assert shopping["after"]["quantity"] > shopping["before"]["quantity"]
+        assert shopping["package_change"]["after"] >= shopping["package_change"]["before"]
+
         assert pending["ingredients"] == original["ingredients"]
         endpoint = f"{path}/meals/{pending['id']}/fueling-adjustment"
         approval = {"token": preview["token"]}

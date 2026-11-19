@@ -358,6 +358,52 @@ def _fueling_grocery_items(db: Session, user: User, day: date_cls, preference: U
     ]
 
 
+def _fueling_shopping_impact(db: Session, user: User, day: date_cls, preview: dict) -> dict[str, Any]:
+    ingredient_key, ingredient_name = _grocery_name(preview["ingredient"])
+    plans = db.query(Plan).filter(Plan.user_id == user.id, Plan.date.between(day, day + timedelta(days=6))).all()
+    measurements: dict[str, float] = {}
+    for plan in plans:
+        for _, item in _iter_items(plan):
+            if _grocery_name(item.name)[0] != ingredient_key:
+                continue
+            measurement = _grocery_measurement(item.qty, item.unit)
+            if measurement:
+                dimension, value = measurement
+                measurements[dimension] = measurements.get(dimension, 0) + value
+    delta = round(preview["proposed_qty_g"] - preview["current_qty_g"], 1)
+    updated = dict(measurements)
+    updated["mass_g"] = max(0, updated.get("mass_g", 0) + delta)
+    before = _format_grocery_measurements(ingredient_key, measurements, user.units)
+    after = _format_grocery_measurements(ingredient_key, updated, user.units)
+    preference = (
+        db.query(GroceryPreference)
+        .filter(GroceryPreference.user_id == user.id, GroceryPreference.ingredient_key == ingredient_key)
+        .first()
+    )
+    impact = {
+        "ingredient": ingredient_name,
+        "quantity_change_g": delta,
+        "start": day.isoformat(),
+        "end": (day + timedelta(days=6)).isoformat(),
+        "before": {"quantity": before.get("quantity"), "unit": before.get("unit")},
+        "after": {"quantity": after.get("quantity"), "unit": after.get("unit")},
+        "in_pantry": bool(preference and preference.in_pantry),
+        "package_change": None,
+    }
+    if preference and preference.package_quantity:
+        package_measurement = _grocery_measurement(preference.package_quantity, preference.package_unit)
+        if package_measurement and len(measurements) == len(updated) == 1:
+            dimension, size = package_measurement
+            if size > 0 and dimension in measurements and dimension in updated:
+                impact["package_change"] = {
+                    "before": ceil(measurements[dimension] / size),
+                    "after": ceil(updated[dimension] / size),
+                    "size": preference.package_quantity,
+                    "unit": preference.package_unit,
+                }
+    return impact
+
+
 def _plan_with_training(
     db: Session, user: User, plan: Plan, preference: UserPreference | None = None
 ) -> dict[str, Any]:
@@ -394,6 +440,7 @@ def _plan_with_training(
                     for key, value in preview.items()
                     if key not in {"item_macros", "meal_macros", "source_meta"}
                 }
+                row["fueling_adjustment"]["shopping_impact"] = _fueling_shopping_impact(db, user, day, preview)
     return data
 
 
