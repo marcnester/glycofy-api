@@ -434,7 +434,7 @@ def test_account_deletion_dialog_supports_escape_key():
 def test_ai_progress_copy_distinguishes_today_from_durable_weekly_jobs():
     page = Path("ui/plan.html").read_text(encoding="utf-8")
     script = Path("ui/plan.js").read_text(encoding="utf-8")
-    assert "plan.js?v=2026-11-18-concise-targets" in page
+    assert "plan.js?v=2026-11-18-shopping-impact" in page
     assert 'id="nutrition-confidence"' in page
     assert "plan.nutrition_verified" in script
     assert "nutrition-checked plan" in script

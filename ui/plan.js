@@ -1173,7 +1173,26 @@
     apply.className = 'btn';
     apply.type = 'button';
     apply.textContent = side ? 'Add side' : 'Apply portion change';
-    review.append(carbs, apply);
+    review.append(carbs);
+    const impact = preview.shopping_impact;
+    if (impact) {
+      const shopping = document.createElement('p');
+      const delta = impact.quantity_change_g;
+      shopping.textContent = `Grocery list ${impact.start}–${impact.end}: ${delta >= 0 ? '+' : '−'}${amount(Math.abs(delta))} g ${impact.ingredient}.`;
+      if (impact.before.quantity != null && impact.after.quantity != null) {
+        shopping.append(` Total ${amount(impact.before.quantity)} ${impact.before.unit || ''} → ${amount(impact.after.quantity)} ${impact.after.unit || ''}.`);
+      }
+      if (impact.in_pantry) shopping.append(' Marked in your pantry. Check the amount available before applying.');
+      const packages = impact.package_change;
+      if (packages) {
+        shopping.append(` With your saved ${amount(packages.size)} ${packages.unit} package size: ${packages.before} → ${packages.after} packages for this list.`);
+      }
+      const groceryLink = document.createElement('a');
+      groceryLink.href = `/ui/grocery.html?start=${encodeURIComponent(impact.start)}&end=${encodeURIComponent(impact.end)}`;
+      groceryLink.textContent = 'Review grocery list';
+      review.append(shopping, groceryLink);
+    }
+    review.append(apply);
 
     apply.addEventListener('click', async () => {
       apply.disabled = true;
