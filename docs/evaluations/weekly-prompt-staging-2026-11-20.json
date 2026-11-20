@@ -1,0 +1,333 @@
+{
+  "validation_date_utc": "2026-11-20",
+  "runtime_commit": "c0f0df09393f151b8273e939ddc19c0ad88d3fbf",
+  "image": "ghcr.io/marcnester/glycofy-api@sha256:cf4d6ac920c2c94cd1124087df9c0361235df1c783689b9b23fa0d65de625179",
+  "deployment": "dep-dbvvttrm8hqs7395kk6g",
+  "environment": "isolated staging",
+  "variant": "evidence_first",
+  "policy": "nutrition-safety-v24-usda-dairy-aliases",
+  "migration": "add_grocery_stock",
+  "overall_release_validation_passed": false,
+  "release_blocker": "Vegan wheat-free full-week recovery failed with both candidate and control. No partial week was saved.",
+  "method": "Existing staging test account; synthetic future dates; profile baseline with no workouts; 2 snacks/day. Actual durable weekly job, model, USDA verification, repairs, catalog recovery, fitting and persistence. Independent saved-meal audit. UI run used the signed-in Plan My Next 7 Days button. Costs sum recorded operations during each isolated run and are application estimates, not billing totals.",
+  "initial_finding": {
+    "server_seconds": 152.42,
+    "meals": 35,
+    "nutrition_verified": true,
+    "protein_source_false_positive_count": 3,
+    "resolution": "Recognize USDA word-order aliases Cheese, cottage and Yogurt, Greek in policy v24. Two regression cases also retain rejection of unsupported protein claims."
+  },
+  "candidate_runs": [
+    {
+      "case": "omnivore_1",
+      "status": "completed",
+      "server_seconds": 102.794,
+      "wall_seconds": 104.791,
+      "estimated_model_cost_usd": 0.044079,
+      "saved_meals": 35,
+      "saved_ingredients": 211,
+      "nutrition_verified": true,
+      "quality_failures": [],
+      "max_title_repeat": 1,
+      "max_composition_repeat_per_slot": 2,
+      "generation": {
+        "mode": "parallel_days",
+        "latency_ms": 43136,
+        "accepted": 30,
+        "rejected": 5,
+        "day_generations": 7,
+        "prompt_version": "weekly-meals-2026-11-19-v12-evidence-first",
+        "quality_policy_version": "nutrition-safety-v24-usda-dairy-aliases",
+        "duplicate_titles_removed": 9,
+        "repair": {
+          "requested": 10,
+          "accepted": 1,
+          "rejected": 0,
+          "latency_ms": 4149,
+          "duplicates_removed": 1,
+          "deferred": 1
+        },
+        "final_repair": {
+          "requested": 10,
+          "accepted": 8,
+          "rejected": 2,
+          "latency_ms": 26558,
+          "duplicates_removed": 1,
+          "deferred": 1
+        },
+        "focused_repair": [
+          {
+            "date": "2027-01-07",
+            "slot": "lunch",
+            "accepted": false,
+            "rejected": 1,
+            "latency_ms": 4606
+          },
+          {
+            "date": "2027-01-08",
+            "slot": "dinner",
+            "accepted": false,
+            "rejected": 0,
+            "latency_ms": 4877
+          },
+          {
+            "date": "2027-01-09",
+            "slot": "breakfast",
+            "accepted": false,
+            "rejected": 1,
+            "latency_ms": 3849
+          }
+        ],
+        "focused_repair_skipped": 1
+      }
+    },
+    {
+      "case": "omnivore_2",
+      "status": "completed",
+      "server_seconds": 103.507,
+      "wall_seconds": 104.982,
+      "estimated_model_cost_usd": 0.043454,
+      "saved_meals": 35,
+      "saved_ingredients": 210,
+      "nutrition_verified": true,
+      "quality_failures": [],
+      "max_title_repeat": 1,
+      "max_composition_repeat_per_slot": 2,
+      "generation": {
+        "mode": "parallel_days",
+        "latency_ms": 44787,
+        "accepted": 29,
+        "rejected": 6,
+        "day_generations": 7,
+        "prompt_version": "weekly-meals-2026-11-19-v12-evidence-first",
+        "quality_policy_version": "nutrition-safety-v24-usda-dairy-aliases",
+        "duplicate_titles_removed": 13,
+        "repair": {
+          "requested": 10,
+          "accepted": 1,
+          "rejected": 0,
+          "latency_ms": 3833,
+          "duplicates_removed": 2,
+          "deferred": 3
+        },
+        "final_repair": {
+          "requested": 10,
+          "accepted": 8,
+          "rejected": 2,
+          "latency_ms": 25579,
+          "duplicates_removed": 2,
+          "deferred": 4
+        },
+        "focused_repair": [
+          {
+            "date": "2027-01-13",
+            "slot": "snack",
+            "accepted": true,
+            "rejected": 0,
+            "latency_ms": 3284
+          },
+          {
+            "date": "2027-01-14",
+            "slot": "lunch",
+            "accepted": false,
+            "rejected": 0,
+            "latency_ms": 4694
+          },
+          {
+            "date": "2027-01-16",
+            "slot": "breakfast",
+            "accepted": false,
+            "rejected": 0,
+            "latency_ms": 4043
+          }
+        ],
+        "focused_repair_skipped": 5
+      }
+    },
+    {
+      "case": "locked_day",
+      "status": "completed",
+      "server_seconds": 86.492,
+      "wall_seconds": 86.847,
+      "estimated_model_cost_usd": 0.040209,
+      "saved_meals": 30,
+      "saved_ingredients": 184,
+      "nutrition_verified": true,
+      "quality_failures": [],
+      "max_title_repeat": 1,
+      "max_composition_repeat_per_slot": 2,
+      "generation": {
+        "mode": "parallel_days",
+        "latency_ms": 42581,
+        "accepted": 29,
+        "rejected": 6,
+        "day_generations": 7,
+        "prompt_version": "weekly-meals-2026-11-19-v12-evidence-first",
+        "quality_policy_version": "nutrition-safety-v24-usda-dairy-aliases",
+        "duplicate_titles_removed": 7,
+        "repair": {
+          "requested": 10,
+          "accepted": 1,
+          "rejected": 0,
+          "latency_ms": 3832,
+          "duplicates_removed": 1,
+          "deferred": 1
+        },
+        "final_repair": {
+          "requested": 10,
+          "accepted": 1,
+          "rejected": 0,
+          "latency_ms": 4949,
+          "duplicates_removed": 0,
+          "deferred": 1
+        },
+        "focused_repair": [
+          {
+            "date": "2027-01-21",
+            "slot": "lunch",
+            "accepted": false,
+            "rejected": 1,
+            "latency_ms": 5098
+          },
+          {
+            "date": "2027-01-22",
+            "slot": "breakfast",
+            "accepted": false,
+            "rejected": 0,
+            "latency_ms": 4668
+          },
+          {
+            "date": "2027-01-22",
+            "slot": "lunch",
+            "accepted": true,
+            "rejected": 0,
+            "latency_ms": 4570
+          }
+        ],
+        "focused_repair_skipped": 7
+      },
+      "locked_fingerprint_before": "d7c5212aa3c410f5a57c8f5d304cb59419501a2dee358ed29d49c6a82376121c",
+      "locked_fingerprint_after": "d7c5212aa3c410f5a57c8f5d304cb59419501a2dee358ed29d49c6a82376121c",
+      "direct_locked_save": {
+        "date": "2027-01-18",
+        "skipped": true,
+        "reason": "locked",
+        "applied": 0,
+        "created_recipes": 0
+      },
+      "temporary_lock_restored": true
+    },
+    {
+      "case": "vegan_wheat_free",
+      "status": "failed",
+      "server_seconds": 134.063,
+      "wall_seconds": 134.822,
+      "estimated_model_cost_usd": 0.045193,
+      "saved_meals": 0,
+      "saved_ingredients": 0,
+      "nutrition_verified": null,
+      "quality_failures": [],
+      "max_title_repeat": 0,
+      "max_composition_repeat_per_slot": 0,
+      "generation": null,
+      "failure_reason": "restricted_week_incomplete",
+      "partial_week_saved": false
+    }
+  ],
+  "control_restricted_run": {
+    "case": "control_vegan_wheat_free",
+    "status": "failed",
+    "server_seconds": 144.594,
+    "wall_seconds": 145.157,
+    "estimated_model_cost_usd": 0.027312,
+    "saved_meals": 0,
+    "saved_ingredients": 0,
+    "nutrition_verified": null,
+    "quality_failures": [],
+    "max_title_repeat": 0,
+    "max_composition_repeat_per_slot": 0,
+    "generation": null,
+    "failure_reason": "restricted_week_incomplete",
+    "partial_week_saved": false
+  },
+  "browser_run": {
+    "status": "completed",
+    "seconds": 115.305086,
+    "saved_meals": 35,
+    "ingredients": 212,
+    "quality_failures": [],
+    "nutrition_verified": true,
+    "generation": {
+      "mode": "parallel_days",
+      "latency_ms": 44582,
+      "accepted": 25,
+      "rejected": 10,
+      "day_generations": 7,
+      "prompt_version": "weekly-meals-2026-11-19-v12-evidence-first",
+      "quality_policy_version": "nutrition-safety-v24-usda-dairy-aliases",
+      "duplicate_titles_removed": 10,
+      "repair": {
+        "requested": 10,
+        "accepted": 1,
+        "rejected": 0,
+        "latency_ms": 5616,
+        "duplicates_removed": 1,
+        "deferred": 7
+      },
+      "final_repair": {
+        "requested": 10,
+        "accepted": 9,
+        "rejected": 1,
+        "latency_ms": 28395,
+        "duplicates_removed": 1,
+        "deferred": 7
+      },
+      "focused_repair": [
+        {
+          "date": "2027-02-03",
+          "slot": "lunch",
+          "accepted": false,
+          "rejected": 0,
+          "latency_ms": 5328
+        },
+        {
+          "date": "2027-02-05",
+          "slot": "lunch",
+          "accepted": false,
+          "rejected": 1,
+          "latency_ms": 5052
+        },
+        {
+          "date": "2027-02-05",
+          "slot": "snack",
+          "accepted": false,
+          "rejected": 1,
+          "latency_ms": 4415
+        }
+      ],
+      "focused_repair_skipped": 6
+    },
+    "migration": "add_grocery_stock",
+    "max_title_repeat": 1,
+    "max_composition_repeat": 2,
+    "existing_plans_unchanged": true,
+    "estimated_model_cost_usd": 0.0436186,
+    "snack_preference_restored": true,
+    "click_to_response_seconds": 117.239
+  },
+  "restoration": {
+    "candidate_existing_plans_unchanged": true,
+    "candidate_preferences_restored": true,
+    "control_existing_plans_unchanged": true,
+    "control_preferences_restored": true,
+    "ui_existing_plans_unchanged": true,
+    "ui_snack_preference_restored": true
+  },
+  "production_changed": false,
+  "limitations": [
+    "Small exploratory sample; not a reliability or statistical-significance claim.",
+    "Staging weeks use baseline targets and warmed evidence. These timings are not a controlled comparison with the earlier high-training production week.",
+    "Restricted-diet coverage remains incomplete; candidate stays opt-in on staging only.",
+    "Independent audits use existing nutrient reconciliation tolerances of 25 kcal and 2 g per meal; not bitwise equality of rounded nutrient sums. Locked-day checks compare exact full-row fingerprints."
+  ]
+}
