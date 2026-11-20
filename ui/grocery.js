@@ -97,6 +97,9 @@
       pantry: Boolean(preference.in_pantry),
       quantity: item.quantity,
       unit: item.unit,
+      stockPantry: preference.pantry_quantity ?? null,
+      stockPurchased: preference.purchased_quantity ?? null,
+      stockUnit: preference.stock_unit || "g",
       preferredBrand: preference.preferred_brand || "",
       packageQuantity: preference.package_quantity || item.package?.package_size || null,
       packageUnit: preference.package_unit || item.package?.package_unit || item.unit || "",
@@ -105,6 +108,9 @@
     if (existing.packageQuantity === undefined) edits[item.id].packageQuantity = preference.package_quantity || item.package?.package_size || null;
     if (existing.packageUnit === undefined) edits[item.id].packageUnit = preference.package_unit || item.package?.package_unit || item.unit || "";
     if (existing.preferredBrand === undefined) edits[item.id].preferredBrand = preference.preferred_brand || "";
+    edits[item.id].stockPantry = preference.pantry_quantity ?? null;
+    edits[item.id].stockPurchased = preference.purchased_quantity ?? null;
+    edits[item.id].stockUnit = preference.stock_unit || "g";
     return edits[item.id];
   }
   function scaledQuantity(item) {
@@ -134,7 +140,13 @@
     return `${estimate}${brand}Buy ${plan.count} × ${plan.size} ${unitText(plan.size, plan.unit)}${leftover}`;
   }
   function escapeCsv(value) { return `"${String(value ?? "").replace(/"/g, '""')}"`; }
-  function visibleItems() { return (data?.items || []).filter((item) => !stateFor(item).pantry); }
+  function coveredByStock(item) {
+    const stock = item.stock_coverage;
+    if (stock?.status === "short") return false;
+    if (stock?.status === "enough") return true;
+    return stateFor(item).pantry;
+  }
+  function visibleItems() { return (data?.items || []).filter((item) => !coveredByStock(item)); }
   function listText() {
     const grouped = new Map();
     visibleItems().forEach((item) => {
@@ -154,12 +166,12 @@
     const pantry = (data?.items || []).length - items.length;
     $("progress_text").textContent = `${done} of ${items.length} collected${pantry ? ` · ${pantry} already on hand` : ""}`;
   }
-  async function persistPreference(item) {
+  async function persistPreference(item, stock = null) {
     const state = stateFor(item);
     await glyco.fetchJSON("/v1/plan/grocery-list/preferences", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ingredient_key: item.id, in_pantry: Boolean(state.pantry), preferred_brand: state.preferredBrand || null, package_quantity: state.packageQuantity ? Number(state.packageQuantity) : null, package_unit: state.packageUnit || null }),
+      body: JSON.stringify({ ingredient_key: item.id, in_pantry: Boolean(state.pantry), preferred_brand: state.preferredBrand || null, package_quantity: state.packageQuantity ? Number(state.packageQuantity) : null, package_unit: state.packageUnit || null, ...(stock || {}) }),
     });
   }
   function buildRow(item, pantryView = false) {
@@ -175,6 +187,10 @@
     use.className = "item-use"; use.textContent = item.measurement_summary ? `${item.measurement_summary} · Used in ${item.uses.length} meals` : `Used in ${item.uses.length} meal${item.uses.length === 1 ? "" : "s"}`;
     const purchase = document.createElement("span");
     purchase.className = "purchase-guidance"; purchase.textContent = pantryView ? "Already in your pantry" : packageText(item);
+    const stock = item.stock_coverage;
+    if (stock?.status === "enough" || stock?.status === "short") {
+      purchase.textContent = `Available ${stock.available} ${stock.unit} · list needs ${stock.needed} ${stock.unit} · ${stock.status === "enough" ? "enough on hand" : `buy ${stock.buy_quantity} ${stock.unit} more`}`;
+    }
     name.append(use, purchase);
     if (item.shopping_note) { const note = document.createElement("span"); note.className="item-use"; note.textContent=item.shopping_note; name.append(note); }
     const qty = document.createElement("input");
@@ -184,6 +200,14 @@
     unit.className = "unit"; unit.value = state.unit || ""; unit.placeholder = "unit"; unit.disabled = pantryView; unit.setAttribute("aria-label", `${item.name} needed unit`);
     unit.addEventListener("change", () => { state.unit = unit.value.trim(); saveEdits(); purchase.textContent = packageText(item); });
     const options = document.createElement("button");
+    if (pantryView) {
+      const stockButton = document.createElement("button");
+      stockButton.type = "button";
+      stockButton.className = "pantry-btn";
+      stockButton.textContent = "Stock";
+      stockButton.addEventListener("click", () => openOptions(item));
+      name.append(stockButton);
+    }
     options.className = "pantry-btn"; options.type = "button"; options.textContent = pantryView ? "Need this" : "Options";
     options.addEventListener("click", async () => {
       if (!pantryView) { openOptions(item); return; }
@@ -220,7 +244,7 @@
       const heading = document.createElement(category === "Pantry" ? "summary" : "h2"); heading.textContent = `${category}${category === "Pantry" ? " check" : ""} · ${items.length}`; section.appendChild(heading);
       items.forEach((item) => section.appendChild(buildRow(item))); root.appendChild(section);
     });
-    const pantryItems = (data.items || []).filter((item) => stateFor(item).pantry);
+    const pantryItems = (data.items || []).filter(coveredByStock);
     if (pantryItems.length) {
       const section = document.createElement("details"); section.className = "category category--pantry pantry-owned";
       const heading = document.createElement("summary"); heading.textContent = `Already have · ${pantryItems.length}`; section.appendChild(heading);
@@ -231,6 +255,9 @@
   function openOptions(item) {
     editingItem = item;
     const state = stateFor(item);
+    $("grocery-pantry-quantity").value = state.stockPantry ?? "";
+    $("grocery-purchased-quantity").value = state.stockPurchased ?? "";
+    $("grocery-stock-unit").value = state.stockUnit || "g";
     $("grocery-options-title").textContent = item.name; $("grocery-brand").value = state.preferredBrand || ""; $("grocery-package-quantity").value = state.packageQuantity || ""; $("grocery-package-unit").value = state.packageUnit || state.unit || ""; $("grocery-in-pantry").checked = Boolean(state.pantry); $("grocery-options-error").textContent = ""; $("grocery-options-dialog").showModal();
   }
   async function load() {
@@ -288,7 +315,17 @@
     $("grocery-options-cancel").addEventListener("click", () => $("grocery-options-dialog").close());
     $("grocery-options-form").addEventListener("submit", async (event) => {
       event.preventDefault(); if (!editingItem) return; const state = stateFor(editingItem); state.preferredBrand = $("grocery-brand").value.trim(); state.packageQuantity = $("grocery-package-quantity").value ? Number($("grocery-package-quantity").value) : null; state.packageUnit = $("grocery-package-unit").value.trim(); state.pantry = $("grocery-in-pantry").checked;
-      try { await persistPreference(editingItem); saveEdits(); $("grocery-options-dialog").close(); render(); } catch (error) { $("grocery-options-error").textContent = error.message || "Could not save this preference."; }
+      try {
+        const stock = {
+          pantry_quantity: $("grocery-pantry-quantity").value === "" ? null : Number($("grocery-pantry-quantity").value),
+          purchased_quantity: $("grocery-purchased-quantity").value === "" ? null : Number($("grocery-purchased-quantity").value),
+          stock_unit: $("grocery-stock-unit").value,
+        };
+        await persistPreference(editingItem, stock);
+        state.stockPantry = stock.pantry_quantity;
+        state.stockPurchased = stock.purchased_quantity;
+        state.stockUnit = stock.stock_unit;
+        saveEdits(); $("grocery-options-dialog").close(); await load(); } catch (error) { $("grocery-options-error").textContent = error.message || "Could not save this preference."; }
     });
     $("logout_btn").addEventListener("click", () => glyco.doLogout && glyco.doLogout()); load(); loadRetailer();
   });

@@ -1182,7 +1182,17 @@
       if (impact.before.quantity != null && impact.after.quantity != null) {
         shopping.append(` Total ${amount(impact.before.quantity)} ${impact.before.unit || ''} → ${amount(impact.after.quantity)} ${impact.after.unit || ''}.`);
       }
-      if (impact.in_pantry) shopping.append(' Marked in your pantry. Check the amount available before applying.');
+      const stock = impact.stock_coverage;
+      if (stock?.status === 'enough' || stock?.status === 'short') {
+        shopping.append(` Available ${amount(stock.available)} ${stock.unit} across pantry and purchases. This list needs ${amount(stock.needed)} ${stock.unit} after the adjustment.`);
+        shopping.append(stock.status === 'enough'
+          ? ' You have enough.'
+          : ` Buy ${amount(stock.buy_quantity)} ${stock.unit} more${stock.packages_to_buy != null ? ` (${stock.packages_to_buy} saved-size packages)` : ''}.`);
+      } else {
+        shopping.append(stock?.status === 'incompatible_units'
+          ? ' Update stock in a compatible unit to calculate how much more to buy.'
+          : ' Enter pantry and purchased amounts in grocery options to check whether you have enough.');
+      }
       const packages = impact.package_change;
       if (packages) {
         shopping.append(` With your saved ${amount(packages.size)} ${packages.unit} package size: ${packages.before} → ${packages.after} packages for this list.`);
