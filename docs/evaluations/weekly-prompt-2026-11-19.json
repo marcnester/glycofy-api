@@ -1,0 +1,153 @@
+{
+  "complete": true,
+  "model": "gpt-5.6-luna",
+  "quality_policy_version": "nutrition-safety-v23-complete-ingredient-evidence",
+  "nutrition_cache_records": 712,
+  "saved_plans_unchanged": true,
+  "sql_write_guard_enabled": true,
+  "live_usda_requests": 0,
+  "runs": [
+    {
+      "case": "athlete_week",
+      "repeat": 1,
+      "variant": "control",
+      "prompt_version": "meal-planner-2026-09-13-v11-beta-quality",
+      "requested": 35,
+      "accepted_after_variety": 15,
+      "needs_repair": 20,
+      "rejected_before_variety": 18,
+      "duplicates_removed": 2,
+      "first_pass_seconds": 50.73,
+      "reference_food_count": 0,
+      "rejection_reasons": {
+        "missing_ingredient_nutrition": 16,
+        "nutrition_unreconciled": 16,
+        "nutrition_unverified": 16,
+        "target_miss": 15,
+        "oversized_portion": 1,
+        "missing_fat_source": 1,
+        "instruction_quantity_mismatch": 1
+      },
+      "unsafe_accepted": [],
+      "cost_usd": 0.019301,
+      "model_calls": 7
+    },
+    {
+      "case": "athlete_week",
+      "repeat": 1,
+      "variant": "candidate",
+      "prompt_version": "weekly-meals-2026-11-19-v12-evidence-first",
+      "requested": 35,
+      "accepted_after_variety": 21,
+      "needs_repair": 14,
+      "rejected_before_variety": 6,
+      "duplicates_removed": 8,
+      "first_pass_seconds": 43.283,
+      "reference_food_count": 64,
+      "rejection_reasons": {
+        "missing_protein_source": 1,
+        "duplicate_cooking_step": 2,
+        "target_miss": 4,
+        "missing_doneness_cue": 1,
+        "uncooked_raw_protein": 1,
+        "missing_carb_source": 1
+      },
+      "unsafe_accepted": [],
+      "cost_usd": 0.028305,
+      "model_calls": 7
+    },
+    {
+      "case": "athlete_week",
+      "repeat": 2,
+      "variant": "candidate",
+      "prompt_version": "weekly-meals-2026-11-19-v12-evidence-first",
+      "requested": 35,
+      "accepted_after_variety": 26,
+      "needs_repair": 9,
+      "rejected_before_variety": 5,
+      "duplicates_removed": 4,
+      "first_pass_seconds": 44.795,
+      "reference_food_count": 64,
+      "rejection_reasons": {
+        "missing_protein_source": 2,
+        "target_miss": 3,
+        "duplicate_cooking_step": 1,
+        "inconsistent_wait_time": 1
+      },
+      "unsafe_accepted": [],
+      "cost_usd": 0.0284,
+      "model_calls": 7
+    },
+    {
+      "case": "athlete_week",
+      "repeat": 2,
+      "variant": "control",
+      "prompt_version": "meal-planner-2026-09-13-v11-beta-quality",
+      "requested": 35,
+      "accepted_after_variety": 13,
+      "needs_repair": 22,
+      "rejected_before_variety": 20,
+      "duplicates_removed": 2,
+      "first_pass_seconds": 46.691,
+      "reference_food_count": 0,
+      "rejection_reasons": {
+        "missing_ingredient_nutrition": 19,
+        "nutrition_unreconciled": 19,
+        "nutrition_unverified": 19,
+        "target_miss": 16,
+        "duplicate_cooking_step": 1,
+        "inconsistent_wait_time": 2
+      },
+      "unsafe_accepted": [],
+      "cost_usd": 0.019374,
+      "model_calls": 7
+    },
+    {
+      "case": "vegan_soy_wheat_free",
+      "repeat": 1,
+      "variant": "control",
+      "prompt_version": "meal-planner-2026-09-13-v11-beta-quality",
+      "requested": 10,
+      "accepted_after_variety": 0,
+      "needs_repair": 10,
+      "rejected_before_variety": 10,
+      "duplicates_removed": 0,
+      "first_pass_seconds": 17.029,
+      "reference_food_count": 0,
+      "rejection_reasons": {
+        "missing_ingredient_nutrition": 10,
+        "nutrition_unreconciled": 10,
+        "nutrition_unverified": 10,
+        "target_miss": 5,
+        "oversized_portion": 3,
+        "excluded_ingredient": 2
+      },
+      "unsafe_accepted": [],
+      "cost_usd": 0.005298,
+      "model_calls": 2
+    },
+    {
+      "case": "vegan_soy_wheat_free",
+      "repeat": 1,
+      "variant": "candidate",
+      "prompt_version": "weekly-meals-2026-11-19-v12-evidence-first",
+      "requested": 10,
+      "accepted_after_variety": 8,
+      "needs_repair": 2,
+      "rejected_before_variety": 2,
+      "duplicates_removed": 0,
+      "first_pass_seconds": 15.413,
+      "reference_food_count": 50,
+      "rejection_reasons": {
+        "missing_ingredient_nutrition": 1,
+        "nutrition_unreconciled": 1,
+        "nutrition_unverified": 1,
+        "target_miss": 1
+      },
+      "unsafe_accepted": [],
+      "cost_usd": 0.007145,
+      "model_calls": 2
+    }
+  ],
+  "scope": "Unpersisted first pass plus existing variety checks, not end-to-end saved-week timing"
+}
