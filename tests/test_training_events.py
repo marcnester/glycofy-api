@@ -661,6 +661,47 @@ def test_fueling_side_reuses_grocery_item_and_disappears_on_reversal():
         assert shopping["end"] == str(day + timedelta(days=6))
         assert shopping["after"]["quantity"] > shopping["before"]["quantity"]
         assert shopping["package_change"]["after"] >= shopping["package_change"]["before"]
+        preference_path = "/v1/plan/grocery-list/preferences"
+        stock_payload = {
+            "ingredient_key": "banana",
+            "in_pantry": True,
+            "package_quantity": 100,
+            "package_unit": "g",
+            "pantry_quantity": 50,
+            "purchased_quantity": 100,
+            "stock_unit": "g",
+        }
+        assert client.put(preference_path, json=stock_payload).is_success
+        coverage = client.get(path).json()["meals"][0]["fueling_adjustment"]["shopping_impact"]["stock_coverage"]
+        assert coverage["status"] == "short"
+        assert coverage["available"] == 150
+        assert coverage["buy_quantity"] == 102.2
+        assert coverage["packages_to_buy"] == 2
+        assert client.put(preference_path, json={**stock_payload, "purchased_quantity": 250}).is_success
+        coverage = client.get(path).json()["meals"][0]["fueling_adjustment"]["shopping_impact"]["stock_coverage"]
+        assert coverage["status"] == "enough"
+        assert coverage["buy_quantity"] == 0
+        # Convert ounces to grams, and preserve stock on legacy preference saves.
+        assert client.put(
+            preference_path, json={**stock_payload, "pantry_quantity": 1, "purchased_quantity": 1, "stock_unit": "oz"}
+        ).is_success
+        assert client.put(preference_path, json={"ingredient_key": "banana", "in_pantry": True}).is_success
+        saved = client.get("/v1/plan/grocery-list/preferences").json()["preferences"][0]
+        assert saved["stock_unit"] == "oz"
+        assert saved["purchased_quantity"] == 1
+        coverage = client.get(path).json()["meals"][0]["fueling_adjustment"]["shopping_impact"]["stock_coverage"]
+        assert coverage["status"] == "short"
+        assert coverage["buy_quantity"] > 0
+        assert client.put(preference_path, json={**stock_payload, "stock_unit": "item"}).is_success
+        coverage = client.get(path).json()["meals"][0]["fueling_adjustment"]["shopping_impact"]["stock_coverage"]
+        assert coverage["status"] == "incompatible_units"
+        assert client.put(preference_path, json={**stock_payload, "pantry_quantity": -1}).status_code == 422
+        assert client.put(preference_path, json={"ingredient_key": "banana", "pantry_quantity": 20}).status_code == 422
+        assert client.put(
+            preference_path,
+            json={**stock_payload, "pantry_quantity": None, "purchased_quantity": None, "stock_unit": None},
+        ).is_success
+        original_groceries = client.get(grocery_url).json()["items"]
 
         assert pending["ingredients"] == original["ingredients"]
         endpoint = f"{path}/meals/{pending['id']}/fueling-adjustment"

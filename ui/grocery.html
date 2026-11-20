@@ -6,11 +6,11 @@
   <title>Grocery List • Glycofy</title>
   <link rel="icon" href="/ui/favicon.svg" />
   <link rel="stylesheet" href="/ui/styles.css?v=2026-09-06-beta-ready" />
-  <link rel="stylesheet" href="/ui/grocery.css?v=2026-11-06-mobile-polish-v1" />
+  <link rel="stylesheet" href="/ui/grocery.css?v=2026-11-19-stock-coverage" />
   <link rel="stylesheet" href="/ui/theme.css?v=2026-09-03-unified" />
   <script src="/ui/app.js" defer></script>
-  <script src="/ui/grocery.js?v=2026-11-06-mobile-polish-v1" defer></script>
-  <script src="/ui/beta.js?v=2026-11-06-mobile-polish-v1" defer></script>
+  <script src="/ui/grocery.js?v=2026-11-19-stock-coverage" defer></script>
+  <script src="/ui/beta.js?v=2026-11-19-stock-coverage" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -107,6 +107,14 @@
         <label>Unit<input id="grocery-package-unit" maxlength="32" placeholder="oz, g, cup…" /></label>
       </div>
       <label class="pantry-check"><input id="grocery-in-pantry" type="checkbox" /> I already have this</label>
+      <fieldset>
+        <legend>Amounts available now</legend>
+        <p class="muted">Enter remaining stock. Keep purchased amounts separate from pantry stock, and update these amounts as you use food.</p>
+        <label>In pantry<input id="grocery-pantry-quantity" type="number" min="0" step="any" /></label>
+        <label>Purchased and still available<input id="grocery-purchased-quantity" type="number" min="0" step="any" /></label>
+        <label>Stock unit<select id="grocery-stock-unit"><option value="g">g</option><option value="kg">kg</option><option value="oz">oz</option><option value="lb">lb</option><option value="ml">ml</option><option value="l">l</option><option value="cup">cup</option><option value="item">item</option></select></label>
+        <p class="muted">Leave both quantities blank when the amount is unknown.</p>
+      </fieldset>
       <p id="grocery-options-error" class="dialog-error" role="alert"></p>
       <div class="dialog-actions"><button id="grocery-options-cancel" class="btn" type="button">Cancel</button><button class="btn btn-primary" type="submit">Save preference</button></div>
     </form>

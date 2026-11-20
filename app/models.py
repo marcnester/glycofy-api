@@ -555,6 +555,9 @@ class GroceryPreference(Base):
     preferred_brand: Mapped[str | None] = mapped_column(String(120), nullable=True)
     package_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
     package_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pantry_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    purchased_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stock_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 

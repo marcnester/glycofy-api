@@ -358,6 +358,38 @@ def _fueling_grocery_items(db: Session, user: User, day: date_cls, preference: U
     ]
 
 
+def _grocery_stock_coverage(preference: GroceryPreference | None, needed: dict[str, float]) -> dict:
+    if preference is None or preference.stock_unit is None:
+        return {"status": "unknown"}
+    stock = _grocery_measurement(
+        float(preference.pantry_quantity or 0) + float(preference.purchased_quantity or 0),
+        preference.stock_unit,
+    )
+    if not stock or len(needed) != 1 or stock[0] not in needed:
+        return {"status": "incompatible_units", "unit": preference.stock_unit}
+    dimension, available = stock
+    required = needed[dimension]
+    shortage = max(0.0, required - available)
+    unit_scale = _grocery_measurement(1, preference.stock_unit)[1]
+    more = shortage / unit_scale
+    packages = None
+    if preference.package_quantity and preference.package_unit:
+        package = _grocery_measurement(preference.package_quantity, preference.package_unit)
+        if package and package[0] == dimension:
+            packages = ceil(round(shortage / package[1], 9))
+    return {
+        "status": "enough" if shortage <= 1e-6 else "short",
+        "pantry_quantity": preference.pantry_quantity or 0,
+        "purchased_quantity": preference.purchased_quantity or 0,
+        "available": round(available / unit_scale, 2),
+        "needed": round(required / unit_scale, 2),
+        "buy_quantity": ceil(round(more * 100, 8)) / 100,
+        "unit": preference.stock_unit,
+        "packages_to_buy": packages,
+        "updated_at": preference.updated_at.isoformat(),
+    }
+
+
 def _fueling_shopping_impact(db: Session, user: User, day: date_cls, preview: dict) -> dict[str, Any]:
     ingredient_key, ingredient_name = _grocery_name(preview["ingredient"])
     plans = db.query(Plan).filter(Plan.user_id == user.id, Plan.date.between(day, day + timedelta(days=6))).all()
@@ -401,6 +433,7 @@ def _fueling_shopping_impact(db: Session, user: User, day: date_cls, preview: di
                     "size": preference.package_quantity,
                     "unit": preference.package_unit,
                 }
+    impact["stock_coverage"] = _grocery_stock_coverage(preference, updated)
     return impact
 
 
@@ -1689,7 +1722,7 @@ _GROCERY_DISPLAY_NAMES = {
 }
 
 _MASS_TO_GRAMS = {"g": 1.0, "kg": 1000.0, "oz": 28.3495, "lb": 453.592}
-_VOLUME_TO_TBSP = {"tsp": 1 / 3, "tbsp": 1.0, "cup": 16.0}
+_VOLUME_TO_TBSP = {"tsp": 1 / 3, "tbsp": 1.0, "cup": 16.0, "ml": 1 / 14.7868, "l": 1000 / 14.7868}
 _COUNT_UNITS = {
     "item",
     "piece",
@@ -1995,6 +2028,10 @@ class GroceryPreferenceIn(BaseModel):
     package_quantity: float | None = Field(default=None, gt=0)
     package_unit: str | None = Field(default=None, max_length=32)
 
+    pantry_quantity: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    purchased_quantity: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    stock_unit: str | None = Field(default=None, max_length=32)
+
 
 def _grocery_preference_to_dict(preference: GroceryPreference) -> dict[str, Any]:
     return {
@@ -2003,6 +2040,9 @@ def _grocery_preference_to_dict(preference: GroceryPreference) -> dict[str, Any]
         "preferred_brand": preference.preferred_brand,
         "package_quantity": preference.package_quantity,
         "package_unit": preference.package_unit,
+        "pantry_quantity": preference.pantry_quantity,
+        "purchased_quantity": preference.purchased_quantity,
+        "stock_unit": preference.stock_unit,
         "updated_at": preference.updated_at.isoformat(),
     }
 
@@ -2237,6 +2277,7 @@ def grocery_list_week(
             entry.get("unit") or "",
             preference,
         )
+        entry["stock_coverage"] = _grocery_stock_coverage(preference, measurements)
         items.append(entry)
     items.sort(key=lambda value: (value["category"], value["name"].lower()))
 
@@ -2285,6 +2326,21 @@ def save_grocery_preference(
     row.preferred_brand = (payload.preferred_brand or "").strip() or None
     row.package_quantity = payload.package_quantity
     row.package_unit = _grocery_unit(payload.package_unit) or None
+    stock_fields = {"pantry_quantity", "purchased_quantity", "stock_unit"}
+    if payload.model_fields_set & stock_fields:
+        # All three values travel together so units cannot reinterpret old stock.
+        if not stock_fields.issubset(payload.model_fields_set):
+            raise HTTPException(status_code=422, detail="Send both stock quantities and their unit together.")
+        quantities = (payload.pantry_quantity, payload.purchased_quantity)
+        if any(value is not None for value in quantities):
+            unit = _grocery_unit(payload.stock_unit)
+            if unit not in _MASS_TO_GRAMS and unit not in _VOLUME_TO_TBSP and unit not in _COUNT_UNITS:
+                raise HTTPException(status_code=422, detail="Choose a supported stock unit such as g, oz, ml or item.")
+            row.pantry_quantity = payload.pantry_quantity or 0
+            row.purchased_quantity = payload.purchased_quantity or 0
+            row.stock_unit = unit
+        else:
+            row.pantry_quantity = row.purchased_quantity = row.stock_unit = None
     row.updated_at = now
     # A saved pantry/package change must also invalidate server-side shopping
     # snapshots; browser-only staleness cannot protect a QFC handoff in another tab.
