@@ -7,6 +7,46 @@ from app.services.meal_quality import practical_maximum_grams, validate_meal
 from app.services.usda_nutrition import FDCMatch, USDANutritionError, _food_identity_matches, verify_ingredients
 
 
+@pytest.mark.parametrize("name", ["Cheese, cottage, low fat", "Yogurt, Greek, plain, nonfat"])
+def test_usda_dairy_word_order_retains_protein_source(name):
+    meal = {
+        "title": "Dairy fruit snack",
+        "slot": "snack",
+        "prep_time_min": 5,
+        "cook_time_min": 0,
+        "total_time_min": 5,
+        "ingredients": [
+            {
+                "name": name,
+                "amount": 250,
+                "unit": "g",
+                "nutrition": {
+                    "kcal": 175,
+                    "protein_g": 25,
+                    "carbs_g": 10,
+                    "fat_g": 3.9,
+                },
+            },
+            {
+                "name": "peach raw",
+                "amount": 100,
+                "unit": "g",
+                "nutrition": {
+                    "kcal": 40,
+                    "protein_g": 1,
+                    "carbs_g": 9,
+                    "fat_g": 0.2,
+                },
+            },
+        ],
+        "instructions": ["Spoon the dairy into a bowl.", "Top with sliced peach and serve."],
+        "macros": {"kcal": 215, "protein_g": 26, "carbs_g": 19, "fat_g": 4.1},
+    }
+    assert validate_meal(meal, require_ingredient_nutrition=True).safe
+    meal["ingredients"][0]["name"] = "mixed vegetables"
+    assert "missing_protein_source" in validate_meal(meal, require_ingredient_nutrition=True).codes()
+
+
 @pytest.mark.parametrize(
     ("name", "grams"), [("apple", 450), ("strawberries", 450), ("brown rice dry", 256), ("whole wheat flour", 155)]
 )

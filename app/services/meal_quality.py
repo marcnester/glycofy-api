@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 PROMPT_VERSION = "meal-planner-2026-09-13-v11-beta-quality"
-QUALITY_POLICY_VERSION = "nutrition-safety-v23-complete-ingredient-evidence"
+QUALITY_POLICY_VERSION = "nutrition-safety-v24-usda-dairy-aliases"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 SUPPORTED_DIETS = ("omnivore", "pescatarian", "vegetarian", "vegan")
@@ -227,10 +227,12 @@ PROTEIN_SOURCE_MARKERS = {
     "chicken",
     "cod",
     "cottage cheese",
+    "cheese cottage",
     "edamame",
     "egg",
     "eggs",
     "greek yogurt",
+    "yogurt greek",
     "black bean",
     "chickpea",
     "hemp seed",
