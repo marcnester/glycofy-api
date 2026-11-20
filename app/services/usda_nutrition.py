@@ -15,7 +15,7 @@ import httpx
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
-from app.services.meal_quality import practical_minimum_grams
+from app.services.meal_quality import practical_maximum_grams, practical_minimum_grams
 
 logger = logging.getLogger(__name__)
 
@@ -82,11 +82,12 @@ def _catalog_match(query: str) -> FDCMatch | None:
         row = db.query(NutritionCatalogEntry).filter(NutritionCatalogEntry.query_key == key).first()
         if row is None:
             return None
-        # Recheck identity so an old cached milk/yogurt mismatch cannot bypass
-        # the same safety rule used for fresh local and API candidates.
-        if not _milk_identity_matches(query, row.description):
+        # Old cached evidence must satisfy today's food and preparation rules.
+        if _match_score(query, {"description": row.description, "dataType": getattr(row, "data_type", "")}) is None:
             return None
         nutrients = {name: float(row.nutrients_per_100g[name]) for name in ("kcal", "protein_g", "carbs_g", "fat_g")}
+        if not _plausible_nutrient_density(query, nutrients):
+            return None
         return FDCMatch(
             fdc_id=row.fdc_id,
             description=row.description,
@@ -188,6 +189,9 @@ def _canonical_token(token: str) -> str:
         "garbanzo": "chickpea",
         "yoghurt": "yogurt",
         "bellpeppers": "bellpepper",
+        "cakes": "cake",
+        "apples": "apple",
+        "noodles": "noodle",
     }
     token = aliases.get(token, token)
     if len(token) > 4 and token.endswith("ies"):
@@ -260,13 +264,57 @@ def _milk_identity_matches(query: str, description: str) -> bool:
     return True
 
 
+def _food_identity_matches(query: str, description: str) -> bool:
+    """Require the named staple, product form and preparation to agree."""
+    wanted, actual = _tokens(query), _tokens(description)
+    if not _milk_identity_matches(query, description):
+        return False
+    families = (
+        {"apple"},
+        {"apricot"},
+        {"banana"},
+        {"rice"},
+        {"pasta", "spaghetti", "macaroni", "noodle"},
+        {"flour"},
+        {"yogurt", "yoghurt"},
+        {"skyr"},
+        {"cheese"},
+        {"chicken"},
+        {"turkey"},
+        {"tuna"},
+        {"salmon"},
+        {"lentil"},
+        {"almond"},
+        {"oat"},
+    )
+    for family in families:
+        if wanted & family and not actual & family:
+            return False
+    for qualifier in ("cake", "cottage", "basmati", "brown", "wholewheat"):
+        if qualifier in wanted and qualifier not in actual:
+            return False
+    # A plain staple cannot borrow values from a mixed dish or reduced-fat substitute.
+    for marker in ("pancake", "reduced", "buttermilk"):
+        if marker in actual and marker not in wanted:
+            return False
+    if "rice" in wanted and "bean" in actual and "bean" not in wanted:
+        return False
+    if "dry" in wanted and actual & {"cooked", "prepared", "boiled"}:
+        return False
+    if "raw" in wanted and actual & {"cooked", "roasted", "grilled", "baked"}:
+        return False
+    if wanted & {"cooked", "roasted", "grilled", "baked"} and "raw" in actual:
+        return False
+    return True
+
+
 def _match_score(query: str, food: dict[str, Any]) -> float | None:
     query_tokens = _tokens(query)
     description = str(food.get("description") or "")
     description_tokens = _tokens(description)
     if not query_tokens:
         return None
-    if "milk" in query_tokens and not _milk_identity_matches(query, description):
+    if not _food_identity_matches(query, description):
         return None
     overlap = query_tokens & description_tokens
     # FDC descriptions use a controlled vocabulary (for example "Oil, olive")
@@ -650,6 +698,8 @@ def verify_ingredients(
             raise match
         if match is None:
             raise USDANutritionError(f"No USDA result was resolved for {query!r}")
+        if not _food_identity_matches(name, match.description) or not _food_identity_matches(query, match.description):
+            raise USDANutritionError(f"Nutrient source does not match ingredient {name!r}")
         factor = amount_g / 100.0
         nutrition = {key: round(value * factor, 1) for key, value in match.nutrients_per_100g.items()}
         verified.append(
@@ -716,23 +766,7 @@ def fit_portions_to_targets(
     lower_factors: list[float] = []
     for index, ingredient in enumerate(ingredients):
         identity = " ".join(str(ingredient.get(field) or "").lower() for field in ("name", "usda_search_query"))
-        if any(token in identity for token in ("oil", "butter")):
-            cap_g = 30.0
-        elif any(token in identity for token in ("honey", "syrup", "jam")):
-            cap_g = 40.0
-        elif any(token in identity for token in ("nut", "seed", "peanut butter", "almond butter")):
-            cap_g = 60.0
-        elif "oat" in identity and "cooked" not in identity:
-            cap_g = 120.0
-        elif any(token in identity for token in ("rice", "couscous", "pasta", "quinoa", "barley", "bulgur")):
-            cap_g = 350.0 if "cooked" in identity else 200.0
-        elif any(
-            token in identity
-            for token in ("chicken", "turkey", "beef", "pork", "fish", "salmon", "cod", "tuna", "tofu")
-        ):
-            cap_g = 300.0
-        else:
-            cap_g = 450.0
+        cap_g = practical_maximum_grams(ingredient.get("name"), ingredient.get("usda_search_query"))
         upper = max(0.05, min(3.0, cap_g / max(base_weights[index], 0.1)))
         if "rice cake" in identity:
             minimum_g = 9.0

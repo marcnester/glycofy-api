@@ -1830,7 +1830,8 @@ def _llm_pick_or_create(
         "for that exact quantity: kcal, protein_g, carbs_g, and fat_g.\n"
         "- Use practical single-person portions. Prefer dry/uncooked weights for grains, pasta, and legumes and include "
         "their cooking step. Use cooked weights only when the food is explicitly leftover or ready-cooked. Keep dry "
-        "grains/pasta at or below 200 g, cooked grains/pasta at or below 350 g, protein foods at or below 300 g, "
+        "grains/pasta at or below 120 g, cooked grains/pasta at or below 350 g, protein foods at or below 300 g, "
+        "fruit at or below 250 g, yogurt at or below 300 g, bread/flour at or below 120 g, "
         "oils at or below 30 g, and sweeteners at or below 40 g per meal. Main-meal animal proteins must be at least "
         "75 g, fruit portions must be at least 30 g, oats at least 15 g, nut butter at least 8 g, and other "
         "non-seasoning foods must not use token portions below 5 g. Dry grains and rolled oats must be cooked or "
@@ -2920,6 +2921,24 @@ def _saturated_week_variety_keys(
     return sorted(key for key, count in counts.items() if count >= 2)
 
 
+def _recommendation_composition_key(item: SlotRecommendation) -> tuple[str, ...]:
+    """Compare substantial foods independently of titles and portion fitting."""
+    idea = item.ai_idea if isinstance(item.ai_idea, dict) else {}
+    ingredients = idea.get("ingredients") or getattr(item.recipe, "ingredients", None) or []
+    composition = tuple(
+        sorted(
+            {
+                _meal_similarity_key(str(ingredient.get("usda_search_query") or ingredient.get("name") or ""))
+                for ingredient in ingredients
+                if isinstance(ingredient, dict)
+                and _safe_float(ingredient.get("amount_g", ingredient.get("amount")), 0) >= 25
+            }
+            - {""}
+        )
+    )
+    return (_normalize_slot(item.slot), *composition) if len(composition) >= 2 else ()
+
+
 def _deduplicate_week_batch(
     batch_days: list[dict[str, Any]],
     batch_items: dict[str, dict[str, SlotRecommendation]],
@@ -2931,6 +2950,7 @@ def _deduplicate_week_batch(
     identical meal on another day or in another slot.
     """
     seen: set[str] = set()
+    composition_counts: Counter[tuple[str, ...]] = Counter()
     component_counts: Counter[str] = Counter()
     kept_titles: list[str] = []
     removed = 0
@@ -2947,10 +2967,18 @@ def _deduplicate_week_batch(
                 component_keys.append(f"{normalized_slot}:carb:{carb}")
             if normalized_slot in _DAY_UNIQUE_SLOTS and protein:
                 component_keys.append(f"{normalized_slot}:protein:{protein}")
-            if (title_key and title_key in seen) or any(component_counts[key] >= 2 for key in component_keys):
+            composition_key = _recommendation_composition_key(recommendation)
+            repeated_composition = bool(composition_key and composition_counts[composition_key] >= 2)
+            if (
+                (title_key and title_key in seen)
+                or repeated_composition
+                or any(component_counts[key] >= 2 for key in component_keys)
+            ):
                 del slots[slot]
                 removed += 1
                 continue
+            if composition_key:
+                composition_counts[composition_key] += 1
             if title_key:
                 seen.add(title_key)
                 kept_titles.append(title)
@@ -4290,7 +4318,7 @@ def _batch_week_recommendations(
         "searchable food—not a recipe or composite ingredient. Specify cooked versus raw for grains and proteins, "
         "and specify fat percentage for dairy when relevant. Use plain canonical terms; omit marketing adjectives. "
         "Prefer dry/uncooked weights for grains, pasta, and legumes and include their cooking step; use cooked weights "
-        "only for explicitly leftover or ready-cooked food. Keep dry grains/pasta at or below 200 g, cooked grains/pasta "
+        "only for explicitly leftover or ready-cooked food. Keep dry grains/pasta at or below 120 g, cooked grains/pasta "
         "at or below 350 g, protein foods at or below 300 g, oils at or below 30 g, and sweeteners at or below 40 g per "
         "single-person meal. Main-meal animal proteins must be at least 75 g. Fruit must be at least 30 g, oats at "
         "least 15 g, nut butter at least 8 g, and other foods at least 5 g except herbs, spices, acids, and salt. Dry "
@@ -5053,6 +5081,7 @@ def recommend_weekly_apply(
     # This prevents an early missing cell from selecting a catalog meal that
     # is already scheduled later in the week.
     used_meal_keys = set()
+    week_composition_counts: Counter[tuple[str, ...]] = Counter()
     week_meal_key_counts: dict[str, int] = {}
     for slots in batch_items.values():
         for recommendation in slots.values():
@@ -5330,6 +5359,23 @@ def recommend_weekly_apply(
             )
             for item in day_items:
                 item.meta = {**(item.meta or {}), "day_target_variance": target_misses}
+
+        # Cover catalog/reuse recovery too, after every portion adjustment.
+        for item in day_items:
+            composition_key = _recommendation_composition_key(item)
+            if composition_key:
+                week_composition_counts[composition_key] += 1
+                if week_composition_counts[composition_key] > 2:
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=422,
+                        detail={
+                            "message": "Unable to create a sufficiently varied weekly meal plan",
+                            "reason": "weekly_ingredient_repeat_limit",
+                            "date": date_iso,
+                            "slot": item.slot,
+                        },
+                    )
 
         out_days.append(
             {
