@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 PROMPT_VERSION = "meal-planner-2026-09-13-v11-beta-quality"
-QUALITY_POLICY_VERSION = "nutrition-safety-v21-restriction-validation"
+QUALITY_POLICY_VERSION = "nutrition-safety-v22-practical-verified-recipes"
 
 MACROS = ("kcal", "protein_g", "carbs_g", "fat_g")
 SUPPORTED_DIETS = ("omnivore", "pescatarian", "vegetarian", "vegan")
@@ -336,6 +336,30 @@ SMALL_AMOUNT_EXEMPTIONS = SEASONING_MARKERS | {
 }
 
 
+def practical_maximum_grams(name: Any, query: Any = None) -> float:
+    """Conservative single-serving limits shared by fitting and validation."""
+    identity = _words(f"{name or ''} {query or ''}")
+    groups = (
+        (40, ("peanut butter", "almond butter", "tahini", "honey", "syrup", "jam")),
+        (30, ("oil", "butter")),
+        (60, ("nuts", "walnuts", "almonds", "seeds", "rice cake", "rice cakes")),
+        (120, ("bread", "tortilla", "pita", "flour")),
+        (300, ("yogurt", "skyr", "cottage cheese")),
+        (250, ("apple", "apples", "banana", "berries", "strawberries", "peach", "pineapple", "orange")),
+        (300, ("tomato", "cucumber", "broccoli", "carrot", "spinach")),
+        (300, ("chicken", "turkey", "beef", "pork", "salmon", "cod", "tuna", "tofu", "beans", "lentils")),
+    )
+    for maximum, markers in groups:
+        if any(_contains(identity, marker) for marker in markers):
+            return float(maximum)
+    if any(
+        _contains(identity, marker)
+        for marker in ("oats", "oat", "rice", "pasta", "quinoa", "couscous", "barley", "bulgur")
+    ):
+        return 350.0 if _contains(identity, "cooked") else 120.0
+    return 450.0
+
+
 def practical_minimum_grams(name: Any, query: Any = None) -> float:
     """Return a conservative minimum portion that remains useful to a cook."""
     identity = _words(f"{name or ''} {query or ''}")
@@ -650,15 +674,98 @@ def validate_meal(
             )
         )
 
+    # These named staples must not silently appear in directions for another recipe.
+    instruction_foods = (
+        "chicken",
+        "turkey",
+        "beef",
+        "salmon",
+        "tuna",
+        "tofu",
+        "rice",
+        "pasta",
+        "quinoa",
+        "oats",
+        "yogurt",
+        "apple",
+        "banana",
+        "broccoli",
+        "cucumber",
+        "tomato",
+        "flour",
+    )
+    for food in instruction_foods:
+        mentions = (food, food + "s")
+        if any(_contains(instruction_words, word) for word in mentions) and not any(
+            _contains(ingredient_words, word) for word in mentions
+        ):
+            report.issues.append(QualityIssue("unlisted_instruction_ingredient", f"Directions use unlisted {food}."))
+    # Do not allow a stale hard-coded instruction to exceed the saved quantity.
+    for step in instructions or []:
+        for quantity in re.finditer(r"\b(\d+(?:\.\d+)?)\s*(?:g|grams?)\b(?:\s+of)?\s+([^,;.]+)", str(step), re.I):
+            mentioned = _words(re.split(r"\band\b", quantity.group(2), maxsplit=1)[0])
+            for item in ingredients or []:
+                if not isinstance(item, dict) or not _contains(mentioned, _words(item.get("name"))):
+                    continue
+                saved = _number(item.get("amount_g", item.get("amount")))
+                if (
+                    saved is not None
+                    and _words(item.get("unit")) in {"g", "gram", "grams"}
+                    and float(quantity.group(1)) > saved + 1
+                ):
+                    report.issues.append(
+                        QualityIssue(
+                            "instruction_quantity_mismatch",
+                            f"Directions use more {item.get('name')} than the listed quantity.",
+                        )
+                    )
+    for item in ingredients or []:
+        if not isinstance(item, dict):
+            continue
+        identity = _words(item.get("name"))
+        grain = next((food for food in ("rice", "pasta", "quinoa") if _contains(identity, food)), None)
+        if not grain or not _contains(identity, "dry"):
+            continue
+        cooking_steps = [
+            step
+            for step in instructions or []
+            if _contains(_words(step), grain) and re.search(r"\b(?:cook|boil|simmer)\b", str(step), re.I)
+        ]
+        if len(cooking_steps) > 1:
+            report.issues.append(
+                QualityIssue("duplicate_cooking_step", f"Directions cook the dry {grain} more than once.")
+            )
+
     if isinstance(ingredients, list):
         for item in ingredients:
             if not isinstance(item, dict):
                 continue
+            source = item.get("nutrition_source") or {}
+            if isinstance(source, dict) and source.get("description"):
+                # Also validate reused recipes; fresh USDA lookup is not their only entry point.
+                from app.services.usda_nutrition import _food_identity_matches
+
+                identities = [item.get("name"), item.get("usda_search_query")]
+                if any(
+                    identity and not _food_identity_matches(str(identity), str(source["description"]))
+                    for identity in identities
+                ):
+                    report.issues.append(
+                        QualityIssue("nutrient_source_mismatch", f"Nutrient source does not match {item.get('name')}.")
+                    )
             name = _words(item.get("name"))
             amount = _number(item.get("amount_g", item.get("amount", item.get("qty"))))
             unit = _words(item.get("unit"))
             if amount is None or unit not in {"g", "gram", "grams"}:
                 continue
+            maximum = practical_maximum_grams(name, item.get("usda_search_query"))
+            if amount > maximum:
+                report.issues.append(
+                    QualityIssue(
+                        "oversized_portion",
+                        f"{item.get('name')} exceeds a practical single serving ({maximum:g} g). Choose complementary foods instead.",
+                    )
+                )
             practical_minimum = practical_minimum_grams(name, item.get("usda_search_query"))
             if amount < practical_minimum:
                 report.issues.append(

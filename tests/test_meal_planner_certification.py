@@ -17,7 +17,7 @@ TARGET = {"kcal": 600.0, "protein_g": 35.0, "carbs_g": 78.0, "fat_g": 16.0}
 
 def _safe_idea(slot: str, target: dict[str, float], suffix: str, variety_index: int = 0) -> dict:
     proteins = ("lentils", "chickpeas", "black beans", "kidney beans", "white beans", "split peas", "mung beans")
-    carbs = ("brown rice", "quinoa", "potato", "corn", "millet", "buckwheat", "sorghum")
+    carbs = ("cooked brown rice", "cooked quinoa", "potato", "corn", "millet", "buckwheat", "sorghum")
     protein = proteins[variety_index % len(proteins)]
     carb = carbs[variety_index % len(carbs)]
     return {

@@ -1269,7 +1269,7 @@ def test_complete_day_rebalance_adjusts_verified_meals_around_provisional_meal()
     )
 
 
-def test_weekly_fit_keeps_acceptable_day_when_complete_refit_overshoots():
+def test_weekly_fit_reports_target_miss_instead_of_oversizing_portions():
     slots = ("breakfast", "lunch", "dinner")
     target_values = [(331.3, 10.4, 91.9, 12.5), (487.1, 103.1, 16.4, 16.4), (582.9, 39.4, 61.7, 25.4)]
     targets = [
@@ -1322,11 +1322,16 @@ def test_weekly_fit_keeps_acceptable_day_when_complete_refit_overshoots():
 
     fitted, totals, misses = llm_recommend._fit_weekly_day(meals, targets)
     assert misses
-    assert llm_recommend._day_target_misses(fitted, totals, llm_recommend._DAY_RECOVERY_LIMITS) == []
-    assert fitted[-1].recipe is not None
-
-    llm_recommend._rebalance_complete_verified_day(fitted, targets)
+    # This combination cannot meet the day target inside practical serving caps.
+    # Report the miss for recipe recovery instead of inflating fruit or grains.
     assert llm_recommend._day_target_misses(fitted, totals, llm_recommend._DAY_RECOVERY_LIMITS) == ["kcal"]
+    from app.services.meal_quality import practical_maximum_grams
+
+    for recommendation in fitted:
+        idea = recommendation.ai_idea or {}
+        ingredients = idea.get("ingredients") or recommendation.recipe.ingredients
+        for ingredient in ingredients:
+            assert ingredient["amount_g"] <= practical_maximum_grams(ingredient["name"])
 
 
 def test_day_target_protein_tolerance_accepts_real_world_variability():
