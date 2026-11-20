@@ -1729,7 +1729,7 @@ def test_weekly_batch_defers_safe_slot_target_miss_to_day_rebalancing(monkeypatc
     assert meta["rejected"] == 0
 
 
-def test_weekly_batch_keeps_safe_meals_when_usda_foods_are_pending(monkeypatch):
+def test_weekly_batch_defers_meals_when_usda_foods_are_pending(monkeypatch):
     date = "2026-09-01"
     response_body = {"days": [{"date": date, "meals": [_meal(slot, 1) for slot in llm_recommend.SLOTS]}]}
 
@@ -1768,9 +1768,6 @@ def test_weekly_batch_keeps_safe_meals_when_usda_foods_are_pending(monkeypatch):
         exclusions=[],
     )
 
-    assert meta["accepted"] == 4
-    assert meta["rejected"] == 0
-    assert all(
-        recommendation.meta["nutrition_validation"]["status"] == "provisional"
-        for recommendation in recommendations[date].values()
-    )
+    assert meta["accepted"] == 0
+    assert meta["rejected"] == 4
+    assert recommendations[date] == {}

@@ -694,7 +694,24 @@ def _filter_by_diet_tags(
     return out
 
 
+def _ingredients_have_usda_sources(ingredients: Any) -> bool:
+    """Production matching must retain its authoritative food references."""
+    return (
+        isinstance(ingredients, list)
+        and bool(ingredients)
+        and all(
+            isinstance(ingredient, dict)
+            and isinstance(ingredient.get("nutrition_source"), dict)
+            and ingredient["nutrition_source"].get("provider") == "USDA FoodData Central"
+            and bool(ingredient["nutrition_source"].get("fdc_id") or ingredient.get("food_ref_id"))
+            for ingredient in ingredients
+        )
+    )
+
+
 def _recipe_has_reconciled_nutrition(recipe: Recipe) -> bool:
+    if settings.USDA_FDC_API_KEY and not _ingredients_have_usda_sources(getattr(recipe, "ingredients", None)):
+        return False
     evidence = ingredient_nutrition_totals({"ingredients": getattr(recipe, "ingredients", None)})
     if evidence is None:
         return False
@@ -2221,8 +2238,8 @@ def _llm_pick_or_create(
             "prep_time_min": new_recipe.get("prep_time_min"),
             "cook_time_min": new_recipe.get("cook_time_min"),
             "total_time_min": new_recipe.get("total_time_min"),
-            # USDA is authoritative when every ingredient resolves. Otherwise,
-            # retain the model estimate while the unresolved foods are queued.
+            # Unresolved ingredients are queued, but cannot be saved as a plan.
+            # Validation below requires a complete ingredient-level sum.
             "macro_estimate": reconciled_macros or macro_est,
         }
         quality_report = validate_meal(
@@ -2230,7 +2247,7 @@ def _llm_pick_or_create(
             target=tgt.model_dump(exclude={"slot"}),
             exclusions=ingredient_exclusions,
             diet=primary_diet,
-            require_ingredient_nutrition=unresolved_nutrition == 0,
+            require_ingredient_nutrition=True,
         )
         meta["nutrition_validation"] = {
             "status": "verified" if unresolved_nutrition == 0 else "provisional",
@@ -3842,6 +3859,31 @@ def _persist_day_recommendations(
         logger.info("locked_plan_persistence_skipped")
         return {"date": day_iso, "skipped": True, "reason": "locked", "applied": 0, "created_recipes": 0}
 
+    # Check every candidate before touching any existing meal. Unresolved food
+    # matching is a repair condition, never permission to save estimated totals.
+    for item in day_items:
+        idea = item.ai_idea or (item.meta or {}).get("ai_idea")
+        ingredients = idea.get("ingredients") if isinstance(idea, dict) else getattr(item.recipe, "ingredients", None)
+        unresolved = any(
+            isinstance(ingredient, dict)
+            and (
+                ingredient.get("nutrition_status") == "pending_validation"
+                or (ingredient.get("nutrition_source") or {}).get("provider") == "Glycofy estimate"
+            )
+            for ingredient in ingredients or []
+        )
+        missing_source = bool(settings.USDA_FDC_API_KEY) and not _ingredients_have_usda_sources(ingredients)
+        if unresolved or missing_source or ingredient_nutrition_totals({"ingredients": ingredients}) is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Ingredient nutrition must be verified before saving meals",
+                    "reason": "nutrition_unverified",
+                    "date": day_iso,
+                    "slot": item.slot,
+                },
+            )
+
     requested_slots = [_normalize_slot(item.slot) for item in day_items]
     by_slot = _ensure_plan_meals(db, plan, requested_slots)
     snack_times = dict(_snack_schedule(db.query(UserPreference).filter(UserPreference.user_id == user.id).first()))
@@ -3872,6 +3914,7 @@ def _persist_day_recommendations(
                 "model",
                 "prompt_version",
                 "quality_policy_version",
+                "nutrition_validation",
                 "quality",
                 "fallback",
                 "batch",
@@ -4319,7 +4362,8 @@ def _batch_week_recommendations(
         "and specify fat percentage for dairy when relevant. Use plain canonical terms; omit marketing adjectives. "
         "Prefer dry/uncooked weights for grains, pasta, and legumes and include their cooking step; use cooked weights "
         "only for explicitly leftover or ready-cooked food. Keep dry grains/pasta at or below 120 g, cooked grains/pasta "
-        "at or below 350 g, protein foods at or below 300 g, oils at or below 30 g, and sweeteners at or below 40 g per "
+        "at or below 350 g, protein foods and yogurt at or below 300 g, fruit at or below 250 g, "
+        "bread/flour at or below 120 g, oils at or below 30 g, and sweeteners at or below 40 g per "
         "single-person meal. Main-meal animal proteins must be at least 75 g. Fruit must be at least 30 g, oats at "
         "least 15 g, nut butter at least 8 g, and other foods at least 5 g except herbs, spices, acids, and salt. Dry "
         "grains and rolled oats must be cooked or fully soaked; never mix dry oats into yogurt and serve immediately. "
@@ -4327,7 +4371,8 @@ def _batch_week_recommendations(
         "inflating one ingredient. "
         "Never use a branded food or an unmeasured serving. "
         "Do not calculate or return nutrition for individual ingredients; Glycofy computes it authoritatively from "
-        "USDA FoodData Central after generation. Estimate meal macros from the stated foods and quantities, never copy "
+        "USDA FoodData Central after generation. Prefer foods from verified_anchor_foods and starter_examples when available; "
+        "unresolved ingredient nutrition requires replacing the meal before saving. Estimate meal macros from the stated foods and quantities, never copy "
         "target_macros into macros, and adjust actual ingredient quantities until the estimate is close to each slot "
         "target. Do not overshoot protein to reach calories or carbohydrate; use a carbohydrate or fat source that matches "
         "the remaining target instead. A day's training object can describe upcoming training. On those days, favor "
@@ -4562,8 +4607,8 @@ def _batch_week_recommendations(
                 "prep_time_min": prep_time_min,
                 "cook_time_min": cook_time_min,
                 "total_time_min": total_time_min,
-                # Prefer USDA-derived totals. If one or more foods are waiting
-                # for validation, retain the bounded model estimate.
+                # The estimate is only diagnostic when verification fails.
+                # Missing USDA evidence must go through recipe recovery.
                 "macros": reconciled_macros or macros,
             }
             quality_candidate = ensure_safe_doneness_instruction(quality_candidate)
@@ -4573,7 +4618,7 @@ def _batch_week_recommendations(
                 target=target,
                 exclusions=exclusions,
                 diet=primary_diet,
-                require_ingredient_nutrition=unresolved_nutrition == 0,
+                require_ingredient_nutrition=True,
                 # A single verified recipe can miss one slot target because
                 # its ingredient mix is constrained. Accept it here, then
                 # reconcile all meals together and enforce the daily totals.
@@ -4591,7 +4636,8 @@ def _batch_week_recommendations(
                 or not 1 <= total_time_min <= 240
                 or not 1 <= prep_time_min <= 240
                 or not 0 <= cook_time_min <= 240
-                or (reconciled_macros is None and unresolved_nutrition == 0)
+                or reconciled_macros is None
+                or unresolved_nutrition > 0
                 or usda_error is not None
                 or not quality_report.safe
             )
@@ -4603,8 +4649,10 @@ def _batch_week_recommendations(
                     rejection_reasons.append(_usda_error_code(usda_error))
                 if not isinstance(instructions, list) or len(instructions) < 2:
                     rejection_reasons.append("instructions_incomplete")
-                if reconciled_macros is None and unresolved_nutrition == 0:
+                if reconciled_macros is None:
                     rejection_reasons.append("nutrition_unreconciled")
+                if unresolved_nutrition:
+                    rejection_reasons.append("nutrition_unverified")
                 logger.warning(
                     "weekly_meal_rejected",
                     extra={

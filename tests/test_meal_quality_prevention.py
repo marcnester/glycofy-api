@@ -124,3 +124,60 @@ def test_directions_cannot_use_more_than_saved_ingredient_quantity():
 )
 def test_valid_food_matches_remain_eligible(name, source):
     assert _food_identity_matches(name, source)
+
+
+@pytest.mark.parametrize("pending_nutrition", [None, {"kcal": 130, "protein_g": 2.7, "carbs_g": 28, "fat_g": 0.3}])
+def test_save_rejects_unverified_candidate_before_touching_any_meal(monkeypatch, pending_nutrition):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(llm_recommend, "_get_or_create_plan", lambda *_: SimpleNamespace(locked=False))
+    monkeypatch.setattr(
+        llm_recommend, "_ensure_plan_meals", lambda *_: pytest.fail("existing meals must stay untouched")
+    )
+    measured = {"name": "rice cooked", "amount_g": 100, "amount": 100, "unit": "g"}
+    verified = llm_recommend.SlotRecommendation(
+        slot="breakfast",
+        target={},
+        ai_idea={
+            "ingredients": [{**measured, "nutrition": {"kcal": 130, "protein_g": 2.7, "carbs_g": 28, "fat_g": 0.3}}],
+        },
+    )
+    unresolved = llm_recommend.SlotRecommendation(
+        slot="lunch",
+        target={},
+        ai_idea={
+            "ingredients": [{**measured, "nutrition": pending_nutrition, "nutrition_status": "pending_validation"}],
+        },
+    )
+    with pytest.raises(HTTPException) as error:
+        llm_recommend._persist_day_recommendations(
+            None, SimpleNamespace(id=1), "2026-11-21", [verified, unresolved], None, "omnivore"
+        )
+    assert error.value.status_code == 422
+    assert error.value.detail["reason"] == "nutrition_unverified"
+
+
+def test_save_requires_usda_sources_when_authoritative_matching_is_enabled(monkeypatch):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(llm_recommend.settings, "USDA_FDC_API_KEY", "test-key")
+    monkeypatch.setattr(llm_recommend, "_get_or_create_plan", lambda *_: SimpleNamespace(locked=False))
+    monkeypatch.setattr(
+        llm_recommend, "_ensure_plan_meals", lambda *_: pytest.fail("must reject before modifying meals")
+    )
+    ingredients = [
+        {
+            "name": "rice cooked",
+            "amount_g": 100,
+            "amount": 100,
+            "unit": "g",
+            "nutrition": {"kcal": 130, "protein_g": 2.7, "carbs_g": 28, "fat_g": 0.3},
+        }
+    ]
+    item = llm_recommend.SlotRecommendation(slot="lunch", target={}, ai_idea={"ingredients": ingredients})
+    assert not llm_recommend._recipe_has_reconciled_nutrition(SimpleNamespace(ingredients=ingredients))
+    with pytest.raises(HTTPException) as error:
+        llm_recommend._persist_day_recommendations(None, SimpleNamespace(id=1), "2026-11-21", [item], None, "omnivore")
+    assert error.value.detail["reason"] == "nutrition_unverified"
+    ingredients[0]["nutrition_source"] = {"provider": "USDA FoodData Central", "fdc_id": 169704}
+    assert llm_recommend._ingredients_have_usda_sources(ingredients)
