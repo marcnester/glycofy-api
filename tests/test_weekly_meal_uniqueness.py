@@ -511,7 +511,26 @@ def test_weekly_persistence_saves_ai_reason(monkeypatch):
 
     with Session(engine) as db:
         user = User(email="reason@example.com", password_hash="test")
-        recipe = Recipe(title="Salmon Bowl", meal_type="lunch", ingredients=["salmon", "rice"])
+        recipe = Recipe(
+            title="Salmon Bowl",
+            meal_type="lunch",
+            ingredients=[
+                {
+                    "name": "salmon",
+                    "amount": 150,
+                    "amount_g": 150,
+                    "unit": "g",
+                    "nutrition": {"kcal": 309, "protein_g": 33, "carbs_g": 0, "fat_g": 18},
+                },
+                {
+                    "name": "rice",
+                    "amount": 200,
+                    "amount_g": 200,
+                    "unit": "g",
+                    "nutrition": {"kcal": 260, "protein_g": 5.4, "carbs_g": 56, "fat_g": 0.6},
+                },
+            ],
+        )
         db.add_all([user, recipe])
         db.flush()
         recommendation = llm_recommend.SlotRecommendation(
