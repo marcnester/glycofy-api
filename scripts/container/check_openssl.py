@@ -19,7 +19,7 @@ def main():
         p for p in Path("/var/lib/dpkg/status").read_text().split("\n\n") if p.startswith("Package: libssl3t64\n")
     )
     assert "\nVersion: " + VERSION + "\n" in record + "\n"
-    assert ssl.OPENSSL_VERSION_INFO[:3] == (3, 5, 9)
+    assert ssl.OPENSSL_VERSION.startswith("OpenSSL 3.5.9 ")
     assert ssl.create_default_context().get_ca_certs()
     assert ssl.HAS_TLSv1_3
     libraries = {name: next(Path("/usr/lib").glob("*/" + name)) for name in ("libssl.so.3", "libcrypto.so.3")}
