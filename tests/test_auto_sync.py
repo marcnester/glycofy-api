@@ -4,6 +4,7 @@ import threading
 from datetime import date
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -166,4 +167,70 @@ def test_scheduled_pass_uses_real_importer_with_date_cursor(monkeypatch):
         assert activity.provider == "strava"
         assert activity.created_at is not None
         assert activity.duration_s == 600
+    engine.dispose()
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_scheduled_sync_with_current_meals_persists_updates_and_preserves_locked_day(monkeypatch, caplog, existing):
+    from datetime import UTC, datetime, timedelta
+
+    from app.models import Plan, PlanItem, PlanMeal
+    from app.services import imports_strava
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+    monkeypatch.setattr(auto_sync, "SessionLocal", sessions)
+    started = datetime.now(UTC) - timedelta(minutes=1)
+    today = datetime.now(UTC).date()
+    with sessions() as db:
+        user = User(email="current-meals@example.invalid", password_hash="!disabled-test", timezone="UTC", weight_kg=70)
+        db.add(user)
+        db.flush()
+        db.add(OAuthAccount(user_id=user.id, provider="strava", access_token="test-token", expires_at=2147483647))
+        if existing:
+            db.add(
+                Activity(
+                    user_id=user.id,
+                    provider="strava",
+                    source_provider="strava",
+                    source_id="123",
+                    start_time=started.replace(tzinfo=None),
+                    sport="cycling",
+                    duration_s=600,
+                    kcal=100,
+                )
+            )
+        for offset, locked in [(0, False), (1, True)]:
+            plan = Plan(user_id=user.id, date=today + timedelta(days=offset), locked=locked, source="ai")
+            meal = PlanMeal(meal_type="dinner", title="Original dinner", kcal=600, carbs_g=80, protein_g=30, fat_g=18)
+            meal.items = [PlanItem(name="Rice", qty=200, unit="g", kcal=260, carbs_g=56, protein_g=5, fat_g=1)]
+            plan.meals = [meal]
+            db.add(plan)
+        db.commit()
+        locked_plan = db.query(Plan).filter_by(locked=True).one()
+        locked_id = locked_plan.id
+
+        def snapshot(plan):
+            rows = [plan, *plan.meals, *(item for meal in plan.meals for item in meal.items)]
+            return [{c.name: getattr(row, c.name) for c in row.__table__.columns} for row in rows]
+
+        before = snapshot(locked_plan)
+
+    monkeypatch.setattr(
+        imports_strava,
+        "_pull_page",
+        lambda *a, **kw: [
+            {"id": 123, "type": "Ride", "start_date": started.isoformat(), "elapsed_time": 3600, "calories": 700}
+        ],
+    )
+    with caplog.at_level(logging.INFO, logger="glycofy.auto_sync"):
+        auto_sync._sync_accounts()
+    assert [r.status for r in caplog.records if r.name == "glycofy.auto_sync"] == ["completed"]
+    with sessions() as db:
+        activity = db.query(Activity).one()
+        assert activity.duration_s == 3600
+        assert activity.kcal == 700
+        assert activity.start_time == started.replace(tzinfo=None)
+        assert snapshot(db.get(Plan, locked_id)) == before
     engine.dispose()
