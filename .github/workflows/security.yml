@@ -127,6 +127,17 @@ jobs:
           PYTHON
       - name: Verify patched zlib and repeated failed writes
         run: docker run --rm --entrypoint python glycofy:${{ github.sha }} scripts/container/check_zlib.py --vex > zlib-fixed.openvex.json
+      - name: Verify the upstream OpenSSL backport and merge verified fix evidence
+        run: |
+          docker run --rm --entrypoint python glycofy:${{ github.sha }} scripts/container/check_openssl.py --vex > openssl-fixed.openvex.json
+          python - <<'PYTHON'
+          import json
+          from pathlib import Path
+          zlib = json.loads(Path("zlib-fixed.openvex.json").read_text())
+          openssl = json.loads(Path("openssl-fixed.openvex.json").read_text())
+          zlib["statements"].extend(openssl["statements"])
+          Path("runtime-fixed.openvex.json").write_text(json.dumps(zlib, indent=2))
+          PYTHON
       - name: Verify migrations and readiness against PostgreSQL in the runtime image
         env:
           DATABASE_URL: postgresql+psycopg://glycofy:glycofy_test@127.0.0.1:5432/glycofy_runtime
@@ -233,7 +244,7 @@ jobs:
           upload-artifact-retention: 30
       - name: Block all high or critical vulnerabilities, including unfixed findings
         env:
-          TRIVY_VEX: zlib-fixed.openvex.json
+          TRIVY_VEX: runtime-fixed.openvex.json
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: glycofy:${{ github.sha }}
@@ -278,6 +289,8 @@ jobs:
           path: |
             container-vulnerabilities.json
             zlib-fixed.openvex.json
+            openssl-fixed.openvex.json
+            runtime-fixed.openvex.json
           retention-days: 30
           if-no-files-found: error
 
