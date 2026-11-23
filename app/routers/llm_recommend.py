@@ -5150,6 +5150,25 @@ def recommend_weekly_apply(
     if len(residual_meals) > focused_repair_limit:
         batch_meta["focused_repair_skipped"] = len(residual_meals) - focused_repair_limit
 
+    # A sparse vegan catalog cannot always fill the holes left by model
+    # repairs while preserving weekly variety. Recover the coordinated week
+    # before persisting any day, rather than exhausting isolated slot picks.
+    # This library still validates every fitted meal, exclusion, daily target
+    # and weekly title; an unsupported restriction leaves the safe failure path.
+    missing_cells = sum(
+        meal["slot"] not in batch_items.get(day["date"], {}) for day in batch_days for meal in day["meals"]
+    )
+    if primary_diet == "vegan" and missing_cells:
+        recovered_week = _prevalidated_restricted_week(batch_days, exclusions, diet=primary_diet)
+        if recovered_week:
+            batch_items = recovered_week
+            curated_week = recovered_week
+            provider = "catalog"
+            batch_meta["verified_week_recovery"] = {
+                "missing_before_recovery": missing_cells,
+                "accepted": sum(len(slots) for slots in recovered_week.values()),
+            }
+
     # Reserve every accepted batch title before targeted recovery begins.
     # This prevents an early missing cell from selecting a catalog meal that
     # is already scheduled later in the week.
