@@ -43,7 +43,7 @@ Before enabling the candidate in production, deploy it to isolated staging, enab
 
 The evaluation approach follows [official OpenAI guidance on systematic prompt testing and reference context](https://developers.openai.com/api/docs/guides/optimizing-llm-accuracy#optimization). Measured results above come from this application, not that guidance.
 
-## Staging validation — 2026-11-20
+## Initial staging validation — 2026-11-20
 
 [Recorded staging results](evaluations/weekly-prompt-staging-2026-11-20.json) cover runtime commit `c0f0df0`, image digest `cf4d6ac920c2c94cd1124087df9c0361235df1c783689b9b23fa0d65de625179`, and policy `nutrition-safety-v24-usda-dairy-aliases`. Staging has `WEEKLY_PROMPT_VARIANT=evidence_first`; production remains on its previous image and prompt setting. PostgreSQL is at `add_grocery_stock`; this change adds no migration.
 
@@ -60,4 +60,19 @@ All 135 newly saved meals in successful runs passed an independent audit of meas
 
 The first staging run revealed three false protein-source warnings when USDA used reversed dairy word order. Adding the two equivalent names fixed these without changing nutrient evidence, portion limits, model settings, repair budgets or lock behavior. All 741 Python tests and the release checks passed.
 
-**Validation is not fully green for production.** Both prompts failed the full vegan, wheat-free stress case with `restricted_week_incomplete`; neither saved a partial week. One paired case suggests an existing recovery limitation, not proof that all restricted profiles are equivalent. Improve restricted-week completion and repeat that gate before promoting the candidate. The draft first-pass gains do not yet establish a general end-to-end speedup: these staging runs used baseline-only synthetic weeks and warmed food evidence, unlike the earlier high-training production week.
+**This initial validation was not fully green for production.** Both prompts failed the full vegan, wheat-free stress case with `restricted_week_incomplete`; neither saved a partial week. One paired case suggests an existing recovery limitation, not proof that all restricted profiles are equivalent. Improve restricted-week completion and repeat that gate before promoting the candidate. The draft first-pass gains do not yet establish a general end-to-end speedup: these staging runs used baseline-only synthetic weeks and warmed food evidence, unlike the earlier high-training production week.
+
+## Vegan recovery follow-up — 2026-11-22
+
+The original failure came from incomplete freeform batches exhausting isolated catalog/reuse options. When vegan cells remain missing after the unchanged repair budget, the planner now tries the existing coordinated USDA-backed week library before saving any day. It replaces the proposed week only if every fitted meal, exclusion, daily target and weekly variety check passes. A fully populated batch keeps its existing path. Unsupported constraints retain the existing safe failure and rollback; no nutrition, diet or lock rule is relaxed.
+
+[Deployed-runtime results](evaluations/vegan-week-recovery-staging-2026-11-22.json) record commit `14104754`, deployment `dep-dc1t2m5g1s2s73eaqcl0` and image digest `8521246d192782970e26beb22155304e35d2e1f98fdc3509125cbf457baf07a0`. This closes the previously failing vegan, wheat-free completion gate for the staging profile:
+
+| Deployed staging case | Result | Server time, including repairs |
+| --- | --- | ---: |
+| Seven days, five meals/day, vegan + wheat exclusion | All 35 saved and independently verified | 134.3 s |
+| Same constraints with one five-meal day locked | 30 unlocked meals saved; protected day exactly unchanged | 101.5 s |
+
+Both jobs used successful real model calls and whole-week recovery (16 and 19 cells respectively remained missing before recovery). All 65 newly saved meals passed ingredient evidence, source identity, portion, cooking-direction, timing and daily-target audits. No titles or defined substantial-composition keys repeated within either audit. Exact full-row fingerprints matched for the locked plan, meals and ingredients; a direct save returned `skipped: true`, `applied: 0`, `created_recipes: 0`. Test preferences and the temporary lock were restored, and every pre-existing plan remained unchanged.
+
+All 744 Python tests, Ruff, mypy, JavaScript, CodeQL and release checks passed. The source-rebuilt runtime also needed the verified [OpenSSL security backport](container-runtime.md#temporary-openssl-security-backport); the strict vulnerability gate remains enabled. Staging is live and `/ready` passes. PostgreSQL remains at `add_grocery_stock`; no migration was added. Production image, settings and plans were not changed. The PR remains draft during the staging observation window; these two weeks do not establish support for every restriction combination or a general speedup.
