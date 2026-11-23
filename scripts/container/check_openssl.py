@@ -22,7 +22,11 @@ def main():
     assert ssl.OPENSSL_VERSION.startswith("OpenSSL 3.5.9 ")
     assert ssl.create_default_context().get_ca_certs()
     assert ssl.HAS_TLSv1_3
-    libraries = {name: next(Path("/usr/lib").glob("*/" + name)) for name in ("libssl.so.3", "libcrypto.so.3")}
+    libraries = {}
+    for name in ("libssl.so.3", "libcrypto.so.3"):
+        paths = [path for root in ("/usr/lib", "/lib") for path in Path(root).glob("*/" + name)]
+        assert paths, f"Missing native library: {name}"
+        libraries[name] = paths[0]
     hashes = {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in libraries.items()}
     manifest = Path("/openssl-backport.json")
     if "--record-build" in sys.argv:
