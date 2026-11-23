@@ -209,3 +209,14 @@ def test_full_strava_sync_preserves_logged_workout_fuel(monkeypatch):
         assert activity.id == activity_id
         assert activity.duration_s == 4200
         assert activity.during_carbs_g == 80
+
+
+def test_scheduled_import_normalizes_provider_offsets_to_utc():
+    from app.services.imports_strava import _parse_start_time
+
+    expected = datetime(2026, 11, 18, 18, 10)
+    assert _parse_start_time("2026-11-18T18:10:00Z") == expected
+    assert _parse_start_time("2026-11-18T10:10:00-08:00") == expected
+    assert _parse_start_time("2026-11-18T20:10:00+02:00") == expected
+    assert _parse_start_time("2026-11-18T18:10:00") == expected
+    assert _parse_start_time("").tzinfo is None

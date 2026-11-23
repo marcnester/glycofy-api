@@ -76,7 +76,10 @@ def _parse_start_time(s: str) -> datetime:
         return datetime.utcnow()
     if s.endswith("Z"):
         s = s.replace("Z", "+00:00")
-    return datetime.fromisoformat(s)
+    # Activity.start_time is stored as UTC without timezone information. Keep
+    # the same representation before flush too: replanning reads live ORM rows.
+    parsed = datetime.fromisoformat(s)
+    return parsed.astimezone(UTC).replace(tzinfo=None) if parsed.tzinfo else parsed
 
 
 def _pull_page(token: str, page: int, per_page: int, after_epoch: int | None) -> list[dict[str, Any]]:
