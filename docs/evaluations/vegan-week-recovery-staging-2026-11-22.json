@@ -1,0 +1,179 @@
+{
+  "validation_date_local": "2026-11-22",
+  "runtime_commit": "14104754c9e40c3de796b8475af959d4ab7d9974",
+  "image": "ghcr.io/marcnester/glycofy-api@sha256:8521246d192782970e26beb22155304e35d2e1f98fdc3509125cbf457baf07a0",
+  "deployment": "dep-dc1t2m5g1s2s73eaqcl0",
+  "release_workflow_run": 45116374131,
+  "migration": "add_grocery_stock",
+  "variant": "evidence_first",
+  "quality_policy": "nutrition-safety-v24-usda-dairy-aliases",
+  "recovery_validation_passed": true,
+  "method": "Normal durable weekly jobs in the deployed staging runtime, using the existing test account, vegan diet, wheat exclusion and two snacks/day. Synthetic future weeks use profile baseline targets without workouts. Model, repair budgets, complete ingredient evidence, whole-week recovery, fitting, diversity and persistence remain enabled. Independent saved-row audit checks diet, portions, nutrient sources, directions, timing, daily targets and nutrition reconciliation. Undefined composition keys are ignored, as in the server; valid keys and titles are counted.",
+  "runs": [
+    {
+      "case": "vegan_wheat_free",
+      "status": "completed",
+      "server_seconds": 134.345,
+      "saved_meals": 35,
+      "saved_ingredients": 175,
+      "quality_failures": [],
+      "daily_target_failures": [],
+      "nutrition_verified": true,
+      "model_calls_succeeded": true,
+      "max_title_repeat": 1,
+      "max_composition_repeat_per_slot": 1,
+      "generation": {
+        "mode": "parallel_days",
+        "latency_ms": 44061,
+        "accepted": 22,
+        "rejected": 13,
+        "day_generations": 7,
+        "prompt_version": "weekly-meals-2026-11-19-v12-evidence-first",
+        "quality_policy_version": "nutrition-safety-v24-usda-dairy-aliases",
+        "duplicate_titles_removed": 13,
+        "repair": {
+          "requested": 10,
+          "accepted": 5,
+          "rejected": 5,
+          "latency_ms": 30072,
+          "duplicates_removed": 2,
+          "deferred": 10
+        },
+        "final_repair": {
+          "requested": 10,
+          "accepted": 4,
+          "rejected": 3,
+          "latency_ms": 29884,
+          "duplicates_removed": 3,
+          "deferred": 7
+        },
+        "focused_repair": [
+          {
+            "date": "2027-03-22",
+            "slot": "breakfast",
+            "accepted": false,
+            "rejected": 1,
+            "latency_ms": 3912
+          },
+          {
+            "date": "2027-03-24",
+            "slot": "lunch",
+            "accepted": false,
+            "rejected": 0,
+            "latency_ms": 4222
+          },
+          {
+            "date": "2027-03-24",
+            "slot": "dinner",
+            "accepted": false,
+            "rejected": 1,
+            "latency_ms": 4559
+          }
+        ],
+        "focused_repair_skipped": 13,
+        "verified_week_recovery": {
+          "missing_before_recovery": 16,
+          "accepted": 35
+        }
+      },
+      "estimated_model_cost_usd": 0.04521
+    },
+    {
+      "case": "locked_vegan_wheat_free",
+      "status": "completed",
+      "server_seconds": 101.471,
+      "saved_meals": 30,
+      "saved_ingredients": 150,
+      "quality_failures": [],
+      "daily_target_failures": [],
+      "nutrition_verified": true,
+      "model_calls_succeeded": true,
+      "max_title_repeat": 1,
+      "max_composition_repeat_per_slot": 1,
+      "generation": {
+        "mode": "parallel_days",
+        "latency_ms": 40740,
+        "accepted": 21,
+        "rejected": 14,
+        "day_generations": 7,
+        "prompt_version": "weekly-meals-2026-11-19-v12-evidence-first",
+        "quality_policy_version": "nutrition-safety-v24-usda-dairy-aliases",
+        "duplicate_titles_removed": 12,
+        "repair": {
+          "requested": 10,
+          "accepted": 4,
+          "rejected": 6,
+          "latency_ms": 27636,
+          "duplicates_removed": 2,
+          "deferred": 13
+        },
+        "final_repair": {
+          "requested": 10,
+          "accepted": 1,
+          "rejected": 0,
+          "latency_ms": 4519,
+          "duplicates_removed": 0,
+          "deferred": 11
+        },
+        "focused_repair": [
+          {
+            "date": "2027-03-30",
+            "slot": "dinner",
+            "accepted": true,
+            "rejected": 0,
+            "latency_ms": 4701
+          },
+          {
+            "date": "2027-03-31",
+            "slot": "breakfast",
+            "accepted": false,
+            "rejected": 1,
+            "latency_ms": 3890
+          },
+          {
+            "date": "2027-03-31",
+            "slot": "lunch",
+            "accepted": false,
+            "rejected": 0,
+            "latency_ms": 4267
+          }
+        ],
+        "focused_repair_skipped": 17,
+        "verified_week_recovery": {
+          "missing_before_recovery": 19,
+          "accepted": 35
+        }
+      },
+      "estimated_model_cost_usd": 0.040663,
+      "locked_fingerprint_before": "affa473d4a155943b615147e26d504755949c0e48af54588bb34140a0d220033",
+      "locked_fingerprint_after": "affa473d4a155943b615147e26d504755949c0e48af54588bb34140a0d220033",
+      "direct_locked_save": {
+        "date": "2027-03-29",
+        "skipped": true,
+        "reason": "locked",
+        "applied": 0,
+        "created_recipes": 0
+      },
+      "temporary_lock_restored": true
+    }
+  ],
+  "restoration": {
+    "preferences_restored": true,
+    "preexisting_plans_unchanged": true,
+    "temporary_lock_restored": true
+  },
+  "native_runtime": {
+    "openssl_upstream_backport": "f3acb0a3328046741479482c51cec815839e1b05",
+    "package_version": "3.5.9-1~deb13u1+glycofy1",
+    "debian_package_build_tests_passed": true,
+    "runtime_library_and_source_fingerprints_verified": true,
+    "strict_vulnerability_gate_passed": true
+  },
+  "production_changed": false,
+  "limitations": [
+    "Two deployed test weeks cover this staging profile and exclusion; not every calorie target, secondary diet or allergen combination.",
+    "Nutrient sums use the existing rounding tolerances; locked-row comparisons use exact fingerprints.",
+    "Recorded model costs are application estimates, not provider billing.",
+    "Staging observation is still required before any production rollout, particularly after the native library rebuild."
+  ]
+}

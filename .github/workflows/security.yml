@@ -92,9 +92,28 @@ jobs:
           --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Restore native image build cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /tmp/glycofy-build-cache
+          key: ${{ runner.os }}-glycofy-native-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-glycofy-native-
       - name: Build the production image
         id: image_build
-        run: docker build --label org.opencontainers.image.source=https://github.com/${{ github.repository }} --label org.opencontainers.image.revision=${{ github.sha }} --tag glycofy:${{ github.sha }} .
+        run: |
+          docker buildx create --name glycofy-native --use --driver docker-container
+          cache_args=()
+          if test -f /tmp/glycofy-build-cache/index.json; then
+            cache_args=(--cache-from type=local,src=/tmp/glycofy-build-cache)
+          fi
+          docker buildx build --load "${cache_args[@]}" --cache-to type=local,dest=/tmp/glycofy-build-cache-new,mode=max --label org.opencontainers.image.source=https://github.com/${{ github.repository }} --label org.opencontainers.image.revision=${{ github.sha }} --tag glycofy:${{ github.sha }} .
+          rm -rf /tmp/glycofy-build-cache
+          mv /tmp/glycofy-build-cache-new /tmp/glycofy-build-cache
+      - name: Save native image build cache
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /tmp/glycofy-build-cache
+          key: ${{ runner.os }}-glycofy-native-${{ github.sha }}
       - name: Verify the image runs as the unprivileged app user
         run: test "$(docker image inspect glycofy:${{ github.sha }} --format '{{.Config.User}}')" = "65532:65532"
       - name: Verify private build inputs are absent from the runtime image
@@ -127,6 +146,17 @@ jobs:
           PYTHON
       - name: Verify patched zlib and repeated failed writes
         run: docker run --rm --entrypoint python glycofy:${{ github.sha }} scripts/container/check_zlib.py --vex > zlib-fixed.openvex.json
+      - name: Verify the upstream OpenSSL backport and merge verified fix evidence
+        run: |
+          docker run --rm --entrypoint python glycofy:${{ github.sha }} scripts/container/check_openssl.py --vex > openssl-fixed.openvex.json
+          python - <<'PYTHON'
+          import json
+          from pathlib import Path
+          zlib = json.loads(Path("zlib-fixed.openvex.json").read_text())
+          openssl = json.loads(Path("openssl-fixed.openvex.json").read_text())
+          zlib["statements"].extend(openssl["statements"])
+          Path("runtime-fixed.openvex.json").write_text(json.dumps(zlib, indent=2))
+          PYTHON
       - name: Verify migrations and readiness against PostgreSQL in the runtime image
         env:
           DATABASE_URL: postgresql+psycopg://glycofy:glycofy_test@127.0.0.1:5432/glycofy_runtime
@@ -233,7 +263,7 @@ jobs:
           upload-artifact-retention: 30
       - name: Block all high or critical vulnerabilities, including unfixed findings
         env:
-          TRIVY_VEX: zlib-fixed.openvex.json
+          TRIVY_VEX: runtime-fixed.openvex.json
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: glycofy:${{ github.sha }}
@@ -278,6 +308,8 @@ jobs:
           path: |
             container-vulnerabilities.json
             zlib-fixed.openvex.json
+            openssl-fixed.openvex.json
+            runtime-fixed.openvex.json
           retention-days: 30
           if-no-files-found: error
 

@@ -47,6 +47,7 @@ for path in list((root / "usr/local").rglob("*")) + [root / "bin/dash"]:
 
 for path in ("/etc/ssl/certs/ca-certificates.crt", "/etc/os-release", "/etc/debian_version", "/etc/nsswitch.conf"):
     copy_file(path)
+shutil.copy2("/openssl-backport.json", root / "openssl-backport.json")
 for name, content in {
     "passwd": "root:x:0:0:root:/root:/sbin/nologin\nglycofy:x:65532:65532:Glycofy:/app:/sbin/nologin\n",
     "group": "root:x:0:\nglycofy:x:65532:\n",

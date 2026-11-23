@@ -96,3 +96,25 @@ actual library SHA256 and source patch. It does not match the old package. The
 strict gate consumes this fixed-status evidence; the raw all-severity inventory
 runs without VEX and is retained alongside the statement, so findings remain
 auditable. All other high/critical findings continue to block publication.
+
+## Temporary OpenSSL security backport
+
+The recovery release encountered CVE-2026-124709 in Debian 13's OpenSSL 3.5.9.
+The [upstream advisory](https://openssl-library.org/news/secadv/20261117.txt)
+provides the public fix before the scheduled 3.5.10 release. The OpenSSL builder
+rebuilds Debian source `3.5.9-1~deb13u1` with upstream 3.5-branch commit
+[`f3acb0a3328046741479482c51cec815839e1b05`](https://github.com/openssl/openssl/commit/f3acb0a3328046741479482c51cec815839e1b05).
+Source archives, patch and the resulting patched source file are SHA256-pinned.
+The backport uses its own `3.5.9-1~deb13u1+glycofy1` package version; it does not
+claim to be the unreleased upstream version. Debian's package build and test
+suite must pass before its two runtime packages can leave the build stage.
+
+`check_openssl.py` records the patched source and installed library hashes during
+the image build. CI verifies that exact manifest against the runtime libraries,
+package metadata, TLS 1.3 support and CA certificate loading before emitting an
+OpenVEX `fixed` statement scoped to this exact package, architecture and distro.
+The gate consumes the merged, verified zlib/OpenSSL fix evidence. Raw scanner
+findings and both individual statements remain in the retained inventory;
+other vulnerabilities still block publication. Remove this temporary rebuild
+and its fixed-status evidence when Debian provides the upstream fix, then
+repeat native, PostgreSQL, outbound TLS and staging tests on the new artifact.

@@ -1771,3 +1771,87 @@ def test_weekly_batch_defers_meals_when_usda_foods_are_pending(monkeypatch):
     assert meta["accepted"] == 0
     assert meta["rejected"] == 4
     assert recommendations[date] == {}
+
+
+def test_candidate_prompt_preserves_schema_targets_and_validation(monkeypatch):
+    from app.services.weekly_prompt import CANDIDATE_VERSION
+
+    calls = []
+    library_calls = []
+    options = [
+        {
+            "role": "protein",
+            "name": "Tofu, raw, firm",
+            "usda_search_query": "tofu firm raw",
+            "per_100g": {"kcal": 144, "protein_g": 17, "carbs_g": 3, "fat_g": 9},
+            "min_g": 50,
+            "max_g": 300,
+        }
+    ]
+
+    def reference_library(**kwargs):
+        library_calls.append(kwargs)
+        return options
+
+    class Completions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            payload = json.loads(kwargs["messages"][1]["content"])
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=json.dumps(
+                                {
+                                    "days": [
+                                        {
+                                            "date": payload["days"][0]["date"],
+                                            "meals": [_meal(slot, 1) for slot in llm_recommend.SLOTS],
+                                        }
+                                    ]
+                                }
+                            )
+                        )
+                    )
+                ],
+                usage=None,
+            )
+
+    monkeypatch.setenv("WEEKLY_PROMPT_VARIANT", "evidence_first")
+    monkeypatch.setattr(llm_recommend, "verified_ingredient_options", reference_library)
+    monkeypatch.setattr(llm_recommend, "_circuit_open", lambda: False)
+    monkeypatch.setattr(llm_recommend, "_daily_budget_usd", lambda: 100)
+    monkeypatch.setattr(llm_recommend.settings, "USDA_FDC_API_KEY", None)
+    monkeypatch.setattr(llm_recommend.settings, "USDA_FDC_REQUIRED", False)
+    days = [
+        {
+            "date": f"2026-11-{day}",
+            "training": {"during_carbs_g": 60},
+            "diet_tags": [],
+            "meals": [
+                {"slot": slot, "target_macros": {"kcal": 500, "protein_g": 40, "carbs_g": 50, "fat_g": 15}}
+                for slot in llm_recommend.SLOTS
+            ],
+        }
+        for day in (20, 21)
+    ]
+    original = json.loads(json.dumps(days))
+    recommendations, meta = llm_recommend._parallel_week_recommendations(
+        SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+        days=days,
+        primary_diet="omnivore",
+        diet_tags=[],
+        exclusions=["peanut"],
+    )
+    assert len(library_calls) == 1
+    assert days == original
+    assert meta["prompt_version"] == CANDIDATE_VERSION
+    assert sum(len(slots) for slots in recommendations.values()) == 8
+    for call in calls:
+        data = json.loads(call["messages"][1]["content"])
+        assert data["verified_ingredient_options"] == options
+        assert data["ingredient_exclusions"] == ["peanut"]
+        assert data["days"][0]["training"] == {"during_carbs_g": 60}
+        assert call["response_format"]["json_schema"] == llm_recommend._weekly_batch_schema(4)
+        for item in recommendations[data["days"][0]["date"]].values():
+            assert item.meta["prompt_version"] == CANDIDATE_VERSION
