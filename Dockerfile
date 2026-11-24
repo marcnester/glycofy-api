@@ -25,19 +25,26 @@ RUN apt-get update \
     && apt-get update
 WORKDIR /openssl-source
 COPY scripts/container/patches/CVE-2026-124709.patch /openssl-fix.patch
+COPY scripts/container/patches/CVE-2026-107494.patch /openssl-quic-fix.patch
+COPY scripts/container/patches/CVE-2026-107494-test.patch /openssl-quic-test.patch
 RUN apt-get source openssl=3.5.9-1~deb13u1 \
     && echo '603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a  openssl_3.5.9.orig.tar.gz' | sha256sum --check \
     && echo '7d5158a87cd24641316b050de419be4ebddb1f180afd7ebaa3bc990036c38ec6  openssl_3.5.9-1~deb13u1.debian.tar.xz' | sha256sum --check \
     && echo 'd52a6af23bc966daaa9eded816a392d429a67bb76faafd922f4c4cf35a9349f4  /openssl-fix.patch' | sha256sum --check \
+    && echo 'c1726a50d589b2dc289727865c184382c2bd846733ddb139427062713ebeb5bd  /openssl-quic-fix.patch' | sha256sum --check \
+    && echo 'ca74f8bd3f7d6337fae3fe5038604f013c76590b89d6f44593adcb5661f9a0ba  /openssl-quic-test.patch' | sha256sum --check \
     && cd openssl-3.5.9 \
     && patch --fuzz=0 -p1 < /openssl-fix.patch \
+    && patch --fuzz=0 -p1 < /openssl-quic-fix.patch \
+    && patch --fuzz=0 -p1 < /openssl-quic-test.patch \
     && echo '7bceb5bdc408c3e5a46eb38944f5d16727b812e3e049dae6f2b2e4cdadce3616  ssl/quic/quic_stream_map.c' | sha256sum --check \
-    && python -c "from pathlib import Path;p=Path('debian/changelog');p.write_text('openssl (3.5.9-1~deb13u1+glycofy1) trixie; urgency=high\\n\\n  * Backport upstream f3acb0a for CVE-2026-124709.\\n\\n -- Glycofy Build <build@glycofy.ai>  Sun, 22 Nov 2026 00:00:00 +0000\\n\\n'+p.read_text())" \
+    && python -c "from pathlib import Path;p=Path('debian/changelog');p.write_text('openssl (3.5.9-1~deb13u1+glycofy2) trixie; urgency=high\\n\\n  * Backport upstream f3acb0a, 734c6cd and regression 42919a7 for CVE-2026-124709 and CVE-2026-107494.\\n\\n -- Glycofy Build <build@glycofy.ai>  Sun, 22 Nov 2026 00:00:00 +0000\\n\\n'+p.read_text())" \
     && DEB_BUILD_OPTIONS=parallel=2 dpkg-buildpackage --build=binary --no-sign \
     && mkdir /openssl-packages \
     && cp ../libssl3t64_*_$(dpkg --print-architecture).deb /openssl-packages/libssl3t64.deb \
     && cp ../openssl-provider-legacy_*_$(dpkg --print-architecture).deb /openssl-packages/legacy.deb \
-    && cp ssl/quic/quic_stream_map.c /openssl-packages/patched-source.c
+    && mkdir -p /openssl-packages/source \
+    && cp --parents ssl/quic/quic_stream_map.c ssl/quic/quic_channel.c ssl/quic/quic_channel_local.h include/internal/quic_channel.h test/radix/quic_tests.c /openssl-packages/source
 
 FROM python:3.11-slim-trixie@sha256:db20d8506e2f15b6db39b40b6015ca46bae855dec6dd326d462cfe79ae972893 AS builder
 
