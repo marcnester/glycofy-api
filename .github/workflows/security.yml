@@ -261,27 +261,42 @@ jobs:
           artifact-name: glycofy-${{ github.sha }}-sbom.spdx.json
           upload-artifact: true
           upload-artifact-retention: 30
-      - name: Block all high or critical vulnerabilities, including unfixed findings
-        env:
-          TRIVY_VEX: runtime-fixed.openvex.json
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Install the pinned vulnerability scanner
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
         with:
-          image-ref: glycofy:${{ github.sha }}
-          scanners: vuln,secret
-          severity: HIGH,CRITICAL
-          ignore-unfixed: false
-          exit-code: "1"
-          format: table
-
+          version: v0.70.0
+          cache: false
+      - name: Download one fresh vulnerability database snapshot
+        id: vulnerability_database
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/glycofy-trivy-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          trivy image --download-db-only
+          sha256sum "$TRIVY_CACHE_DIR/db/trivy.db" "$TRIVY_CACHE_DIR/db/metadata.json" > vulnerability-db.sha256
+          cp "$TRIVY_CACHE_DIR/db/metadata.json" vulnerability-db-metadata.json
+          trivy --version > vulnerability-scanner-version.txt
       - name: Inventory all container vulnerabilities, including unfixed findings
         id: vulnerability_inventory
-        if: ${{ !cancelled() && steps.image_build.outcome == 'success' }}
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/glycofy-trivy-${{ github.run_id }}-${{ github.run_attempt }}
         run: >-
-          trivy image --scanners vuln
+          trivy image --skip-db-update --scanners vuln
           --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           --ignore-unfixed=false --exit-code 0 --format json
           --output container-vulnerabilities.json
           glycofy:${{ github.sha }}
+      - name: Block all high or critical vulnerabilities, including unfixed findings
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/glycofy-trivy-${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          trivy image --skip-db-update --scanners vuln,secret
+          --severity HIGH,CRITICAL --ignore-unfixed=false --exit-code 1
+          --vex runtime-fixed.openvex.json --format json
+          --output container-security-gate.json
+          glycofy:${{ github.sha }}
+      - name: Verify both scans used the unchanged database snapshot
+        if: ${{ !cancelled() && steps.vulnerability_database.outcome == 'success' }}
+        run: sha256sum --check vulnerability-db.sha256
       - name: Summarize every image vulnerability
         if: ${{ !cancelled() && steps.vulnerability_inventory.outcome == 'success' }}
         run: |
@@ -307,6 +322,10 @@ jobs:
           name: container-vulnerabilities-${{ github.sha }}
           path: |
             container-vulnerabilities.json
+            container-security-gate.json
+            vulnerability-db.sha256
+            vulnerability-db-metadata.json
+            vulnerability-scanner-version.txt
             zlib-fixed.openvex.json
             openssl-fixed.openvex.json
             runtime-fixed.openvex.json
