@@ -1,4 +1,4 @@
-FROM python:3.11-slim-trixie@sha256:db20d8506e2f15b6db39b40b6015ca46bae855dec6dd326d462cfe79ae972893 AS zlib-builder
+FROM python:3.15-slim-trixie@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS zlib-builder
 
 # Rebuild Debian's security-fixed source against trixie. Only source packages
 # come from sid; all compilers/build dependencies remain on stable Debian 13.
@@ -15,7 +15,7 @@ RUN apt-get source zlib=1:1.3.dfsg+really1.3.2-4 \
     && mkdir /zlib-packages \
     && cp ../zlib1g_*_$(dpkg --print-architecture).deb /zlib-packages/zlib1g.deb
 
-FROM python:3.11-slim-trixie@sha256:db20d8506e2f15b6db39b40b6015ca46bae855dec6dd326d462cfe79ae972893 AS openssl-builder
+FROM python:3.15-slim-trixie@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS openssl-builder
 
 # Backport the upstream 3.5 fix until Debian ships its security update.
 # Keep genuine package ownership and a distinct local backport version.
@@ -46,7 +46,7 @@ RUN apt-get source openssl=3.5.9-1~deb13u1 \
     && mkdir -p /openssl-packages/source \
     && cp --parents ssl/quic/quic_stream_map.c ssl/quic/quic_channel.c ssl/quic/quic_channel_local.h include/internal/quic_channel.h test/radix/quic_tests.c /openssl-packages/source
 
-FROM python:3.11-slim-trixie@sha256:db20d8506e2f15b6db39b40b6015ca46bae855dec6dd326d462cfe79ae972893 AS builder
+FROM python:3.15-slim-trixie@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
