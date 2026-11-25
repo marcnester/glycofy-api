@@ -45,7 +45,7 @@ quote-style = "double"
 
 [tool.mypy]
 python_version = "3.11"
-plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+plugins = ["pydantic.mypy"]
 ignore_missing_imports = true
 follow_imports = "silent"
 strict_optional = false

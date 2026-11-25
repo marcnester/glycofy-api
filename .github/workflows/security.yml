@@ -35,7 +35,7 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
           cache: pip
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
@@ -93,7 +93,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Restore native image build cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/glycofy-build-cache
           key: ${{ runner.os }}-glycofy-native-${{ github.sha }}
@@ -110,7 +110,7 @@ jobs:
           rm -rf /tmp/glycofy-build-cache
           mv /tmp/glycofy-build-cache-new /tmp/glycofy-build-cache
       - name: Save native image build cache
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/glycofy-build-cache
           key: ${{ runner.os }}-glycofy-native-${{ github.sha }}
@@ -253,7 +253,7 @@ jobs:
           print("Migrated PostgreSQL scheduled Strava import and idempotence passed")
           PYTHON
       - name: Generate the production image SBOM
-        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           image: glycofy:${{ github.sha }}
           format: spdx-json
@@ -261,27 +261,42 @@ jobs:
           artifact-name: glycofy-${{ github.sha }}-sbom.spdx.json
           upload-artifact: true
           upload-artifact-retention: 30
-      - name: Block all high or critical vulnerabilities, including unfixed findings
-        env:
-          TRIVY_VEX: runtime-fixed.openvex.json
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Install the pinned vulnerability scanner
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          image-ref: glycofy:${{ github.sha }}
-          scanners: vuln,secret
-          severity: HIGH,CRITICAL
-          ignore-unfixed: false
-          exit-code: "1"
-          format: table
-
+          version: v0.70.0
+          cache: false
+      - name: Download one fresh vulnerability database snapshot
+        id: vulnerability_database
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/glycofy-trivy-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          trivy image --download-db-only
+          sha256sum "$TRIVY_CACHE_DIR/db/trivy.db" "$TRIVY_CACHE_DIR/db/metadata.json" > vulnerability-db.sha256
+          cp "$TRIVY_CACHE_DIR/db/metadata.json" vulnerability-db-metadata.json
+          trivy --version > vulnerability-scanner-version.txt
       - name: Inventory all container vulnerabilities, including unfixed findings
         id: vulnerability_inventory
-        if: ${{ !cancelled() && steps.image_build.outcome == 'success' }}
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/glycofy-trivy-${{ github.run_id }}-${{ github.run_attempt }}
         run: >-
-          trivy image --scanners vuln
+          trivy image --skip-db-update --scanners vuln
           --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           --ignore-unfixed=false --exit-code 0 --format json
           --output container-vulnerabilities.json
           glycofy:${{ github.sha }}
+      - name: Block all high or critical vulnerabilities, including unfixed findings
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/glycofy-trivy-${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          trivy image --skip-db-update --scanners vuln,secret
+          --severity HIGH,CRITICAL --ignore-unfixed=false --exit-code 1
+          --vex runtime-fixed.openvex.json --format json
+          --output container-security-gate.json
+          glycofy:${{ github.sha }}
+      - name: Verify both scans used the unchanged database snapshot
+        if: ${{ !cancelled() && steps.vulnerability_database.outcome == 'success' }}
+        run: sha256sum --check vulnerability-db.sha256
       - name: Summarize every image vulnerability
         if: ${{ !cancelled() && steps.vulnerability_inventory.outcome == 'success' }}
         run: |
@@ -302,11 +317,15 @@ jobs:
           PYTHON
       - name: Retain the complete container vulnerability inventory
         if: ${{ !cancelled() && steps.vulnerability_inventory.outcome == 'success' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: container-vulnerabilities-${{ github.sha }}
           path: |
             container-vulnerabilities.json
+            container-security-gate.json
+            vulnerability-db.sha256
+            vulnerability-db-metadata.json
+            vulnerability-scanner-version.txt
             zlib-fixed.openvex.json
             openssl-fixed.openvex.json
             runtime-fixed.openvex.json
@@ -321,7 +340,7 @@ jobs:
           docker image inspect glycofy:${{ github.sha }} --format '{{.Id}}' > runtime-image-id.txt
       - name: Upload the tested image for publication without rebuilding
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_runtime }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tested-runtime-${{ github.sha }}
           path: |
@@ -342,7 +361,7 @@ jobs:
       packages: write
     steps:
       - name: Download this run's exact tested image
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: tested-runtime-${{ github.sha }}
       - name: Verify, load and publish without a rebuild
@@ -369,7 +388,7 @@ jobs:
           printf '## Tested runtime image\n\nSource commit: `%s`\n\n' "$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
           cat runtime-image-reference.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Retain promotion evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runtime-image-release-${{ github.sha }}
           path: |

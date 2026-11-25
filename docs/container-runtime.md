@@ -118,3 +118,30 @@ findings and both individual statements remain in the retained inventory;
 other vulnerabilities still block publication. Remove this temporary rebuild
 and its fixed-status evidence when Debian provides the upstream fix, then
 repeat native, PostgreSQL, outbound TLS and staging tests on the new artifact.
+
+## November 23 QUIC backport and scanner database consistency
+
+CVE-2026-107494 is a separate OpenSSL QUIC denial-of-service issue. Glycofy uses
+Uvicorn over TCP behind managed TLS proxies, and its Python HTTP clients do not
+use OpenSSL's native QUIC API. That limits the identified application path, but
+is not a claim about Render's host kernel or managed proxies. The library is
+patched rather than relying on an unreachability exception.
+
+The `+glycofy2` OpenSSL package retains the CVE-2026-124709 fix and adds upstream
+3.5-branch commit `734c6cd7444bdbf589bfec917e47598c1b21ddd3`, plus its upstream
+QUIC retransmission regression `42919a7f4e00aa217fce1532fbeb49f21be2ee7b`.
+Both patch downloads are checksum-pinned. The package build runs Debian's full
+test suite, including the QUIC regression. Build verification checks the patched
+source and test fingerprints; runtime verification checks the exact package and
+loaded library hashes before emitting narrowly scoped fixed-status evidence.
+No other CVE is waived.
+
+Every container job downloads the current Trivy database into a unique run and
+attempt directory, with no restored vulnerability database cache. Both the raw
+inventory and blocking scan use that directory with updates disabled. Database
+and metadata checksums are checked after both scans and retained with the raw
+inventory, gate output, database publication metadata and scanner version.
+This prevents a green blocking scan based on an older cache than the inventory.
+The weekly job rebuilds main; release publication retains and deploys its exact
+validated image digest. A later weekly build is not proof that an older deployed
+digest has been rescanned with that database.
