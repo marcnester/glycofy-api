@@ -1,0 +1,64 @@
+{
+  "environment": "staging",
+  "candidate_commit": "b29c83aebdd1d1e056476d7e482f81025ef239e6",
+  "image": "ghcr.io/marcnester/glycofy-api@sha256:1eb26a9724c5316e6027612daf88b4c4dcc553c23bb87388991576b7aae1e7ec",
+  "dependency_prs": [
+    114,
+    116,
+    67
+  ],
+  "packages": {
+    "fastapi": "0.165.0",
+    "starlette": "1.10.0",
+    "pydantic": "2.14.4",
+    "SQLAlchemy": "2.1.9",
+    "openai": "3.57.0",
+    "cryptography": "50.0.2",
+    "psycopg": "3.3.9"
+  },
+  "prompt": "weekly-meals-2026-11-19-v12-evidence-first",
+  "variant": "evidence_first",
+  "quality_policy": "nutrition-safety-v24-usda-dairy-aliases",
+  "migration": "add_grocery_stock",
+  "runs": [
+    {
+      "case": "vegan_wheat_free",
+      "status": "completed",
+      "server_seconds": 104.911,
+      "saved_meals": 35,
+      "saved_ingredients": 175,
+      "quality_failures": [],
+      "daily_target_failures": [],
+      "nutrition_verified": true,
+      "max_title_repeat": 1,
+      "max_composition_repeat_per_slot": 1,
+      "model_calls_succeeded": true
+    },
+    {
+      "case": "locked_vegan_wheat_free",
+      "status": "completed",
+      "server_seconds": 120.287,
+      "saved_meals": 30,
+      "saved_ingredients": 150,
+      "quality_failures": [],
+      "daily_target_failures": [],
+      "nutrition_verified": true,
+      "max_title_repeat": 1,
+      "max_composition_repeat_per_slot": 1,
+      "model_calls_succeeded": true,
+      "locked_fingerprint_exact": true,
+      "direct_locked_save": {
+        "date": "2027-09-13",
+        "skipped": true,
+        "reason": "locked",
+        "applied": 0,
+        "created_recipes": 0
+      },
+      "temporary_lock_restored": true
+    }
+  ],
+  "existing_plans_unchanged": true,
+  "existing_locked_plans_unchanged": true,
+  "existing_preferences_unchanged": true,
+  "fixture_preferences_restored": true
+}
